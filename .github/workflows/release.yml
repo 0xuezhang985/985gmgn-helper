@@ -19,6 +19,10 @@ jobs:
         shell: pwsh
         run: ./scripts/build-release.ps1
 
+      - name: Validate release notes
+        shell: pwsh
+        run: ./scripts/build-release-notes.ps1 -Tag $env:GITHUB_REF_NAME -OutputPath dist/release-notes.md
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
@@ -27,4 +31,4 @@ jobs:
           $assets = Get-ChildItem -LiteralPath dist -File | Where-Object {
             $_.Extension -in '.zip', '.exe', '.sha256'
           } | ForEach-Object FullName
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --notes-file dist/release-notes.md

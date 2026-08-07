@@ -1,0 +1,47 @@
+name: Sync detailed release notes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "release-notes/v*.md"
+      - "scripts/build-release-notes.ps1"
+      - ".github/workflows/sync-release-notes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync existing GitHub Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $files = Get-ChildItem -LiteralPath release-notes -Filter 'v*.md' -File | Sort-Object Name
+          foreach ($file in $files) {
+            $tag = $file.BaseName
+            $output = Join-Path $env:RUNNER_TEMP "$tag-release-notes.md"
+            ./scripts/build-release-notes.ps1 -Tag $tag -OutputPath $output
+
+            gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Output "skip=$tag (Release 尚不存在)"
+              continue
+            }
+
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --notes-file $output
+            if ($LASTEXITCODE -ne 0) {
+              throw "更新 GitHub Release 失败：$tag"
+            }
+            Write-Output "synced=$tag"
+          }
