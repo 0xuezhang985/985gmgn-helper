@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "985gmgn助手",
-  "version": "0.7.0",
+  "version": "0.8.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAotBvFq65NLPkl/sfJPAOUsAY3wrS4I0WOVQ4K8D6Vy9tZyNnRoDrntLCxiJnlJQ88+jPsBmpgL3/Km3dqUFzJnmPqlgbCFrzCWXi6YaX6lqYFAip0MUOPnNogNkY6flkwP+NurfV8Hf5ZlXnN/moR9DmdN15M9Qg390yqIhQFapxozPGZUbj1vHyCiJJ6fHo48DLfJHNhixAa/LLUF6msICVgDyfU/Rnj7RWEWbpUhA0CcQzUa5MY14IcS4Ktkegb6FGNgUa2p/g2+OjIBGIvAYvVGNgYuwN9GGdA5mx+PPxRwKegne0tFrX7Irzk4xG9A2LiTIkzaWjcptRrP+01QIDAQAB",
   "description": "在 GMGN BSC 战壕中高亮重点 Dev，并显示发币迁移统计。",
   "homepage_url": "https://github.com/0xuezhang985/985gmgn-helper",
   "minimum_chrome_version": "111",
   "permissions": [
-    "storage"
+    "storage",
+    "alarms",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://gmgn.ai/*"

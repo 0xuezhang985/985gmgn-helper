@@ -164,6 +164,22 @@ textarea:focus {
   max-width: 190px;
 }
 
+#release-link {
+  margin-top: 3px;
+  color: #67d49a;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+#release-link:hover {
+  text-decoration: underline;
+}
+
+.update-card.has-update {
+  border-color: rgba(41, 209, 125, 0.65);
+  box-shadow: 0 0 0 1px rgba(41, 209, 125, 0.12);
+}
+
 #check-update {
   width: auto;
   flex: 0 0 auto;

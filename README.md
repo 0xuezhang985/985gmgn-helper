@@ -9,7 +9,8 @@ Chrome Manifest V3 插件，用于在 GMGN BSC 战壕三列中高亮指定 Dev �
 
 - 在插件 Popup 中维护重点 Dev 钱包，一行一个，可附加备注。
 - 配置页可分别开关重点 Dev 高亮、Dev 战绩常显、悬停详情、详情页一键收藏和喊单黑名单。
-- 配置页提供“一键检查升级”，通过 Chrome 官方更新通道检查并立即应用已下载的新版本。
+- 配置页显示 GitHub 最新版本；发现新版后可查看 Release 页面或调用本地更新器一键升级。
+- 插件图标通过绿色 `UP` 角标提醒新版。
 - 在 GMGN 代币详情的“开发者代币”面板中一键收藏 GMGN Creator，备注自动写为“当前代币名 + dev”。
 - 重点 Dev 的代币卡片显示醒目边框和标签。
 - 战壕卡片始终直接显示 Dev 备注，无需悬停。
@@ -26,11 +27,13 @@ Chrome Manifest V3 插件，用于在 GMGN BSC 战壕三列中高亮指定 Dev �
 
 ## 安装
 
-1. 从 [GitHub Releases](https://github.com/0xuezhang985/985gmgn-helper/releases/latest) 下载最新版 ZIP 并解压。
-2. 在 Chrome 地址栏打开 `chrome://extensions/`。
-3. 打开右上角“开发者模式”。
-4. 点击“加载已解压的扩展程序”，选择解压后的目录。
+1. 从 [GitHub Releases](https://github.com/0xuezhang985/985gmgn-helper/releases/latest) 下载 `985gmgn-helper-setup-v版本.exe`。
+2. 运行安装器并点击“安装 / 修复”。安装器会打开插件目录和扩展程序页面。
+3. 在 Chrome/Edge 扩展程序页面打开“开发者模式”，点击“加载已解压的扩展程序”。
+4. 选择安装器显示的目录：`%LOCALAPPDATA%\985gmgn-helper\Extension`。
 5. 打开 `https://gmgn.ai/?chain=bsc`，点击插件图标配置 Dev 钱包。
+
+安装器目前未购买代码签名证书，Windows SmartScreen 可能显示发布者未知。可下载同名 `.sha256` 文件核对安装器摘要。用户也可以继续下载 ZIP 手动安装，但这种方式不能使用一键升级。
 
 ## 配置格式
 
@@ -50,6 +53,8 @@ Chrome Manifest V3 插件，用于在 GMGN BSC 战壕三列中高亮指定 Dev �
 
 ## 更新说明
 
-- GitHub Releases 用于公开源码和下载每个版本的 ZIP 安装包。
-- Windows/macOS 的 Chrome 不允许普通用户从 GitHub 自托管扩展完成静默安装或自动升级。
-- 真正的一键升级和后台自动更新需要把同一扩展发布到 Chrome Web Store；发布后，插件内的“一键检查升级”按钮会调用 Chrome 官方更新 API。
+- 安装器会把本地更新器注册为 Chrome/Edge Native Messaging 主机；更新器不常驻后台。
+- 插件启动时及每 6 小时检查一次 GitHub 最新 Release。发现新版时，插件图标显示 `UP`，配置页显示版本和 GitHub 链接。
+- 点击“一键升级”后，本地更新器下载 ZIP、核验 SHA256 与文件白名单、备份旧版并替换插件目录，然后重载插件。
+- 更新源固定为 `0xuezhang985/985gmgn-helper`，安装包不能包含白名单外文件。
+- 如果本地更新器不存在，配置页按钮会改为打开 GitHub 最新 Release，不会假装升级成功。

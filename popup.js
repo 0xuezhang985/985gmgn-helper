@@ -24,6 +24,11 @@ const status = document.querySelector('#status');
 const saveButton = document.querySelector('#save');
 const updateStatus = document.querySelector('#update-status');
 const checkUpdateButton = document.querySelector('#check-update');
+const updateCard = document.querySelector('.update-card');
+const releaseLink = document.querySelector('#release-link');
+const DEFAULT_RELEASE_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
+
+let currentUpdateState = null;
 
 document.querySelector('#version').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -96,21 +101,98 @@ saveButton.addEventListener('click', () => {
   });
 });
 
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function renderUpdateState(state) {
+  currentUpdateState = state;
+  updateCard.classList.toggle('has-update', Boolean(state?.updateAvailable));
+  releaseLink.hidden = !state?.updateAvailable;
+  releaseLink.dataset.url = state?.releaseUrl || DEFAULT_RELEASE_URL;
+
+  if (!state) {
+    updateStatus.textContent = '尚未检查更新';
+    checkUpdateButton.textContent = '检查更新';
+    return;
+  }
+
+  if (state.updateAvailable) {
+    updateStatus.textContent = `发现 v${state.latestVersion}，当前 v${state.currentVersion}`;
+    checkUpdateButton.textContent = state.updaterInstalled ? '一键升级' : '打开 GitHub';
+    return;
+  }
+
+  if (state.status === 'updater_missing') {
+    updateStatus.textContent = '本地更新器未安装，可前往 GitHub';
+    checkUpdateButton.textContent = '打开 GitHub';
+    return;
+  }
+
+  updateStatus.textContent = `当前 v${state.currentVersion} 已是最新版`;
+  checkUpdateButton.textContent = '重新检查';
+}
+
+function openReleasePage() {
+  const url = currentUpdateState?.releaseUrl || DEFAULT_RELEASE_URL;
+  chrome.tabs.create({ url });
+}
+
+async function refreshUpdateState() {
+  updateStatus.textContent = '正在检查 GitHub 最新版本…';
+  const state = await sendRuntimeMessage({ type: 'check-update' });
+  renderUpdateState(state);
+}
+
+releaseLink.addEventListener('click', (event) => {
+  event.preventDefault();
+  openReleasePage();
+});
+
 checkUpdateButton.addEventListener('click', async () => {
+  if (currentUpdateState?.status === 'updater_missing') {
+    openReleasePage();
+    return;
+  }
+
   checkUpdateButton.disabled = true;
-  updateStatus.textContent = '正在检查 Chrome 更新通道…';
   try {
-    const result = await chrome.runtime.requestUpdateCheck();
-    if (result.status === 'update_available') {
-      updateStatus.textContent = `发现 v${result.version || '新版'}，正在应用…`;
+    if (currentUpdateState?.updateAvailable) {
+      updateStatus.textContent = '正在下载并安装新版…';
+      const result = await sendRuntimeMessage({ type: 'install-update' });
+      if (!result?.ok) throw new Error(result?.error || '升级失败');
+      updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载…`;
+      setTimeout(() => chrome.runtime.reload(), 350);
       return;
     }
-    updateStatus.textContent = result.status === 'throttled'
-      ? '检查过于频繁，请稍后再试'
-      : '当前已是最新版';
+    await refreshUpdateState();
   } catch (error) {
-    updateStatus.textContent = `检查失败：${error.message || '未知错误'}`;
+    updateStatus.textContent = `升级检查失败：${error.message || '未知错误'}`;
   } finally {
     checkUpdateButton.disabled = false;
   }
 });
+
+sendRuntimeMessage({ type: 'get-update-state' })
+  .then((state) => {
+    renderUpdateState(state);
+    return refreshUpdateState();
+  })
+  .catch((error) => {
+    renderUpdateState({
+      status: 'updater_missing',
+      currentVersion: chrome.runtime.getManifest().version,
+      updaterInstalled: false,
+      updateAvailable: false,
+      releaseUrl: DEFAULT_RELEASE_URL,
+      error: error.message,
+    });
+  });

@@ -1,4 +1,5 @@
 dist/
+native-updater/extension.zip
 .uv-cache/
 .*-preview.*
 .*-test.*

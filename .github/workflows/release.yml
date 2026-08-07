@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,6 +20,11 @@ jobs:
         run: ./scripts/build-release.ps1
 
       - name: Publish GitHub Release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --generate-notes
+        run: |
+          $assets = Get-ChildItem -LiteralPath dist -File | Where-Object {
+            $_.Extension -in '.zip', '.exe', '.sha256'
+          } | ForEach-Object FullName
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes

@@ -1,4 +1,5 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $root = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $root 'manifest.json'
@@ -58,6 +59,27 @@ try {
 }
 
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+& (Join-Path $PSScriptRoot 'build-native-installer.ps1') -ZipPath $zipPath
+$installerPath = Join-Path $dist "985gmgn-helper-setup-v$version.exe"
+if (-not (Test-Path -LiteralPath $installerPath)) {
+  throw "安装器不存在：$installerPath"
+}
+$installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText(
+  "$zipPath.sha256",
+  "$hash  $([IO.Path]::GetFileName($zipPath))`n",
+  $utf8NoBom
+)
+[IO.File]::WriteAllText(
+  "$installerPath.sha256",
+  "$installerHash  $([IO.Path]::GetFileName($installerPath))`n",
+  $utf8NoBom
+)
+
 Write-Output "package=$zipPath"
 Write-Output "version=$version"
 Write-Output "sha256=$hash"
+Write-Output "installer=$installerPath"
+Write-Output "installer_sha256=$installerHash"

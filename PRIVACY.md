@@ -11,7 +11,12 @@
 
 ## 网络访问
 
-插件仅声明 `https://gmgn.ai/*` 页面权限。版本升级通过 Chrome 官方扩展更新机制完成。
+插件页面仅声明 `https://gmgn.ai/*` 页面权限。本地更新器只访问以下固定地址：
+
+- `https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/latest`：读取最新版本。
+- `https://github.com/0xuezhang985/985gmgn-helper/releases/download/`：下载发布包和 SHA256 文件。
+
+更新请求不包含 Dev 地址、备注、喊单黑名单或其他用户配置。本地更新器不常驻后台，只在插件检查或安装更新时启动；下载的 ZIP 必须通过 SHA256、文件白名单、manifest 名称、版本和固定扩展 ID 校验。
 
 ## 联系方式
 
