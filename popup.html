@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>985gmgn助手</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">
+          <img class="brand-icon" src="icons/icon48.png" alt="" />
+          <div>
+            <h1>985gmgn助手</h1>
+            <p>GMGN BSC 战壕高亮</p>
+          </div>
+        </div>
+        <span id="version"></span>
+      </header>
+
+      <section class="settings-section">
+        <h2>功能开关</h2>
+        <div class="feature-list">
+          <label class="switch-row">
+            <span>
+              <strong>重点 Dev 高亮</strong>
+              <small>显示卡片边框、底色和常显备注</small>
+            </span>
+            <input id="enabled" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>Dev 战绩常显</strong>
+              <small>显示迁移数、发币数和迁移比例</small>
+            </span>
+            <input id="show-dev-performance" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>重点 Dev 悬停详情</strong>
+              <small>悬停卡片时显示完整 Dev 战绩</small>
+            </span>
+            <input id="show-dev-tooltip" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>详情页一键收藏</strong>
+              <small>在开发者面板显示收藏 Dev 按钮</small>
+            </span>
+            <input id="enable-dev-bookmark" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>喊单黑名单</strong>
+              <small>显示屏蔽按钮并过滤卡片和顶部通知</small>
+            </span>
+            <input id="enable-callout-blacklist" type="checkbox" />
+          </label>
+        </div>
+      </section>
+
+      <label class="field" for="dev-list">
+        <span>Dev 钱包</span>
+        <small>每行一个地址，地址后可加备注</small>
+      </label>
+      <textarea
+        id="dev-list"
+        rows="5"
+        spellcheck="false"
+        placeholder="0x1234...abcd 重点团队 A&#10;0xabcd...1234"
+      ></textarea>
+
+      <label class="color-row" for="highlight-color">
+        <span>高亮颜色</span>
+        <input id="highlight-color" type="color" value="#f5b83d" />
+      </label>
+
+      <section class="update-card">
+        <span>
+          <strong>版本更新</strong>
+          <small id="update-status">通过 Chrome 官方更新通道检查</small>
+        </span>
+        <button id="check-update" type="button">一键检查升级</button>
+      </section>
+
+      <div id="status" aria-live="polite"></div>
+      <button id="save" type="button">保存设置</button>
+
+      <footer>数据直接读取当前 GMGN 战壕卡片，不使用 API Key。</footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

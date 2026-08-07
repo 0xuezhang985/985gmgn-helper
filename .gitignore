@@ -1,0 +1,4 @@
+dist/
+.uv-cache/
+.*-preview.*
+.*-test.*
