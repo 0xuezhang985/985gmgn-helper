@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 - 2026-08-07
+
+- 测试 Native Messaging 更新提醒、GitHub Release 检查和一键升级完整链路。
+
 ## 0.8.0 - 2026-08-07
 
 - 新增 Windows 单文件安装器与 Native Messaging 本地更新器，同时支持 Chrome 和 Edge。
