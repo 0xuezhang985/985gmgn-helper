@@ -166,6 +166,148 @@
   word-break: break-word;
 }
 
+.gdh-mani-tab-button {
+  margin-left: 10px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gdh-mani-tab-button:hover {
+  color: #d6d9df;
+}
+
+.gdh-mani-tab-button.is-active {
+  color: #f5b83d;
+}
+
+.gdh-mani-list-modal {
+  position: absolute;
+  z-index: 120;
+  inset: 76px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #16181d;
+  border: 1px solid rgba(245, 184, 61, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  font: 400 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.gdh-mani-list__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.18);
+  color: #f5b83d;
+  font-size: 13px;
+}
+
+.gdh-mani-list__close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 15px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.gdh-mani-list__close:hover {
+  background: rgba(139, 147, 161, 0.18);
+  color: #fff;
+}
+
+.gdh-mani-list__items {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gdh-mani-list__empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: #8b93a1;
+}
+
+.gdh-mani-list__item {
+  display: block;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.12);
+  color: #d6d9df;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.gdh-mani-list__item:hover {
+  background: #1a1d23;
+}
+
+.gdh-mani-list__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gdh-mani-list__symbol {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gdh-mani-list__usd {
+  flex: 0 0 auto;
+  color: #b48ae0;
+  font-weight: 700;
+}
+
+.gdh-mani-list__mult {
+  flex: 0 0 auto;
+  color: #8b93a1;
+  font-size: 11px;
+}
+
+.gdh-mani-list__time {
+  flex: 1 0 auto;
+  text-align: right;
+  color: #8b93a1;
+  font-size: 11px;
+}
+
+.gdh-mani-list__caller {
+  margin-top: 2px;
+  color: #8b93a1;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-mani-list__text {
+  margin-top: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
 .gdh-dev-save-button {
   display: flex;
   align-items: center;

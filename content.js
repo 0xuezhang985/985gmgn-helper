@@ -15,6 +15,7 @@
     enableDevBookmark: true,
     enableCalloutBlacklist: true,
     enableManifestoToast: true,
+    enableManifestoTab: true,
     watchedDevs: [],
     blockedCallers: [],
     highlightColor: '#f5b83d',
@@ -614,6 +615,7 @@
         event.preventDefault();
         event.stopPropagation();
         blacklistModalOpen = !blacklistModalOpen;
+        if (blacklistModalOpen) maniListOpen = false;
         scheduleScan();
       });
       context.controls.prepend(button);
@@ -823,6 +825,254 @@
     container.appendChild(toast);
   }
 
+  // ---- 喊单窗"宣言"标签页：按时间倒序列出当前宣言 ----
+  const MANI_LIST_REFRESH_MS = 30000;
+  const MANI_LIST_STALE_MS = 15000;
+  let maniListOpen = false;
+  let maniListTimer = 0;
+  let maniListLoading = false;
+  let maniListCache = { at: 0, list: [] };
+
+  function formatRelTime(ms) {
+    const diff = Math.max(0, Date.now() - Number(ms));
+    if (diff < 60e3) return `${Math.max(1, Math.floor(diff / 1e3))}秒前`;
+    if (diff < 3600e3) return `${Math.floor(diff / 60e3)}分钟前`;
+    if (diff < 86400e3) return `${Math.floor(diff / 3600e3)}小时前`;
+    return `${Math.floor(diff / 86400e3)}天前`;
+  }
+
+  async function fetchManifestoSnapshot() {
+    if (maniListLoading) return;
+    maniListLoading = true;
+    try {
+      const res = await fetch(
+        `https://gmgn.ai/api/v1/notification/callout/declaration/global_snapshot?${DEV_ATH_QS}&chains=bsc`,
+        { credentials: 'include' },
+      );
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.code === 0 && Array.isArray(body.data?.list)) {
+        maniListCache = { at: Date.now(), list: body.data.list };
+      }
+    } catch {
+      // 网络失败保留旧缓存
+    }
+    maniListLoading = false;
+    if (maniListOpen) scheduleScan();
+  }
+
+  function stopManiListTimer() {
+    if (maniListTimer) {
+      window.clearInterval(maniListTimer);
+      maniListTimer = 0;
+    }
+  }
+
+  function manifestoItemBlocked(item) {
+    return isCallerBlocked({
+      wallet: normalizeAddress(item.call_wallet),
+      handle: normalizeHandle(item.twitter_username),
+    });
+  }
+
+  function renderManifestoListModal(modal) {
+    const items = [...maniListCache.list]
+      .filter((item) => !manifestoItemBlocked(item))
+      .sort((a, b) => Number(b.create_time) - Number(a.create_time));
+    const key = `${maniListCache.at}|${items.map((it) => it.ulid || it.id).join(',')}|${Math.floor(Date.now() / MANI_LIST_REFRESH_MS)}`;
+    if (modal.dataset.gdhManiListKey === key) return;
+    modal.dataset.gdhManiListKey = key;
+
+    const list = modal.querySelector('.gdh-mani-list__items');
+    list.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-mani-list__empty';
+      empty.textContent = maniListCache.at ? '当前没有宣言' : '加载中…';
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const item of items) {
+      const token = normalizeAddress(item.call_token);
+      if (!token) continue;
+      const row = document.createElement('a');
+      row.className = 'gdh-mani-list__item';
+      row.href = `/bsc/token/${token}`;
+
+      const head = document.createElement('div');
+      head.className = 'gdh-mani-list__head';
+      const symbol = document.createElement('strong');
+      symbol.className = 'gdh-mani-list__symbol';
+      symbol.textContent = String(item.token_symbol || '代币').slice(0, 24);
+      head.appendChild(symbol);
+      if (item.amount_usd) {
+        const usd = document.createElement('span');
+        usd.className = 'gdh-mani-list__usd';
+        usd.textContent = `$${item.amount_usd}`;
+        head.appendChild(usd);
+      }
+      const mult = Number(item.multiplier);
+      if (Number.isFinite(mult) && mult > 0) {
+        const multEl = document.createElement('span');
+        multEl.className = 'gdh-mani-list__mult';
+        multEl.textContent = `${mult.toFixed(1).replace(/\.0$/, '')}x`;
+        head.appendChild(multEl);
+      }
+      const time = document.createElement('span');
+      time.className = 'gdh-mani-list__time';
+      time.textContent = formatRelTime(item.create_time);
+      head.appendChild(time);
+      row.appendChild(head);
+
+      const caller = document.createElement('div');
+      caller.className = 'gdh-mani-list__caller';
+      const callerName = String(item.twitter_name || '').trim();
+      const callerHandle = String(item.twitter_username || '').trim();
+      caller.textContent = callerHandle
+        ? `${callerName || callerHandle} @${callerHandle}`
+        : callerName || '匿名';
+      row.appendChild(caller);
+
+      const text = String(item.call_thesis?.source_content || '').trim();
+      if (text) {
+        const body = document.createElement('div');
+        body.className = 'gdh-mani-list__text';
+        body.textContent = text;
+        row.appendChild(body);
+      }
+
+      row.addEventListener('click', (event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) return;
+        event.preventDefault();
+        event.stopPropagation();
+        maniListOpen = false;
+        scheduleScan();
+        // 宣言栏里同 ulid 的 chip 还在就代理点击（SPA 路由），否则整页跳转。
+        const chip = item.ulid
+          ? document.querySelector(`${MANIFESTO_SELECTOR}[data-gdh-mani-ulid="${item.ulid}"]`)
+          : null;
+        if (chip instanceof HTMLElement && chip.isConnected) chip.click();
+        else window.location.assign(`/bsc/token/${token}`);
+      });
+      list.appendChild(row);
+    }
+  }
+
+  function ensureManifestoListModal(context) {
+    let modal = context.panel.querySelector(':scope > .gdh-mani-list-modal');
+    if (!maniListOpen) {
+      modal?.remove();
+      stopManiListTimer();
+      return;
+    }
+
+    context.panel.classList.add('gdh-callout-panel-host');
+    if (!modal) {
+      modal = document.createElement('section');
+      modal.className = 'gdh-mani-list-modal';
+      modal.addEventListener('pointerdown', (event) => event.stopPropagation());
+
+      const header = document.createElement('div');
+      header.className = 'gdh-mani-list__header';
+      const title = document.createElement('strong');
+      title.textContent = '当前宣言 · 按时间';
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'gdh-mani-list__close';
+      close.textContent = '×';
+      close.title = '关闭宣言列表';
+      close.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        maniListOpen = false;
+        modal.remove();
+        stopManiListTimer();
+        scheduleScan();
+      });
+      header.append(title, close);
+
+      const list = document.createElement('div');
+      list.className = 'gdh-mani-list__items';
+      modal.append(header, list);
+      context.panel.appendChild(modal);
+    }
+
+    // 挂在 GMGN tab 行下方，保留 tab 行可点（点官方 tab 会关掉本列表）。
+    try {
+      const firstTab = context.panel.querySelector('button[data-sentry-component="renderTab"]');
+      const rowRect = (firstTab?.parentElement || context.header).getBoundingClientRect();
+      const panelRect = context.panel.getBoundingClientRect();
+      const top = Math.max(40, Math.round(rowRect.bottom - panelRect.top) + 6);
+      modal.style.top = `${top}px`;
+    } catch {
+      modal.style.top = '76px';
+    }
+
+    if (Date.now() - maniListCache.at > MANI_LIST_STALE_MS) fetchManifestoSnapshot();
+    if (!maniListTimer) {
+      maniListTimer = window.setInterval(fetchManifestoSnapshot, MANI_LIST_REFRESH_MS);
+    }
+    renderManifestoListModal(modal);
+  }
+
+  function ensureManifestoTab() {
+    if (settings.enableManifestoTab === false) {
+      document
+        .querySelectorAll('.gdh-mani-tab-button, .gdh-mani-list-modal')
+        .forEach((node) => node.remove());
+      maniListOpen = false;
+      stopManiListTimer();
+      return;
+    }
+    const context = getCalloutPanelContext();
+    if (!context) {
+      if (maniListOpen) {
+        maniListOpen = false;
+        stopManiListTimer();
+      }
+      return;
+    }
+    const firstTab = context.panel.querySelector('button[data-sentry-component="renderTab"]');
+    const tabsInner = firstTab?.parentElement;
+    if (!(tabsInner instanceof HTMLElement)) return;
+
+    let button = tabsInner.querySelector(':scope > .gdh-mani-tab-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gdh-mani-tab-button';
+      button.title = '按时间查看当前宣言';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        maniListOpen = !maniListOpen;
+        if (maniListOpen) blacklistModalOpen = false;
+        scheduleScan();
+      });
+      tabsInner.appendChild(button);
+      if (!tabsInner.dataset.gdhManiTabWatch) {
+        tabsInner.dataset.gdhManiTabWatch = '1';
+        tabsInner.addEventListener(
+          'click',
+          (event) => {
+            if (!maniListOpen) return;
+            if (event.target.closest?.('button[data-sentry-component="renderTab"]')) {
+              maniListOpen = false;
+              scheduleScan();
+            }
+          },
+          true,
+        );
+      }
+    }
+    const visible = maniListCache.list.filter((item) => !manifestoItemBlocked(item)).length;
+    const label = maniListCache.at && visible ? `宣言 ${visible}` : '宣言';
+    if (button.textContent !== label) button.textContent = label;
+    button.classList.toggle('is-active', maniListOpen);
+    ensureManifestoListModal(context);
+  }
+
   function scanManifestoToasts() {
     if (settings.enableManifestoToast === false) {
       maniContainer?.remove();
@@ -901,6 +1151,7 @@
     document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState);
     scanCalloutBlacklist();
     scanManifestoToasts();
+    ensureManifestoTab();
   }
 
   function scheduleScan() {
