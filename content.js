@@ -667,10 +667,13 @@
 
   // ---- 新宣言弹窗提醒 ----
   const MANI_SEEN_MAX = 500;
+  const MANI_SEEN_STORE_KEY = 'maniSeenKeys';
   const MANI_TOAST_MS = 12000;
   const MANI_TOAST_MAX = 3;
   const MANI_BASELINE_FAILSAFE_MS = 8000;
   const maniSeen = new Set();
+  let maniSeenLoaded = false;
+  let maniSeenSaveTimer = 0;
   let maniBaselineDone = false;
   let maniRailFirstSeenAt = 0;
   let maniContainer = null;
@@ -686,14 +689,40 @@
     return `${token}|${chip.dataset.gdhCallerHandle || ''}`;
   }
 
+  function trimManiSeen() {
+    if (maniSeen.size <= MANI_SEEN_MAX) return;
+    const iterator = maniSeen.values();
+    for (let extra = maniSeen.size - MANI_SEEN_MAX; extra > 0; extra -= 1) {
+      maniSeen.delete(iterator.next().value);
+    }
+  }
+
+  // 已见宣言持久化：新页面/新标签页不再把旧宣言当新宣言重复弹。
+  function scheduleManiSeenSave() {
+    if (maniSeenSaveTimer) return;
+    maniSeenSaveTimer = window.setTimeout(() => {
+      maniSeenSaveTimer = 0;
+      try {
+        chrome.storage.local.set({ [MANI_SEEN_STORE_KEY]: [...maniSeen] });
+      } catch {
+        // context invalidated — 忽略
+      }
+    }, 400);
+  }
+
+  // 合并其他标签页写入的已见集合；不回写，避免多标签互相触发循环。
+  function mergeManiSeenKeys(keys) {
+    if (!Array.isArray(keys)) return;
+    keys.forEach((key) => {
+      if (typeof key === 'string' && key) maniSeen.add(key);
+    });
+    trimManiSeen();
+  }
+
   function rememberManiKey(key) {
     maniSeen.add(key);
-    if (maniSeen.size > MANI_SEEN_MAX) {
-      const iterator = maniSeen.values();
-      for (let extra = maniSeen.size - MANI_SEEN_MAX; extra > 0; extra -= 1) {
-        maniSeen.delete(iterator.next().value);
-      }
-    }
+    trimManiSeen();
+    scheduleManiSeenSave();
   }
 
   function manifestoTokenHref(chip) {
@@ -800,6 +829,7 @@
       maniContainer = null;
       return;
     }
+    if (!maniSeenLoaded) return;
     const chips = [...document.querySelectorAll(MANIFESTO_SELECTOR)];
     const railExists = chips.length > 0
       || !!document.querySelector('[data-sentry-component="ManifestoRailInner"]');
@@ -807,8 +837,14 @@
 
     if (!maniBaselineDone) {
       if (!maniRailFirstSeenAt) maniRailFirstSeenAt = Date.now();
-      const allKeyed = chips.every((chip) => maniKeyFromChip(chip));
-      if (!allKeyed && Date.now() - maniRailFirstSeenAt < MANI_BASELINE_FAILSAFE_MS) return;
+      // 0.10.1: 空栏不算基线——GMGN 先挂空容器、快照晚到，过早提交会把
+      // 旧宣言全判成新宣言（新开页面重复弹）。等到有完整可识别的宣言才提交；
+      // 真·无宣言的页面走 8s 兜底。
+      const failsafeElapsed =
+        Date.now() - maniRailFirstSeenAt >= MANI_BASELINE_FAILSAFE_MS;
+      const snapshotReady =
+        chips.length > 0 && chips.every((chip) => maniKeyFromChip(chip));
+      if (!snapshotReady && !failsafeElapsed) return;
       chips.forEach((chip) => {
         const key = maniKeyFromChip(chip);
         if (key) rememberManiKey(key);
@@ -1010,9 +1046,21 @@
     scheduleScan();
   });
 
+  chrome.storage.local.get({ [MANI_SEEN_STORE_KEY]: [] }, (stored) => {
+    mergeManiSeenKeys(stored[MANI_SEEN_STORE_KEY]);
+    maniSeenLoaded = true;
+    scheduleScan();
+  });
+
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
-    for (const [key, change] of Object.entries(changes)) settings[key] = change.newValue;
+    for (const [key, change] of Object.entries(changes)) {
+      if (key === MANI_SEEN_STORE_KEY) {
+        mergeManiSeenKeys(change.newValue);
+        continue;
+      }
+      settings[key] = change.newValue;
+    }
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     scheduleScan();
