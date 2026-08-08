@@ -14,6 +14,7 @@
     showDevTooltip: true,
     enableDevBookmark: true,
     enableCalloutBlacklist: true,
+    enableManifestoToast: true,
     watchedDevs: [],
     blockedCallers: [],
     highlightColor: '#f5b83d',
@@ -29,6 +30,85 @@
   let blacklistModalOpen = false;
   let activeCard = null;
   let tooltip = null;
+
+  // Dev 历史最高市值：gmgn.ai/api/v1/dev_created_tokens（同源，带会话，免配置）。
+  const DEV_ATH_TTL_MS = 5 * 60 * 1000;
+  const DEV_ATH_ERROR_RETRY_MS = 60 * 1000;
+  const DEV_ATH_GAP_MS = 250;
+  const DEV_ATH_QS =
+    'device_id=&client_id=gmgn_web&from_app=gmgn&app_ver=&tz_name=Asia%2FShanghai&tz_offset=28800&app_lang=zh-CN&os=web';
+  const devAthCache = new Map();
+  const devAthQueue = [];
+  const devAthQueued = new Set();
+  let devAthTimer = 0;
+
+  function getDevAth(creator) {
+    if (!creator) return null;
+    const hit = devAthCache.get(creator);
+    const fresh = hit
+      && Date.now() - hit.at < (hit.ok ? DEV_ATH_TTL_MS : DEV_ATH_ERROR_RETRY_MS);
+    if (!fresh && !devAthQueued.has(creator)) {
+      devAthQueued.add(creator);
+      devAthQueue.push(creator);
+      if (!devAthTimer) devAthTimer = window.setTimeout(processDevAthQueue, 50);
+    }
+    return hit && hit.ok && hit.mc > 0 ? hit : null;
+  }
+
+  async function processDevAthQueue() {
+    devAthTimer = 0;
+    if (settings.showDevPerformance === false) {
+      devAthQueue.length = 0;
+      devAthQueued.clear();
+      return;
+    }
+    const creator = devAthQueue.shift();
+    if (!creator) return;
+    let entry = { at: Date.now(), ok: false, mc: 0, symbol: '' };
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(
+        `https://gmgn.ai/api/v1/dev_created_tokens/bsc/${creator}?${DEV_ATH_QS}`,
+        { credentials: 'include', signal: controller.signal },
+      );
+      window.clearTimeout(timeout);
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.code === 0) {
+        const info = body.data?.creator_ath_info;
+        entry = {
+          at: Date.now(),
+          ok: true,
+          mc: Number(info?.ath_mc) || 0,
+          symbol: String(info?.token_symbol || '').slice(0, 24),
+        };
+      }
+    } catch {
+      // 网络失败静默降级：峰段不显示，60s 后允许重试。
+    }
+    devAthCache.set(creator, entry);
+    devAthQueued.delete(creator);
+    if (entry.ok && entry.mc > 0) scheduleScan();
+    if (devAthQueue.length) devAthTimer = window.setTimeout(processDevAthQueue, DEV_ATH_GAP_MS);
+  }
+
+  function formatAthMc(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const fmt = (v) => (v < 10 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v)));
+    if (n >= 1e9) return `$${fmt(n / 1e9)}B`;
+    if (n >= 1e6) return `$${fmt(n / 1e6)}M`;
+    if (n >= 1e3) return `$${fmt(n / 1e3)}K`;
+    return `$${Math.round(n)}`;
+  }
+
+  function athTierClass(value) {
+    const n = Number(value) || 0;
+    if (n >= 1e7) return 'gdh-mc-t4';
+    if (n >= 1e6) return 'gdh-mc-t3';
+    if (n >= 1e5) return 'gdh-mc-t2';
+    return 'gdh-mc-t1';
+  }
 
   function normalizeAddress(value) {
     return typeof value === 'string' ? value.toLowerCase() : '';
@@ -100,8 +180,10 @@
   function formatRatio(card) {
     const percent = getRatioPercent(card);
     if (!Number.isFinite(percent)) return '--';
-    if (percent === 0) return '0.00%';
-    return `${percent < 0.01 ? percent.toFixed(4) : percent.toFixed(2)}%`;
+    if (percent === 0) return '0%';
+    if (percent < 0.1) return '<0.1%';
+    if (percent < 10) return `${percent.toFixed(1).replace(/\.0$/, '')}%`;
+    return `${Math.round(percent)}%`;
   }
 
   function applyRateColor(performance, percent) {
@@ -178,9 +260,31 @@
     const total = formatCount(card.dataset.gdhTotal);
     const ratio = formatRatio(card);
     applyRateColor(performance, getRatioPercent(card));
-    const nextText = `DEV 迁${migrated} · 发${total} · 率${ratio}`;
-    if (performance.textContent !== nextText) performance.textContent = nextText;
-    performance.title = `Dev 发币迁移数：${migrated}\nDev 发币总数：${total}\nDev 发币迁移比例：${ratio}`;
+
+    const ath = getDevAth(normalizeAddress(card.dataset.gdhCreator));
+    const rateText = `迁${migrated}发${total}·${ratio}`;
+    const mcText = ath ? `峰${formatAthMc(ath.mc)}` : '';
+    const tier = ath ? athTierClass(ath.mc) : '';
+    const signature = `${rateText}|${mcText}|${tier}`;
+    if (performance.dataset.gdhSig !== signature) {
+      performance.dataset.gdhSig = signature;
+      performance.textContent = '';
+      const rateEl = document.createElement('span');
+      rateEl.textContent = rateText;
+      performance.appendChild(rateEl);
+      if (mcText) {
+        const sep = document.createElement('span');
+        sep.className = 'gdh-dev-performance__sep';
+        sep.textContent = '·';
+        const mcEl = document.createElement('span');
+        mcEl.className = `gdh-dev-performance__mc ${tier}`;
+        mcEl.textContent = mcText;
+        performance.append(sep, mcEl);
+      }
+    }
+    performance.title = `Dev 发币迁移数：${migrated}\nDev 发币总数：${total}\nDev 发币迁移比例：${ratio}${
+      ath ? `\nDev 最高市值币：${ath.symbol || '未知'} ${formatAthMc(ath.mc)}` : ''
+    }`;
   }
 
   function getDeveloperPanelContexts() {
@@ -325,16 +429,37 @@
     );
   }
 
-  function getCalloutPanelContext() {
-    const panel = document.querySelector('[data-sentry-component="GlobalCalloutPanel"]');
-    if (!panel) return null;
-    const heading = [...panel.querySelectorAll('span')].find((element) => (
+  function findCalloutHeading(scope) {
+    return [...scope.querySelectorAll('span')].find((element) => (
       element.children.length === 0 && element.textContent?.trim() === '喊单'
     ));
-    const header = heading?.parentElement?.parentElement;
-    const controls = header?.children[1];
-    if (!heading || !header || !controls) return null;
-    return { panel, header, controls };
+  }
+
+  function getCalloutPanelContext() {
+    // 2026-08-07 之前的构建：面板根节点带 GlobalCalloutPanel 标记。
+    const panel = document.querySelector('[data-sentry-component="GlobalCalloutPanel"]');
+    if (panel) {
+      const heading = findCalloutHeading(panel);
+      const header = heading?.parentElement?.parentElement;
+      const controls = header?.children[1];
+      if (!heading || !header || !controls) return null;
+      return { panel, header, controls };
+    }
+
+    // 2026-08-08 GMGN 改版去掉了 GlobalCalloutPanel：改从喊单面板的
+    // tab 按钮（我的 / GMGN全部）定位，再用同面板内的“喊单”标题确认。
+    for (const tab of document.querySelectorAll('button[data-sentry-component="renderTab"]')) {
+      const tabsRow = tab.parentElement?.parentElement;
+      const headerBlock = tabsRow?.parentElement;
+      const header = headerBlock?.children[0];
+      const root = headerBlock?.parentElement;
+      if (!header || !root || header === tabsRow) continue;
+      const heading = findCalloutHeading(header);
+      const controls = heading ? header.children[1] : null;
+      if (!heading || !controls) continue;
+      return { panel: root, header, controls };
+    }
+    return null;
   }
 
   function showCalloutToast(text) {
@@ -540,6 +665,167 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
+  // ---- 新宣言弹窗提醒 ----
+  const MANI_SEEN_MAX = 500;
+  const MANI_TOAST_MS = 12000;
+  const MANI_TOAST_MAX = 3;
+  const MANI_BASELINE_FAILSAFE_MS = 8000;
+  const maniSeen = new Set();
+  let maniBaselineDone = false;
+  let maniRailFirstSeenAt = 0;
+  let maniContainer = null;
+
+  function maniKeyFromChip(chip) {
+    const ulid = chip.dataset.gdhManiUlid || '';
+    if (ulid) return ulid;
+    const href = chip.getAttribute('href') || '';
+    const token = normalizeAddress(
+      chip.dataset.gdhManiToken || (href.match(/\/token\/(0x[a-fA-F0-9]{40})/) || [])[1] || '',
+    );
+    if (!token) return '';
+    return `${token}|${chip.dataset.gdhCallerHandle || ''}`;
+  }
+
+  function rememberManiKey(key) {
+    maniSeen.add(key);
+    if (maniSeen.size > MANI_SEEN_MAX) {
+      const iterator = maniSeen.values();
+      for (let extra = maniSeen.size - MANI_SEEN_MAX; extra > 0; extra -= 1) {
+        maniSeen.delete(iterator.next().value);
+      }
+    }
+  }
+
+  function manifestoTokenHref(chip) {
+    const href = chip.getAttribute('href') || '';
+    if (/\/token\/0x[a-fA-F0-9]{40}/.test(href)) return href;
+    const token = normalizeAddress(chip.dataset.gdhManiToken);
+    return token ? `/bsc/token/${token}` : '';
+  }
+
+  function ensureManiContainer() {
+    if (maniContainer && document.contains(maniContainer)) return maniContainer;
+    maniContainer = document.createElement('div');
+    maniContainer.className = 'gdh-mani-toast-container';
+    document.body.appendChild(maniContainer);
+    return maniContainer;
+  }
+
+  function showManifestoToast(chip) {
+    const href = manifestoTokenHref(chip);
+    if (!href) return;
+    const symbol = chip.dataset.gdhManiSymbol || '代币';
+    const usd = chip.dataset.gdhManiUsd || '';
+    const name = chip.dataset.gdhCallerName || '';
+    const handle = chip.dataset.gdhCallerHandle || '';
+    const text = chip.dataset.gdhManiText || '';
+
+    const container = ensureManiContainer();
+    while (container.children.length >= MANI_TOAST_MAX) {
+      container.firstElementChild.remove();
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'gdh-mani-toast';
+
+    const head = document.createElement('div');
+    head.className = 'gdh-mani-toast__head';
+    const tag = document.createElement('span');
+    tag.className = 'gdh-mani-toast__tag';
+    tag.textContent = '宣言';
+    const symbolEl = document.createElement('strong');
+    symbolEl.className = 'gdh-mani-toast__symbol';
+    symbolEl.textContent = symbol;
+    head.append(tag, symbolEl);
+    if (usd) {
+      const usdEl = document.createElement('span');
+      usdEl.className = 'gdh-mani-toast__usd';
+      usdEl.textContent = `$${usd}`;
+      head.appendChild(usdEl);
+    }
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-mani-toast__close';
+    close.textContent = '×';
+    close.title = '关闭';
+    head.appendChild(close);
+    toast.appendChild(head);
+
+    if (name || handle) {
+      const caller = document.createElement('div');
+      caller.className = 'gdh-mani-toast__caller';
+      caller.textContent = handle ? `${name || handle} @${handle}` : name;
+      toast.appendChild(caller);
+    }
+    if (text) {
+      const body = document.createElement('div');
+      body.className = 'gdh-mani-toast__text';
+      body.textContent = text;
+      toast.appendChild(body);
+    }
+
+    let dismissTimer = 0;
+    const dismiss = () => {
+      window.clearTimeout(dismissTimer);
+      toast.remove();
+      if (maniContainer && !maniContainer.children.length) {
+        maniContainer.remove();
+        maniContainer = null;
+      }
+    };
+    const arm = () => {
+      window.clearTimeout(dismissTimer);
+      dismissTimer = window.setTimeout(dismiss, MANI_TOAST_MS);
+    };
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    });
+    toast.addEventListener('mouseenter', () => window.clearTimeout(dismissTimer));
+    toast.addEventListener('mouseleave', arm);
+    toast.addEventListener('click', () => {
+      dismiss();
+      // 原 chip 还在就代理点击（走 GMGN 自己的 SPA 路由），否则整页跳转。
+      if (chip.isConnected) chip.click();
+      else window.location.assign(href);
+    });
+    arm();
+    container.appendChild(toast);
+  }
+
+  function scanManifestoToasts() {
+    if (settings.enableManifestoToast === false) {
+      maniContainer?.remove();
+      maniContainer = null;
+      return;
+    }
+    const chips = [...document.querySelectorAll(MANIFESTO_SELECTOR)];
+    const railExists = chips.length > 0
+      || !!document.querySelector('[data-sentry-component="ManifestoRailInner"]');
+    if (!railExists) return;
+
+    if (!maniBaselineDone) {
+      if (!maniRailFirstSeenAt) maniRailFirstSeenAt = Date.now();
+      const allKeyed = chips.every((chip) => maniKeyFromChip(chip));
+      if (!allKeyed && Date.now() - maniRailFirstSeenAt < MANI_BASELINE_FAILSAFE_MS) return;
+      chips.forEach((chip) => {
+        const key = maniKeyFromChip(chip);
+        if (key) rememberManiKey(key);
+      });
+      maniBaselineDone = true;
+      return;
+    }
+
+    chips.forEach((chip) => {
+      const key = maniKeyFromChip(chip);
+      if (!key || maniSeen.has(key)) return;
+      rememberManiKey(key);
+      if (isCallerBlocked(getCallerFromElement(chip))) return;
+      showManifestoToast(chip);
+    });
+  }
+
   function scanCalloutBlacklist() {
     if (settings.enableCalloutBlacklist === false) {
       blacklistModalOpen = false;
@@ -578,6 +864,7 @@
   function scanVisibleCards() {
     document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState);
     scanCalloutBlacklist();
+    scanManifestoToasts();
   }
 
   function scheduleScan() {

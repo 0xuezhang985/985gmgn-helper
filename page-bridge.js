@@ -131,6 +131,11 @@
         wallet,
         handle,
         name: String(item.callerName || handle || '').trim(),
+        ulid: String(item.ulid || '').trim(),
+        tokenAddress: normalizeAddress(item.tokenAddress),
+        tokenSymbol: String(item.tokenSymbol || '').trim().slice(0, 32),
+        text: String(item.sourceContent || '').trim().slice(0, 200),
+        amountUsd: String(item.amountUsd || '').trim().slice(0, 12),
       };
     }
 
@@ -229,6 +234,11 @@
       'data-gdh-caller-wallet',
       'data-gdh-caller-handle',
       'data-gdh-caller-name',
+      'data-gdh-mani-ulid',
+      'data-gdh-mani-token',
+      'data-gdh-mani-symbol',
+      'data-gdh-mani-text',
+      'data-gdh-mani-usd',
     ]) {
       element.removeAttribute(name);
     }
@@ -245,6 +255,13 @@
     setAttribute(element, 'data-gdh-caller-wallet', data.wallet);
     setAttribute(element, 'data-gdh-caller-handle', data.handle);
     setAttribute(element, 'data-gdh-caller-name', data.name);
+    if (kind === 'manifesto') {
+      setAttribute(element, 'data-gdh-mani-ulid', data.ulid);
+      setAttribute(element, 'data-gdh-mani-token', data.tokenAddress);
+      setAttribute(element, 'data-gdh-mani-symbol', data.tokenSymbol);
+      setAttribute(element, 'data-gdh-mani-text', data.text);
+      setAttribute(element, 'data-gdh-mani-usd', data.amountUsd);
+    }
   }
 
   function scanCards() {

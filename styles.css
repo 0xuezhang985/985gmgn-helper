@@ -49,6 +49,123 @@
     box-shadow 160ms ease;
 }
 
+.gdh-dev-performance__sep {
+  margin: 0 3px;
+  color: rgba(139, 147, 161, 0.55);
+}
+
+.gdh-dev-performance__mc.gdh-mc-t1 { color: #8b93a1; }
+.gdh-dev-performance__mc.gdh-mc-t2 { color: #5b9bd9; }
+.gdh-dev-performance__mc.gdh-mc-t3 { color: #b48ae0; }
+.gdh-dev-performance__mc.gdh-mc-t4 { color: #f0a13c; }
+
+.gdh-mani-toast-container {
+  position: fixed;
+  top: 64px;
+  right: 14px;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  pointer-events: none;
+}
+
+.gdh-mani-toast {
+  pointer-events: auto;
+  cursor: pointer;
+  background: #16181d;
+  border: 1px solid rgba(245, 184, 61, 0.45);
+  border-radius: 8px;
+  padding: 9px 11px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+  color: #d6d9df;
+  font: 400 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  animation: gdh-mani-slide-in 200ms ease-out;
+}
+
+.gdh-mani-toast:hover {
+  border-color: rgba(245, 184, 61, 0.8);
+  background: #1a1d23;
+}
+
+@keyframes gdh-mani-slide-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.gdh-mani-toast__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gdh-mani-toast__tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(245, 184, 61, 0.16);
+  color: #f5b83d;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+}
+
+.gdh-mani-toast__symbol {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gdh-mani-toast__usd {
+  flex: 0 0 auto;
+  color: #b48ae0;
+  font-weight: 700;
+}
+
+.gdh-mani-toast__close {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.gdh-mani-toast__close:hover {
+  background: rgba(139, 147, 161, 0.18);
+  color: #fff;
+}
+
+.gdh-mani-toast__caller {
+  margin-top: 3px;
+  color: #8b93a1;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-mani-toast__text {
+  margin-top: 4px;
+  color: #d6d9df;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
 .gdh-dev-save-button {
   display: flex;
   align-items: center;

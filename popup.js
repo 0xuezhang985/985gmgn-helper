@@ -7,6 +7,7 @@ const DEFAULTS = {
   showDevTooltip: true,
   enableDevBookmark: true,
   enableCalloutBlacklist: true,
+  enableManifestoToast: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
 };
@@ -17,6 +18,7 @@ const featureInputs = {
   showDevTooltip: document.querySelector('#show-dev-tooltip'),
   enableDevBookmark: document.querySelector('#enable-dev-bookmark'),
   enableCalloutBlacklist: document.querySelector('#enable-callout-blacklist'),
+  enableManifestoToast: document.querySelector('#enable-manifesto-toast'),
 };
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
