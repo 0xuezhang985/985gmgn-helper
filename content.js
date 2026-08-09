@@ -16,8 +16,10 @@
     enableCalloutBlacklist: true,
     enableManifestoToast: true,
     enableManifestoTab: true,
+    enableSpecialWallet: true,
     watchedDevs: [],
     blockedCallers: [],
+    specialWallets: [],
     highlightColor: '#f5b83d',
   };
 
@@ -25,6 +27,7 @@
   let watchedMap = new Map();
   let blockedWallets = new Set();
   let blockedHandles = new Set();
+  let specialWalletSet = new Set();
   let scanScheduled = false;
   let scrollScanTimer = 0;
   let calloutToastTimer = 0;
@@ -152,6 +155,14 @@
     const callers = getBlockedCallers();
     blockedWallets = new Set(callers.map((item) => item.wallet).filter(Boolean));
     blockedHandles = new Set(callers.map((item) => item.handle).filter(Boolean));
+  }
+
+  function rebuildSpecialWalletSet() {
+    specialWalletSet = new Set(
+      (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
+        .map((item) => normalizeAddress(item?.address))
+        .filter(Boolean),
+    );
   }
 
   function formatCount(value) {
@@ -667,6 +678,135 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
+  // ---- 钱包追踪"特别关注"高亮 ----
+  const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
+  const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
+
+  function extractRowWalletAddress(scope) {
+    const link = scope.querySelector('a[href*="/address/0x"]');
+    const match = link?.getAttribute('href')?.match(/\/address\/(0x[a-fA-F0-9]{40})/);
+    return match ? match[1].toLowerCase() : '';
+  }
+
+  function extractRowWalletLabel(scope) {
+    const link = scope.querySelector('a[href*="/address/0x"]');
+    return String(link?.textContent || '').trim().slice(0, 32);
+  }
+
+  function isSpecialWallet(address) {
+    return Boolean(address && specialWalletSet.has(address));
+  }
+
+  function toggleSpecialWallet(address, label) {
+    if (!address) return;
+    const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
+    const exists = current.some((item) => normalizeAddress(item?.address) === address);
+    const next = exists
+      ? current.filter((item) => normalizeAddress(item?.address) !== address)
+      : [...current, { address, label: label || '' }];
+    settings.specialWallets = next;
+    rebuildSpecialWalletSet();
+    scanSpecialWallets();
+    chrome.storage.local.set({ specialWallets: next }, () => {
+      const error = chrome.runtime?.lastError;
+      if (error) {
+        settings.specialWallets = current;
+        rebuildSpecialWalletSet();
+        scanSpecialWallets();
+      }
+    });
+  }
+
+  function ensureStarButton(host, address, label, mode) {
+    let button = host.querySelector('.gdh-star-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = mode === 'inline'
+        ? 'gdh-star-button gdh-star-button--inline'
+        : 'gdh-star-button';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSpecialWallet(
+          button.dataset.gdhStarAddr || '',
+          button.dataset.gdhStarLabel || '',
+        );
+      });
+      if (mode === 'inline') {
+        // 钱包列表行：贴在名字链接后面（占位恒定，悬停才显形）。
+        const link = host.querySelector('a[href*="/address/0x"]');
+        if (!link) return null;
+        link.insertAdjacentElement('afterend', button);
+      } else {
+        // 追踪事件卡：绝对定位在卡片右侧，不挤压布局。
+        host.appendChild(button);
+      }
+    }
+    button.dataset.gdhStarAddr = address;
+    button.dataset.gdhStarLabel = label;
+    const starred = isSpecialWallet(address);
+    const text = starred ? '★' : '☆';
+    if (button.textContent !== text) button.textContent = text;
+    button.classList.toggle('is-starred', starred);
+    button.title = starred ? '取消特别关注' : '特别关注';
+    return button;
+  }
+
+  function applySpecialState(host, address) {
+    if (isSpecialWallet(address)) host.dataset.gdhSpecial = '1';
+    else delete host.dataset.gdhSpecial;
+  }
+
+  function findWalletTableRow(link) {
+    let row = link;
+    for (let depth = 0; depth < 8 && row.parentElement; depth += 1) {
+      row = row.parentElement;
+      if (row.matches?.(WALLET_TABLE_SELECTOR)) return null;
+      const cls = String(row.className || '');
+      if (cls.includes('h-[44px]') || cls.includes('h-[64')) return row;
+      const rect = row.getBoundingClientRect();
+      if (rect.width > 200 && rect.height >= 36 && rect.height <= 130) return row;
+    }
+    return null;
+  }
+
+  function scanSpecialWallets() {
+    if (settings.enableSpecialWallet === false) {
+      document.querySelectorAll('.gdh-star-button').forEach((node) => node.remove());
+      document.querySelectorAll('[data-gdh-special="1"]').forEach((node) => {
+        delete node.dataset.gdhSpecial;
+      });
+      document.querySelectorAll('[data-gdh-star-host="1"]').forEach((node) => {
+        delete node.dataset.gdhStarHost;
+      });
+      return;
+    }
+
+    // 追踪事件卡：卡片即 <a>，钱包地址取内部 /address/ 链接。
+    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((card) => {
+      const address = extractRowWalletAddress(card);
+      if (!address) return;
+      if (card.dataset.gdhStarHost !== '1') card.dataset.gdhStarHost = '1';
+      applySpecialState(card, address);
+      ensureStarButton(card, address, extractRowWalletLabel(card), 'card');
+    });
+
+    // 钱包列表行：从地址链接爬到行容器。
+    document.querySelectorAll(WALLET_TABLE_SELECTOR).forEach((table) => {
+      table.querySelectorAll('a[href*="/address/0x"]').forEach((link) => {
+        const row = findWalletTableRow(link);
+        if (!(row instanceof HTMLElement)) return;
+        const address = extractRowWalletAddress(row);
+        if (!address) return;
+        if (row.dataset.gdhStarHost !== '1') row.dataset.gdhStarHost = '1';
+        applySpecialState(row, address);
+        ensureStarButton(row, address, extractRowWalletLabel(row), 'inline');
+      });
+    });
+  }
+
   // ---- 新宣言弹窗提醒 ----
   const MANI_SEEN_MAX = 500;
   const MANI_SEEN_STORE_KEY = 'maniSeenKeys';
@@ -1152,6 +1292,7 @@
     scanCalloutBlacklist();
     scanManifestoToasts();
     ensureManifestoTab();
+    scanSpecialWallets();
   }
 
   function scheduleScan() {
@@ -1294,6 +1435,7 @@
     settings = { ...DEFAULTS, ...stored };
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
+    rebuildSpecialWalletSet();
     scheduleScan();
   });
 
@@ -1314,6 +1456,7 @@
     }
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
+    rebuildSpecialWalletSet();
     scheduleScan();
   });
 

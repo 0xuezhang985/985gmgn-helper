@@ -9,6 +9,7 @@ const DEFAULTS = {
   enableCalloutBlacklist: true,
   enableManifestoToast: true,
   enableManifestoTab: true,
+  enableSpecialWallet: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
 };
@@ -21,6 +22,7 @@ const featureInputs = {
   enableCalloutBlacklist: document.querySelector('#enable-callout-blacklist'),
   enableManifestoToast: document.querySelector('#enable-manifesto-toast'),
   enableManifestoTab: document.querySelector('#enable-manifesto-tab'),
+  enableSpecialWallet: document.querySelector('#enable-special-wallet'),
 };
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');

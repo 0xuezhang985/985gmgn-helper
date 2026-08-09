@@ -166,6 +166,53 @@
   word-break: break-word;
 }
 
+.gdh-star-button {
+  flex: 0 0 auto;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(22, 24, 29, 0.85);
+  color: #8b93a1;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+[data-gdh-star-host="1"]:hover .gdh-star-button {
+  opacity: 1;
+}
+
+.gdh-star-button:hover {
+  color: #f5b83d;
+}
+
+.gdh-star-button.is-starred {
+  opacity: 1;
+  color: #f5b83d;
+}
+
+a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+}
+
+.gdh-star-button--inline {
+  margin-left: 4px;
+  padding: 0 2px;
+  background: transparent;
+}
+
+[data-gdh-special="1"] {
+  background: rgba(245, 184, 61, 0.08) !important;
+  box-shadow: inset 3px 0 0 0 #f5b83d;
+}
+
 .gdh-mani-tab-button {
   margin-left: 10px;
   padding: 0 2px;
