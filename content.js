@@ -717,14 +717,21 @@
     });
   }
 
-  function ensureStarButton(host, address, label, mode) {
+  /** 追踪卡里"建仓/加仓/减仓/清仓"文案所在的 flex 容器（0.12.1 起 ⭐ 挂这里）。 */
+  function findCardActionContainer(card) {
+    const span = [...card.querySelectorAll('span')].find((el) => (
+      el.children.length <= 1
+      && /^(建仓|加仓|减仓|清仓)/.test((el.textContent || '').trim())
+    ));
+    return span?.parentElement instanceof HTMLElement ? span.parentElement : null;
+  }
+
+  function ensureStarButton(host, address, label, anchor, insertMode) {
     let button = host.querySelector('.gdh-star-button');
     if (!button) {
       button = document.createElement('button');
       button.type = 'button';
-      button.className = mode === 'inline'
-        ? 'gdh-star-button gdh-star-button--inline'
-        : 'gdh-star-button';
+      button.className = 'gdh-star-button';
       button.addEventListener('pointerdown', (event) => event.stopPropagation());
       button.addEventListener('click', (event) => {
         event.preventDefault();
@@ -734,13 +741,16 @@
           button.dataset.gdhStarLabel || '',
         );
       });
-      if (mode === 'inline') {
+      if (anchor instanceof HTMLElement && insertMode === 'after') {
         // 钱包列表行：贴在名字链接后面（占位恒定，悬停才显形）。
-        const link = host.querySelector('a[href*="/address/0x"]');
-        if (!link) return null;
-        link.insertAdjacentElement('afterend', button);
+        button.classList.add('gdh-star-button--inline');
+        anchor.insertAdjacentElement('afterend', button);
+      } else if (anchor instanceof HTMLElement && insertMode === 'append') {
+        // 追踪事件卡：跟在 加仓/减仓 等动作文案末尾。
+        button.classList.add('gdh-star-button--inline');
+        anchor.appendChild(button);
       } else {
-        // 追踪事件卡：绝对定位在卡片右侧，不挤压布局。
+        // 兜底：绝对定位在卡片右侧（找不到动作容器时）。
         host.appendChild(button);
       }
     }
@@ -790,7 +800,13 @@
       if (!address) return;
       if (card.dataset.gdhStarHost !== '1') card.dataset.gdhStarHost = '1';
       applySpecialState(card, address);
-      ensureStarButton(card, address, extractRowWalletLabel(card), 'card');
+      ensureStarButton(
+        card,
+        address,
+        extractRowWalletLabel(card),
+        findCardActionContainer(card),
+        'append',
+      );
     });
 
     // 钱包列表行：从地址链接爬到行容器。
@@ -802,7 +818,7 @@
         if (!address) return;
         if (row.dataset.gdhStarHost !== '1') row.dataset.gdhStarHost = '1';
         applySpecialState(row, address);
-        ensureStarButton(row, address, extractRowWalletLabel(row), 'inline');
+        ensureStarButton(row, address, extractRowWalletLabel(row), link, 'after');
       });
     });
   }
