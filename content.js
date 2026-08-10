@@ -898,14 +898,107 @@
     return maniContainer;
   }
 
+  /**
+   * 0.13.0：宣言卡片统一渲染（居中弹窗 + 宣言列表共用），样式对齐 GMGN
+   * 官方宣言悬浮卡：头像 / 名字 / 认证√ / 倍数 / 时间 / 正文 / 代币行。
+   */
+  function buildManiCard(info) {
+    const frag = document.createDocumentFragment();
+
+    const head = document.createElement('div');
+    head.className = 'gdh-mani-card__head';
+    if (info.avatar) {
+      const avatar = document.createElement('img');
+      avatar.className = 'gdh-mani-card__avatar';
+      avatar.src = info.avatar;
+      avatar.alt = '';
+      avatar.referrerPolicy = 'no-referrer';
+      head.appendChild(avatar);
+    }
+    const main = document.createElement('div');
+    main.className = 'gdh-mani-card__main';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'gdh-mani-card__namerow';
+    const nameEl = document.createElement('strong');
+    nameEl.className = 'gdh-mani-card__name';
+    nameEl.textContent = info.name || info.handle || '匿名';
+    nameRow.appendChild(nameEl);
+    if (info.verified) {
+      const check = document.createElement('span');
+      check.className = 'gdh-mani-card__verified';
+      check.textContent = '✔';
+      check.setAttribute('aria-label', '认证');
+      nameRow.appendChild(check);
+    }
+    const mult = Number(info.multiplier);
+    if (Number.isFinite(mult) && mult > 0) {
+      const multEl = document.createElement('span');
+      multEl.className = 'gdh-mani-card__mult';
+      multEl.textContent = `${mult.toFixed(1).replace(/\.0$/, '')}x`;
+      nameRow.appendChild(multEl);
+    }
+    main.appendChild(nameRow);
+    if (info.handle) {
+      const handleEl = document.createElement('div');
+      handleEl.className = 'gdh-mani-card__handle';
+      handleEl.textContent = `@${info.handle}`;
+      main.appendChild(handleEl);
+    }
+    head.appendChild(main);
+    const timeMs = Number(info.timeMs);
+    if (Number.isFinite(timeMs) && timeMs > 0) {
+      const timeEl = document.createElement('span');
+      timeEl.className = 'gdh-mani-card__time';
+      timeEl.textContent = formatRelTime(timeMs);
+      head.appendChild(timeEl);
+    }
+    frag.appendChild(head);
+
+    if (info.text) {
+      const textEl = document.createElement('div');
+      textEl.className = 'gdh-mani-card__text';
+      textEl.textContent = info.text;
+      frag.appendChild(textEl);
+    }
+
+    const foot = document.createElement('div');
+    foot.className = 'gdh-mani-card__foot';
+    const symbolEl = document.createElement('strong');
+    symbolEl.className = 'gdh-mani-card__symbol';
+    symbolEl.textContent = info.symbol || '代币';
+    foot.appendChild(symbolEl);
+    if (info.usd) {
+      const usdEl = document.createElement('span');
+      usdEl.className = 'gdh-mani-card__usd';
+      usdEl.textContent = `$${info.usd}`;
+      foot.appendChild(usdEl);
+    }
+    const hint = document.createElement('span');
+    hint.className = 'gdh-mani-card__hint';
+    hint.textContent = '点击进入代币页 →';
+    foot.appendChild(hint);
+    frag.appendChild(foot);
+
+    return frag;
+  }
+
+  function maniInfoFromChip(chip) {
+    return {
+      avatar: chip.dataset.gdhManiAvatar || '',
+      name: chip.dataset.gdhCallerName || '',
+      handle: chip.dataset.gdhCallerHandle || '',
+      verified: chip.dataset.gdhManiVerified === '1',
+      multiplier: chip.dataset.gdhManiMult || '',
+      timeMs: chip.dataset.gdhManiTime || '',
+      text: chip.dataset.gdhManiText || '',
+      symbol: chip.dataset.gdhManiSymbol || '',
+      usd: chip.dataset.gdhManiUsd || '',
+    };
+  }
+
   function showManifestoToast(chip) {
     const href = manifestoTokenHref(chip);
     if (!href) return;
-    const symbol = chip.dataset.gdhManiSymbol || '代币';
-    const usd = chip.dataset.gdhManiUsd || '';
-    const name = chip.dataset.gdhCallerName || '';
-    const handle = chip.dataset.gdhCallerHandle || '';
-    const text = chip.dataset.gdhManiText || '';
 
     const container = ensureManiContainer();
     while (container.children.length >= MANI_TOAST_MAX) {
@@ -914,42 +1007,14 @@
 
     const toast = document.createElement('div');
     toast.className = 'gdh-mani-toast';
+    toast.appendChild(buildManiCard(maniInfoFromChip(chip)));
 
-    const head = document.createElement('div');
-    head.className = 'gdh-mani-toast__head';
-    const tag = document.createElement('span');
-    tag.className = 'gdh-mani-toast__tag';
-    tag.textContent = '宣言';
-    const symbolEl = document.createElement('strong');
-    symbolEl.className = 'gdh-mani-toast__symbol';
-    symbolEl.textContent = symbol;
-    head.append(tag, symbolEl);
-    if (usd) {
-      const usdEl = document.createElement('span');
-      usdEl.className = 'gdh-mani-toast__usd';
-      usdEl.textContent = `$${usd}`;
-      head.appendChild(usdEl);
-    }
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'gdh-mani-toast__close';
     close.textContent = '×';
     close.title = '关闭';
-    head.appendChild(close);
-    toast.appendChild(head);
-
-    if (name || handle) {
-      const caller = document.createElement('div');
-      caller.className = 'gdh-mani-toast__caller';
-      caller.textContent = handle ? `${name || handle} @${handle}` : name;
-      toast.appendChild(caller);
-    }
-    if (text) {
-      const body = document.createElement('div');
-      body.className = 'gdh-mani-toast__text';
-      body.textContent = text;
-      toast.appendChild(body);
-    }
+    toast.appendChild(close);
 
     let dismissTimer = 0;
     const dismiss = () => {
@@ -1054,48 +1119,17 @@
       const row = document.createElement('a');
       row.className = 'gdh-mani-list__item';
       row.href = `/bsc/token/${token}`;
-
-      const head = document.createElement('div');
-      head.className = 'gdh-mani-list__head';
-      const symbol = document.createElement('strong');
-      symbol.className = 'gdh-mani-list__symbol';
-      symbol.textContent = String(item.token_symbol || '代币').slice(0, 24);
-      head.appendChild(symbol);
-      if (item.amount_usd) {
-        const usd = document.createElement('span');
-        usd.className = 'gdh-mani-list__usd';
-        usd.textContent = `$${item.amount_usd}`;
-        head.appendChild(usd);
-      }
-      const mult = Number(item.multiplier);
-      if (Number.isFinite(mult) && mult > 0) {
-        const multEl = document.createElement('span');
-        multEl.className = 'gdh-mani-list__mult';
-        multEl.textContent = `${mult.toFixed(1).replace(/\.0$/, '')}x`;
-        head.appendChild(multEl);
-      }
-      const time = document.createElement('span');
-      time.className = 'gdh-mani-list__time';
-      time.textContent = formatRelTime(item.create_time);
-      head.appendChild(time);
-      row.appendChild(head);
-
-      const caller = document.createElement('div');
-      caller.className = 'gdh-mani-list__caller';
-      const callerName = String(item.twitter_name || '').trim();
-      const callerHandle = String(item.twitter_username || '').trim();
-      caller.textContent = callerHandle
-        ? `${callerName || callerHandle} @${callerHandle}`
-        : callerName || '匿名';
-      row.appendChild(caller);
-
-      const text = String(item.call_thesis?.source_content || '').trim();
-      if (text) {
-        const body = document.createElement('div');
-        body.className = 'gdh-mani-list__text';
-        body.textContent = text;
-        row.appendChild(body);
-      }
+      row.appendChild(buildManiCard({
+        avatar: /^https:\/\//.test(String(item.wallet_avatar || '')) ? item.wallet_avatar : '',
+        name: String(item.twitter_name || '').trim(),
+        handle: String(item.twitter_username || '').trim(),
+        verified: String(item.is_blue_verified) === 'true',
+        multiplier: item.multiplier,
+        timeMs: item.create_time,
+        text: String(item.call_thesis?.source_content || '').trim(),
+        symbol: String(item.token_symbol || '代币').slice(0, 24),
+        usd: item.amount_usd || '',
+      }));
 
       row.addEventListener('click', (event) => {
         if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) return;

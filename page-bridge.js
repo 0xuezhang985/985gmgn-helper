@@ -136,6 +136,10 @@
         tokenSymbol: String(item.tokenSymbol || '').trim().slice(0, 32),
         text: String(item.sourceContent || '').trim().slice(0, 200),
         amountUsd: String(item.amountUsd || '').trim().slice(0, 12),
+        avatar: /^https:\/\//.test(String(item.callerAvatar || '')) ? String(item.callerAvatar).slice(0, 300) : '',
+        verified: String(item.isBlueVerified) === 'true' ? '1' : '',
+        multiplier: String(item.multiplier || '').trim().slice(0, 20),
+        timeMs: String(item.declareCreateTime || (Number(item.createTime) ? Number(item.createTime) * 1000 : '')).trim(),
       };
     }
 
@@ -239,6 +243,10 @@
       'data-gdh-mani-symbol',
       'data-gdh-mani-text',
       'data-gdh-mani-usd',
+      'data-gdh-mani-avatar',
+      'data-gdh-mani-verified',
+      'data-gdh-mani-mult',
+      'data-gdh-mani-time',
     ]) {
       element.removeAttribute(name);
     }
@@ -261,6 +269,10 @@
       setAttribute(element, 'data-gdh-mani-symbol', data.tokenSymbol);
       setAttribute(element, 'data-gdh-mani-text', data.text);
       setAttribute(element, 'data-gdh-mani-usd', data.amountUsd);
+      setAttribute(element, 'data-gdh-mani-avatar', data.avatar);
+      setAttribute(element, 'data-gdh-mani-verified', data.verified);
+      setAttribute(element, 'data-gdh-mani-mult', data.multiplier);
+      setAttribute(element, 'data-gdh-mani-time', data.timeMs);
     }
   }
 
