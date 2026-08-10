@@ -27,7 +27,17 @@
   let watchedMap = new Map();
   let blockedWallets = new Set();
   let blockedHandles = new Set();
-  let specialWalletSet = new Set();
+  // 特别关注高亮预设色（每个钱包可单独循环切换，首个为默认金色）。
+  const SPECIAL_COLOR_PALETTE = [
+    '#f5b83d',
+    '#ef5350',
+    '#43c07a',
+    '#4c9ffe',
+    '#b48ae0',
+    '#ed6ba4',
+    '#3ec6c6',
+  ];
+  let specialWalletMap = new Map();
   let scanScheduled = false;
   let scrollScanTimer = 0;
   let calloutToastTimer = 0;
@@ -158,9 +168,16 @@
   }
 
   function rebuildSpecialWalletSet() {
-    specialWalletSet = new Set(
+    specialWalletMap = new Map(
       (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
-        .map((item) => normalizeAddress(item?.address))
+        .map((item) => {
+          const address = normalizeAddress(item?.address);
+          if (!address) return null;
+          const color = SPECIAL_COLOR_PALETTE.includes(item?.color)
+            ? item.color
+            : SPECIAL_COLOR_PALETTE[0];
+          return [address, { label: String(item?.label || ''), color }];
+        })
         .filter(Boolean),
     );
   }
@@ -694,7 +711,33 @@
   }
 
   function isSpecialWallet(address) {
-    return Boolean(address && specialWalletSet.has(address));
+    return Boolean(address && specialWalletMap.has(address));
+  }
+
+  function specialWalletColor(address) {
+    return specialWalletMap.get(address)?.color || SPECIAL_COLOR_PALETTE[0];
+  }
+
+  function hexToRgba(hex, alpha) {
+    const m = String(hex).match(/^#([0-9a-fA-F]{6})$/);
+    if (!m) return `rgba(245, 184, 61, ${alpha})`;
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  }
+
+  function persistSpecialWallets(next) {
+    const previous = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
+    settings.specialWallets = next;
+    rebuildSpecialWalletSet();
+    scanSpecialWallets();
+    chrome.storage.local.set({ specialWallets: next }, () => {
+      const error = chrome.runtime?.lastError;
+      if (error) {
+        settings.specialWallets = previous;
+        rebuildSpecialWalletSet();
+        scanSpecialWallets();
+      }
+    });
   }
 
   function toggleSpecialWallet(address, label) {
@@ -703,19 +746,65 @@
     const exists = current.some((item) => normalizeAddress(item?.address) === address);
     const next = exists
       ? current.filter((item) => normalizeAddress(item?.address) !== address)
-      : [...current, { address, label: label || '' }];
-    settings.specialWallets = next;
-    rebuildSpecialWalletSet();
-    scanSpecialWallets();
-    chrome.storage.local.set({ specialWallets: next }, () => {
-      const error = chrome.runtime?.lastError;
-      if (error) {
-        settings.specialWallets = current;
-        rebuildSpecialWalletSet();
-        scanSpecialWallets();
-      }
-    });
+      : [...current, { address, label: label || '', color: SPECIAL_COLOR_PALETTE[0] }];
+    persistSpecialWallets(next);
   }
+
+  function setSpecialWalletColor(address, color) {
+    if (!address || !specialWalletMap.has(address)) return;
+    if (!SPECIAL_COLOR_PALETTE.includes(color)) return;
+    const next = (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
+      .map((item) => (
+        normalizeAddress(item?.address) === address ? { ...item, color } : item
+      ));
+    persistSpecialWallets(next);
+  }
+
+  // ---- 预设色选择浮层（点色块展开全部颜色，点选即换）----
+  let colorPaletteEl = null;
+
+  function closeColorPalette() {
+    colorPaletteEl?.remove();
+    colorPaletteEl = null;
+  }
+
+  function openColorPalette(address, anchorRect) {
+    closeColorPalette();
+    const palette = document.createElement('div');
+    palette.className = 'gdh-color-palette';
+    palette.addEventListener('pointerdown', (event) => event.stopPropagation());
+    const current = specialWalletColor(address);
+    for (const color of SPECIAL_COLOR_PALETTE) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'gdh-color-palette__dot';
+      dot.style.background = color;
+      dot.classList.toggle('is-current', color === current);
+      dot.title = color;
+      dot.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setSpecialWalletColor(address, color);
+        closeColorPalette();
+      });
+      palette.appendChild(dot);
+    }
+    document.body.appendChild(palette);
+    const width = palette.offsetWidth || 150;
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, anchorRect.left - width / 2));
+    let top = anchorRect.bottom + 6;
+    if (top + 34 > window.innerHeight) top = anchorRect.top - 34;
+    palette.style.left = `${Math.round(left)}px`;
+    palette.style.top = `${Math.round(top)}px`;
+    colorPaletteEl = palette;
+  }
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!colorPaletteEl) return;
+    if (event.target instanceof Node && colorPaletteEl.contains(event.target)) return;
+    closeColorPalette();
+  }, true);
+  document.addEventListener('scroll', () => closeColorPalette(), true);
 
   /** 追踪卡里"建仓/加仓/减仓/清仓"文案所在的 flex 容器（0.12.1 起 ⭐ 挂这里）。 */
   function findCardActionContainer(card) {
@@ -760,13 +849,47 @@
     const text = starred ? '★' : '☆';
     if (button.textContent !== text) button.textContent = text;
     button.classList.toggle('is-starred', starred);
+    button.style.color = starred ? specialWalletColor(address) : '';
     button.title = starred ? '取消特别关注' : '特别关注';
+
+    // 已关注且按钮是行内挂载时，旁边给一个当前色小色块，点开预设色浮层选色。
+    let swatch = host.querySelector('.gdh-color-button');
+    if (starred && button.classList.contains('gdh-star-button--inline')) {
+      if (!swatch) {
+        swatch = document.createElement('button');
+        swatch.type = 'button';
+        swatch.className = 'gdh-color-button';
+        swatch.addEventListener('pointerdown', (event) => event.stopPropagation());
+        swatch.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openColorPalette(
+            swatch.dataset.gdhStarAddr || '',
+            swatch.getBoundingClientRect(),
+          );
+        });
+        button.insertAdjacentElement('afterend', swatch);
+      }
+      swatch.dataset.gdhStarAddr = address;
+      swatch.style.background = specialWalletColor(address);
+      swatch.title = '选择高亮颜色';
+    } else {
+      swatch?.remove();
+    }
     return button;
   }
 
   function applySpecialState(host, address) {
-    if (isSpecialWallet(address)) host.dataset.gdhSpecial = '1';
-    else delete host.dataset.gdhSpecial;
+    if (isSpecialWallet(address)) {
+      const color = specialWalletColor(address);
+      host.dataset.gdhSpecial = '1';
+      host.style.setProperty('--gdh-sp-bg', hexToRgba(color, 0.1));
+      host.style.setProperty('--gdh-sp-border', color);
+    } else {
+      delete host.dataset.gdhSpecial;
+      host.style.removeProperty('--gdh-sp-bg');
+      host.style.removeProperty('--gdh-sp-border');
+    }
   }
 
   function findWalletTableRow(link) {
@@ -784,9 +907,12 @@
 
   function scanSpecialWallets() {
     if (settings.enableSpecialWallet === false) {
-      document.querySelectorAll('.gdh-star-button').forEach((node) => node.remove());
+      closeColorPalette();
+      document.querySelectorAll('.gdh-star-button, .gdh-color-button').forEach((node) => node.remove());
       document.querySelectorAll('[data-gdh-special="1"]').forEach((node) => {
         delete node.dataset.gdhSpecial;
+        node.style.removeProperty('--gdh-sp-bg');
+        node.style.removeProperty('--gdh-sp-border');
       });
       document.querySelectorAll('[data-gdh-star-host="1"]').forEach((node) => {
         delete node.dataset.gdhStarHost;

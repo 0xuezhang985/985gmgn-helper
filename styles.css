@@ -274,8 +274,61 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 }
 
 [data-gdh-special="1"] {
-  background: rgba(245, 184, 61, 0.08) !important;
-  box-shadow: inset 3px 0 0 0 #f5b83d;
+  background: var(--gdh-sp-bg, rgba(245, 184, 61, 0.08)) !important;
+  box-shadow: inset 3px 0 0 0 var(--gdh-sp-border, #f5b83d);
+}
+
+.gdh-color-button {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+[data-gdh-star-host="1"]:hover .gdh-color-button {
+  opacity: 1;
+}
+
+.gdh-color-button:hover {
+  transform: scale(1.25);
+}
+
+.gdh-color-palette {
+  position: fixed;
+  z-index: 2147483001;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  background: #1b1e24;
+  border: 1px solid rgba(139, 147, 161, 0.35);
+  border-radius: 999px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+}
+
+.gdh-color-palette__dot {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+
+.gdh-color-palette__dot:hover {
+  transform: scale(1.25);
+}
+
+.gdh-color-palette__dot.is-current {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
 }
 
 .gdh-mani-tab-button {
