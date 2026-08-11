@@ -168,16 +168,23 @@
     blockedHandles = new Set(callers.map((item) => item.handle).filter(Boolean));
   }
 
+  function normalizeSpecialColor(color) {
+    if (color === 'rainbow') return 'rainbow';
+    if (/^#[0-9a-fA-F]{6}$/.test(String(color || ''))) return String(color).toLowerCase();
+    return SPECIAL_COLOR_PALETTE[0];
+  }
+
   function rebuildSpecialWalletSet() {
     specialWalletMap = new Map(
       (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
         .map((item) => {
           const address = normalizeAddress(item?.address);
           if (!address) return null;
-          const color = SPECIAL_COLOR_PALETTE.includes(item?.color)
-            ? item.color
-            : SPECIAL_COLOR_PALETTE[0];
-          return [address, { label: String(item?.label || ''), color }];
+          return [address, {
+            label: String(item?.label || ''),
+            color: normalizeSpecialColor(item?.color),
+            pin: item?.pin === true,
+          }];
         })
         .filter(Boolean),
     );
@@ -753,12 +760,34 @@
 
   function setSpecialWalletColor(address, color) {
     if (!address || !specialWalletMap.has(address)) return;
-    if (!SPECIAL_COLOR_PALETTE.includes(color)) return;
+    if (color !== 'rainbow' && !/^#[0-9a-fA-F]{6}$/.test(String(color || ''))) return;
     const next = (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
       .map((item) => (
-        normalizeAddress(item?.address) === address ? { ...item, color } : item
+        normalizeAddress(item?.address) === address
+          ? { ...item, color: normalizeSpecialColor(color) }
+          : item
       ));
     persistSpecialWallets(next);
+  }
+
+  function setSpecialWalletPin(address, pin) {
+    if (!address || !specialWalletMap.has(address)) return;
+    const next = (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
+      .map((item) => (
+        normalizeAddress(item?.address) === address ? { ...item, pin: pin === true } : item
+      ));
+    persistSpecialWallets(next);
+  }
+
+  function addSpecialWallet(address, label) {
+    const normalized = normalizeAddress(address);
+    if (!/^0x[a-f0-9]{40}$/.test(normalized) || specialWalletMap.has(normalized)) return false;
+    const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
+    persistSpecialWallets([
+      ...current,
+      { address: normalized, label: String(label || '').trim().slice(0, 32), color: SPECIAL_COLOR_PALETTE[0], pin: false },
+    ]);
+    return true;
   }
 
   // ---- 预设色选择浮层（点色块展开全部颜色，点选即换）----
@@ -775,6 +804,9 @@
     palette.className = 'gdh-color-palette';
     palette.addEventListener('pointerdown', (event) => event.stopPropagation());
     const current = specialWalletColor(address);
+
+    const colorsRow = document.createElement('div');
+    colorsRow.className = 'gdh-color-palette__row';
     for (const color of SPECIAL_COLOR_PALETTE) {
       const dot = document.createElement('button');
       dot.type = 'button';
@@ -788,13 +820,54 @@
         setSpecialWalletColor(address, color);
         closeColorPalette();
       });
-      palette.appendChild(dot);
+      colorsRow.appendChild(dot);
     }
+    // 炫彩
+    const rainbow = document.createElement('button');
+    rainbow.type = 'button';
+    rainbow.className = 'gdh-color-palette__dot gdh-color-palette__dot--rainbow';
+    rainbow.classList.toggle('is-current', current === 'rainbow');
+    rainbow.title = '炫彩高亮';
+    rainbow.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSpecialWalletColor(address, 'rainbow');
+      closeColorPalette();
+    });
+    colorsRow.appendChild(rainbow);
+    // 自定义取色
+    const custom = document.createElement('input');
+    custom.type = 'color';
+    custom.className = 'gdh-color-palette__custom';
+    custom.value = current === 'rainbow' ? SPECIAL_COLOR_PALETTE[0] : current;
+    custom.title = '自定义颜色';
+    custom.addEventListener('change', () => {
+      setSpecialWalletColor(address, custom.value);
+      closeColorPalette();
+    });
+    colorsRow.appendChild(custom);
+    palette.appendChild(colorsRow);
+
+    // 置顶推送开关
+    const pinRow = document.createElement('label');
+    pinRow.className = 'gdh-color-palette__pin';
+    const pinBox = document.createElement('input');
+    pinBox.type = 'checkbox';
+    pinBox.checked = specialWalletMap.get(address)?.pin === true;
+    pinBox.addEventListener('change', () => {
+      setSpecialWalletPin(address, pinBox.checked);
+    });
+    const pinText = document.createElement('span');
+    pinText.textContent = '📌 新推送置顶 10 秒';
+    pinRow.append(pinBox, pinText);
+    palette.appendChild(pinRow);
+
     document.body.appendChild(palette);
-    const width = palette.offsetWidth || 150;
+    const width = palette.offsetWidth || 220;
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, anchorRect.left - width / 2));
     let top = anchorRect.bottom + 6;
-    if (top + 34 > window.innerHeight) top = anchorRect.top - 34;
+    const height = palette.offsetHeight || 60;
+    if (top + height + 8 > window.innerHeight) top = anchorRect.top - height - 6;
     palette.style.left = `${Math.round(left)}px`;
     palette.style.top = `${Math.round(top)}px`;
     colorPaletteEl = palette;
@@ -847,10 +920,12 @@
     button.dataset.gdhStarAddr = address;
     button.dataset.gdhStarLabel = label;
     const starred = isSpecialWallet(address);
+    const starColor = starred ? specialWalletColor(address) : '';
     const text = starred ? '★' : '☆';
     if (button.textContent !== text) button.textContent = text;
     button.classList.toggle('is-starred', starred);
-    button.style.color = starred ? specialWalletColor(address) : '';
+    button.classList.toggle('gdh-rainbow-text', starColor === 'rainbow');
+    button.style.color = starred && starColor !== 'rainbow' ? starColor : '';
     button.title = starred ? '取消特别关注' : '特别关注';
 
     // 已关注且按钮是行内挂载时，旁边给一个当前色小色块，点开预设色浮层选色。
@@ -872,22 +947,38 @@
         button.insertAdjacentElement('afterend', swatch);
       }
       swatch.dataset.gdhStarAddr = address;
-      swatch.style.background = specialWalletColor(address);
-      swatch.title = '选择高亮颜色';
+      applySwatchColor(swatch, specialWalletColor(address));
+      swatch.title = '选择高亮颜色 / 置顶';
     } else {
       swatch?.remove();
     }
     return button;
   }
 
+  function applySwatchColor(el, color) {
+    if (color === 'rainbow') {
+      el.style.background = 'conic-gradient(#ef5350, #f5b83d, #43c07a, #4c9ffe, #b48ae0, #ed6ba4, #ef5350)';
+    } else {
+      el.style.background = color;
+    }
+  }
+
   function applySpecialState(host, address) {
     if (isSpecialWallet(address)) {
       const color = specialWalletColor(address);
       host.dataset.gdhSpecial = '1';
-      host.style.setProperty('--gdh-sp-bg', hexToRgba(color, 0.1));
-      host.style.setProperty('--gdh-sp-border', color);
+      if (color === 'rainbow') {
+        host.dataset.gdhSpRainbow = '1';
+        host.style.removeProperty('--gdh-sp-bg');
+        host.style.removeProperty('--gdh-sp-border');
+      } else {
+        delete host.dataset.gdhSpRainbow;
+        host.style.setProperty('--gdh-sp-bg', hexToRgba(color, 0.1));
+        host.style.setProperty('--gdh-sp-border', color);
+      }
     } else {
       delete host.dataset.gdhSpecial;
+      delete host.dataset.gdhSpRainbow;
       host.style.removeProperty('--gdh-sp-bg');
       host.style.removeProperty('--gdh-sp-border');
     }
@@ -909,9 +1000,13 @@
   function scanSpecialWallets() {
     if (settings.enableSpecialWallet === false) {
       closeColorPalette();
-      document.querySelectorAll('.gdh-star-button, .gdh-color-button').forEach((node) => node.remove());
+      specialManageOpen = false;
+      document
+        .querySelectorAll('.gdh-star-button, .gdh-color-button, .gdh-sp-manage-button, .gdh-sp-manage-modal, .gdh-pin-strip')
+        .forEach((node) => node.remove());
       document.querySelectorAll('[data-gdh-special="1"]').forEach((node) => {
         delete node.dataset.gdhSpecial;
+        delete node.dataset.gdhSpRainbow;
         node.style.removeProperty('--gdh-sp-bg');
         node.style.removeProperty('--gdh-sp-border');
       });
@@ -947,6 +1042,325 @@
         applySpecialState(row, address);
         ensureStarButton(row, address, extractRowWalletLabel(row), link, 'after');
       });
+    });
+
+    ensureAddressPageStar();
+    ensureSpecialManageUI();
+    scanPinnedPush();
+  }
+
+  // ---- 地址页（添加/关注钱包处）同步打星 ----
+  function ensureAddressPageStar() {
+    const match = location.href.match(/address\/(0x[a-fA-F0-9]{40})/);
+    const follow = document.querySelector('[data-sentry-component="UserFollow"]');
+    const existing = document.querySelector('.gdh-star-button--address');
+    if (!match || !(follow instanceof HTMLElement) || !follow.parentElement) {
+      existing?.remove();
+      document.querySelector('.gdh-color-button--address')?.remove();
+      return;
+    }
+    const address = match[1].toLowerCase();
+    const host = follow.parentElement;
+    if (host.dataset.gdhStarHost !== '1') host.dataset.gdhStarHost = '1';
+    const label = String(document.title || '').split(' ')[0].trim().slice(0, 32);
+    const button = ensureStarButton(host, address, label, follow, 'after');
+    if (button) {
+      button.classList.add('gdh-star-button--address');
+      const swatch = host.querySelector('.gdh-color-button');
+      swatch?.classList.add('gdh-color-button--address');
+    }
+  }
+
+  // ---- 特别关注管理面板（钱包追踪面板头部入口）----
+  let specialManageOpen = false;
+
+  function specialEntries() {
+    return [...specialWalletMap.entries()].map(([address, meta]) => ({ address, ...meta }));
+  }
+
+  function ensureSpecialManageUI() {
+    const panel = document.querySelector('[data-sentry-component="WalletTrack"]');
+    const header = panel?.querySelector('[data-sentry-component="TrackingHeader"]');
+    if (!(header instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
+      if (specialManageOpen) specialManageOpen = false;
+      document.querySelector('.gdh-sp-manage-modal')?.remove();
+      return;
+    }
+    let button = header.querySelector(':scope .gdh-sp-manage-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gdh-sp-manage-button';
+      button.title = '特别关注管理';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        specialManageOpen = !specialManageOpen;
+        scheduleScan();
+      });
+      header.appendChild(button);
+    }
+    const text = `★${specialWalletMap.size}`;
+    if (button.textContent !== text) button.textContent = text;
+    button.classList.toggle('is-active', specialManageOpen);
+    ensureSpecialManageModal(panel);
+  }
+
+  function ensureSpecialManageModal(panel) {
+    let modal = panel.querySelector(':scope > .gdh-sp-manage-modal');
+    if (!specialManageOpen) {
+      modal?.remove();
+      return;
+    }
+    panel.classList.add('gdh-callout-panel-host');
+    if (!modal) {
+      modal = document.createElement('section');
+      modal.className = 'gdh-sp-manage-modal';
+      modal.addEventListener('pointerdown', (event) => event.stopPropagation());
+
+      const head = document.createElement('div');
+      head.className = 'gdh-sp-manage__head';
+      const title = document.createElement('strong');
+      title.className = 'gdh-sp-manage__title';
+      title.textContent = '特别关注管理';
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'gdh-sp-manage__close';
+      close.textContent = '×';
+      close.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        specialManageOpen = false;
+        modal.remove();
+        scheduleScan();
+      });
+      head.append(title, close);
+
+      const addRow = document.createElement('div');
+      addRow.className = 'gdh-sp-manage__add';
+      const addrInput = document.createElement('input');
+      addrInput.className = 'gdh-sp-manage__input gdh-sp-manage__input--addr';
+      addrInput.placeholder = '0x 钱包地址';
+      addrInput.spellcheck = false;
+      const labelInput = document.createElement('input');
+      labelInput.className = 'gdh-sp-manage__input gdh-sp-manage__input--label';
+      labelInput.placeholder = '备注(可选)';
+      const addButton = document.createElement('button');
+      addButton.type = 'button';
+      addButton.className = 'gdh-sp-manage__addbtn';
+      addButton.textContent = '添加';
+      addButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (addSpecialWallet(addrInput.value, labelInput.value)) {
+          addrInput.value = '';
+          labelInput.value = '';
+        } else {
+          addrInput.classList.add('is-error');
+          window.setTimeout(() => addrInput.classList.remove('is-error'), 900);
+        }
+      });
+      addRow.append(addrInput, labelInput, addButton);
+
+      const list = document.createElement('div');
+      list.className = 'gdh-sp-manage__list';
+      modal.append(head, addRow, list);
+      panel.appendChild(modal);
+    }
+
+    // 挂在面板头部下方
+    try {
+      const headerRect = panel
+        .querySelector('[data-sentry-component="TrackingHeader"]')
+        .getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      modal.style.top = `${Math.max(30, Math.round(headerRect.bottom - panelRect.top) + 4)}px`;
+    } catch {
+      modal.style.top = '34px';
+    }
+    renderSpecialManageList(modal);
+  }
+
+  function renderSpecialManageList(modal) {
+    const entries = specialEntries();
+    const key = JSON.stringify(entries);
+    if (modal.dataset.gdhSpKey === key) return;
+    modal.dataset.gdhSpKey = key;
+    const title = modal.querySelector('.gdh-sp-manage__title');
+    if (title) title.textContent = `特别关注管理 · ${entries.length}`;
+    const list = modal.querySelector('.gdh-sp-manage__list');
+    list.replaceChildren();
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-sp-manage__empty';
+      empty.textContent = '还没有特别关注的钱包';
+      list.appendChild(empty);
+      return;
+    }
+    for (const entry of entries) {
+      const row = document.createElement('div');
+      row.className = 'gdh-sp-manage__row';
+
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'gdh-sp-manage__swatch';
+      applySwatchColor(swatch, entry.color);
+      swatch.title = '选择高亮颜色 / 置顶';
+      swatch.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openColorPalette(entry.address, swatch.getBoundingClientRect());
+      });
+
+      const pin = document.createElement('button');
+      pin.type = 'button';
+      pin.className = 'gdh-sp-manage__pin';
+      pin.textContent = '📌';
+      pin.classList.toggle('is-on', entry.pin);
+      pin.title = entry.pin ? '已置顶：新推送置顶 10 秒' : '未置顶';
+      pin.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setSpecialWalletPin(entry.address, !entry.pin);
+      });
+
+      const name = document.createElement('span');
+      name.className = 'gdh-sp-manage__name';
+      name.textContent = entry.label || '(无备注)';
+      const addr = document.createElement('span');
+      addr.className = 'gdh-sp-manage__addr';
+      addr.textContent = `${entry.address.slice(0, 6)}…${entry.address.slice(-4)}`;
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'gdh-sp-manage__remove';
+      remove.textContent = '移除';
+      remove.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSpecialWallet(entry.address, entry.label);
+      });
+
+      row.append(swatch, pin, name, addr, remove);
+      list.appendChild(row);
+    }
+  }
+
+  // ---- 置顶推送：特别关注(置顶)钱包的新事件卡置顶显示 10 秒 ----
+  const SPECIAL_PIN_MS = 10000;
+  const SPECIAL_PIN_MAX = 3;
+  const SPECIAL_PIN_SEEN_MAX = 400;
+  const specialPinSeen = new Set();
+  let specialPinBaselineDone = false;
+  let specialPinStrip = null;
+
+  function hasPinnedWallets() {
+    for (const meta of specialWalletMap.values()) if (meta.pin) return true;
+    return false;
+  }
+
+  function trackerCardSignature(card, address) {
+    const action = findCardActionContainer(card);
+    const actionText = action
+      ? [...action.children].filter((el) => el.tagName === 'SPAN').map((el) => (el.textContent || '').trim()).join('')
+      : '';
+    const amount = (card.querySelector('[data-sentry-component="LiteTrackerAmount"]')?.textContent || '').trim();
+    return `${address}|${card.getAttribute('href') || ''}|${actionText}|${amount}`;
+  }
+
+  function rememberPinSeen(sig) {
+    specialPinSeen.add(sig);
+    if (specialPinSeen.size > SPECIAL_PIN_SEEN_MAX) {
+      const iterator = specialPinSeen.values();
+      for (let extra = specialPinSeen.size - SPECIAL_PIN_SEEN_MAX; extra > 0; extra -= 1) {
+        specialPinSeen.delete(iterator.next().value);
+      }
+    }
+  }
+
+  function ensurePinStrip(panel) {
+    if (specialPinStrip && specialPinStrip.isConnected) return specialPinStrip;
+    specialPinStrip = document.createElement('div');
+    specialPinStrip.className = 'gdh-pin-strip';
+    panel.classList.add('gdh-callout-panel-host');
+    panel.appendChild(specialPinStrip);
+    return specialPinStrip;
+  }
+
+  function pinTrackerCard(card, panel) {
+    const strip = ensurePinStrip(panel);
+    try {
+      const body = panel.querySelector('[data-sentry-component="TrackingBody"]');
+      const panelRect = panel.getBoundingClientRect();
+      const bodyRect = (body || panel).getBoundingClientRect();
+      strip.style.top = `${Math.max(0, Math.round(bodyRect.top - panelRect.top))}px`;
+    } catch {
+      strip.style.top = '60px';
+    }
+    while (strip.children.length >= SPECIAL_PIN_MAX) strip.lastElementChild.remove();
+
+    const item = document.createElement('div');
+    item.className = 'gdh-pin-item';
+    const clone = card.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('.gdh-star-button, .gdh-color-button').forEach((n) => n.remove());
+    const badge = document.createElement('span');
+    badge.className = 'gdh-pin-item__badge';
+    badge.textContent = '📌';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-pin-item__close';
+    close.textContent = '×';
+    item.append(badge, clone, close);
+
+    const href = card.getAttribute('href') || '';
+    const dismiss = () => {
+      item.remove();
+      if (specialPinStrip && !specialPinStrip.children.length) {
+        specialPinStrip.remove();
+        specialPinStrip = null;
+      }
+    };
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    });
+    item.addEventListener('click', () => {
+      dismiss();
+      if (card.isConnected) card.click();
+      else if (href) window.location.assign(href);
+    });
+    strip.prepend(item);
+    window.setTimeout(dismiss, SPECIAL_PIN_MS);
+  }
+
+  function scanPinnedPush() {
+    const panel = document.querySelector('[data-sentry-component="WalletTrack"]');
+    if (!(panel instanceof HTMLElement)) return;
+    const cards = [...panel.querySelectorAll(TRACKER_ITEM_SELECTOR)];
+    if (!cards.length) return;
+
+    if (!specialPinBaselineDone) {
+      cards.forEach((card) => {
+        const address = extractRowWalletAddress(card);
+        if (address) rememberPinSeen(trackerCardSignature(card, address));
+      });
+      specialPinBaselineDone = true;
+      return;
+    }
+
+    const pinnedActive = hasPinnedWallets();
+    cards.forEach((card) => {
+      const address = extractRowWalletAddress(card);
+      if (!address) return;
+      const sig = trackerCardSignature(card, address);
+      if (specialPinSeen.has(sig)) return;
+      rememberPinSeen(sig);
+      if (pinnedActive && specialWalletMap.get(address)?.pin === true) {
+        pinTrackerCard(card, panel);
+      }
     });
   }
 
