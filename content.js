@@ -17,6 +17,7 @@
     enableManifestoToast: true,
     enableManifestoTab: true,
     enableSpecialWallet: true,
+    hideLightningTrade: false,
     watchedDevs: [],
     blockedCallers: [],
     specialWallets: [],
@@ -949,6 +950,35 @@
     });
   }
 
+  // ---- 隐藏 frontrun 插件的"闪电交易"按钮（第三方 Plasmo 注入件，open shadow）----
+  function scanFrontrunLightning() {
+    if (settings.hideLightningTrade !== true) {
+      document
+        .querySelectorAll('frontrun-csui[data-gdh-hidden-lightning="1"]')
+        .forEach((host) => {
+          host.style.removeProperty('display');
+          delete host.dataset.gdhHiddenLightning;
+        });
+      return;
+    }
+    document.querySelectorAll('frontrun-csui').forEach((host) => {
+      try {
+        const shadow = host.shadowRoot;
+        if (!shadow) return;
+        const isLightning = (shadow.textContent || '').includes('闪电交易');
+        if (isLightning && host.dataset.gdhHiddenLightning !== '1') {
+          host.dataset.gdhHiddenLightning = '1';
+          host.style.setProperty('display', 'none', 'important');
+        } else if (!isLightning && host.dataset.gdhHiddenLightning === '1') {
+          host.style.removeProperty('display');
+          delete host.dataset.gdhHiddenLightning;
+        }
+      } catch {
+        // 第三方结构变化时静默跳过
+      }
+    });
+  }
+
   // ---- 新宣言弹窗提醒 ----
   const MANI_SEEN_MAX = 500;
   const MANI_SEEN_STORE_KEY = 'maniSeenKeys';
@@ -1469,6 +1499,7 @@
     scanManifestoToasts();
     ensureManifestoTab();
     scanSpecialWallets();
+    scanFrontrunLightning();
   }
 
   function scheduleScan() {

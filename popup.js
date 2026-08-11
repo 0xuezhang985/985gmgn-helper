@@ -10,6 +10,7 @@ const DEFAULTS = {
   enableManifestoToast: true,
   enableManifestoTab: true,
   enableSpecialWallet: true,
+  hideLightningTrade: false,
   watchedDevs: [],
   highlightColor: '#f5b83d',
 };
@@ -23,6 +24,7 @@ const featureInputs = {
   enableManifestoToast: document.querySelector('#enable-manifesto-toast'),
   enableManifestoTab: document.querySelector('#enable-manifesto-tab'),
   enableSpecialWallet: document.querySelector('#enable-special-wallet'),
+  hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
