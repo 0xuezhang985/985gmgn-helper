@@ -17,7 +17,7 @@
     enableManifestoToast: true,
     enableManifestoTab: true,
     enableSpecialWallet: true,
-    hideLightningTrade: false,
+    hideLightningTrade: true,
     watchedDevs: [],
     blockedCallers: [],
     specialWallets: [],
@@ -950,29 +950,57 @@
     });
   }
 
-  // ---- 隐藏 frontrun 插件的"闪电交易"按钮（第三方 Plasmo 注入件，open shadow）----
+  // ---- 隐藏 frontrun 插件的"闪电交易"按钮 ----
+  // 0.15.1：实测按钮宿主是插进 GMGN DOM 的 portal 元素
+  // `[data-frontrun-portal="instant-trade"]`（含 tooltip 变体），不是 frontrun-csui。
+  // 注意不能碰它的 "cta" portal（战壕行内快速买入按钮）。
+  const FRONTRUN_LIGHTNING_SELECTOR =
+    '[data-frontrun-portal="instant-trade"], [data-frontrun-portal="instant-trade-tooltip"]';
+  // frontrun 在按钮 shadow 里放了 `:host{display:...!important}` 防隐藏加固
+  // （shadow 内 important 压过外部 inline important，display:none 无效）；
+  // 它没防 visibility 和尺寸——用这组属性把元素视觉+占位全部收干净。
+  const FRONTRUN_HIDE_PROPS = [
+    ['display', 'none'],
+    ['visibility', 'hidden'],
+    ['width', '0px'],
+    ['height', '0px'],
+    ['min-width', '0px'],
+    ['min-height', '0px'],
+    ['margin', '0px'],
+    ['padding', '0px'],
+    ['overflow', 'hidden'],
+    ['pointer-events', 'none'],
+  ];
+
+  function hideFrontrunHost(host) {
+    if (host.dataset.gdhHiddenLightning === '1') return;
+    host.dataset.gdhHiddenLightning = '1';
+    FRONTRUN_HIDE_PROPS.forEach(([prop, value]) => {
+      host.style.setProperty(prop, value, 'important');
+    });
+  }
+
+  function restoreFrontrunHost(host) {
+    FRONTRUN_HIDE_PROPS.forEach(([prop]) => host.style.removeProperty(prop));
+    delete host.dataset.gdhHiddenLightning;
+  }
+
   function scanFrontrunLightning() {
     if (settings.hideLightningTrade !== true) {
       document
-        .querySelectorAll('frontrun-csui[data-gdh-hidden-lightning="1"]')
-        .forEach((host) => {
-          host.style.removeProperty('display');
-          delete host.dataset.gdhHiddenLightning;
-        });
+        .querySelectorAll('[data-gdh-hidden-lightning="1"]')
+        .forEach(restoreFrontrunHost);
       return;
     }
+    document.querySelectorAll(FRONTRUN_LIGHTNING_SELECTOR).forEach(hideFrontrunHost);
+    // 兼容旧识别路径：frontrun-csui 容器内文案含"闪电交易"的一并隐藏。
     document.querySelectorAll('frontrun-csui').forEach((host) => {
       try {
         const shadow = host.shadowRoot;
         if (!shadow) return;
         const isLightning = (shadow.textContent || '').includes('闪电交易');
-        if (isLightning && host.dataset.gdhHiddenLightning !== '1') {
-          host.dataset.gdhHiddenLightning = '1';
-          host.style.setProperty('display', 'none', 'important');
-        } else if (!isLightning && host.dataset.gdhHiddenLightning === '1') {
-          host.style.removeProperty('display');
-          delete host.dataset.gdhHiddenLightning;
-        }
+        if (isLightning) hideFrontrunHost(host);
+        else if (host.dataset.gdhHiddenLightning === '1') restoreFrontrunHost(host);
       } catch {
         // 第三方结构变化时静默跳过
       }

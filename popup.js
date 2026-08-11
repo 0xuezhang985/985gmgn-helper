@@ -10,7 +10,7 @@ const DEFAULTS = {
   enableManifestoToast: true,
   enableManifestoTab: true,
   enableSpecialWallet: true,
-  hideLightningTrade: false,
+  hideLightningTrade: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
 };

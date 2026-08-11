@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.1 - 2026-08-11
+
+- 修复"隐藏闪电交易按钮"不生效：实际按钮宿主是 frontrun 插进 GMGN DOM 的 portal 元素 `[data-frontrun-portal="instant-trade"]`（0.15.0 只匹配了 frontrun-csui 容器）；且其 shadow 内有 `:host{display:...!important}` 防隐藏加固（压过外部 display:none），改用 visibility+尺寸归零方案隐藏（真实页面实测生效）。含快捷键 tooltip 变体；frontrun 的 cta 快速买入按钮与其他挂件不受影响。
+- 应使用反馈将该开关改为**默认开启**（可在配置页关闭）。
+
 ## 0.15.0 - 2026-08-11
 
 - 新增"隐藏闪电交易按钮"开关（默认关）：隐藏 frontrun 插件注入 GMGN 页面的"闪电交易"挂件（识别其 `frontrun-csui` shadow 容器内文案，仅隐藏闪电交易那个挂件，"快速买入"等其余 frontrun 功能不受影响）。
