@@ -278,6 +278,144 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   box-shadow: inset 3px 0 0 0 var(--gdh-sp-border, #f5b83d);
 }
 
+/* 价格/市值提醒醒目卡片（画面正中，涨绿跌红） */
+.gdh-remind-container {
+  position: fixed;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  z-index: 2147483002;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 372px;
+  max-width: calc(100vw - 40px);
+  pointer-events: none;
+}
+
+.gdh-remind-card {
+  --gdh-rm: #f5b83d;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 16px 18px;
+  border: 2px solid var(--gdh-rm);
+  border-radius: 14px;
+  background: #14171c;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75), 0 0 34px color-mix(in srgb, var(--gdh-rm) 32%, transparent);
+  color: #e8eaee;
+  font: 400 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  animation: gdh-remind-pop 200ms ease-out, gdh-remind-pulse 1.6s ease-in-out 200ms 3;
+}
+
+.gdh-remind-card[data-gdh-dir="up"] { --gdh-rm: #43c07a; }
+.gdh-remind-card[data-gdh-dir="down"] { --gdh-rm: #ef5350; }
+
+@keyframes gdh-remind-pop {
+  from { transform: scale(0.86); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes gdh-remind-pulse {
+  0%, 100% { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75), 0 0 30px color-mix(in srgb, var(--gdh-rm) 28%, transparent); }
+  50% { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75), 0 0 52px color-mix(in srgb, var(--gdh-rm) 65%, transparent); }
+}
+
+.gdh-remind-card__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gdh-remind-card__bell {
+  font-size: 16px;
+  animation: gdh-remind-shake 1.2s ease-in-out 3;
+}
+
+@keyframes gdh-remind-shake {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-16deg); }
+  40% { transform: rotate(14deg); }
+  60% { transform: rotate(-8deg); }
+  80% { transform: rotate(6deg); }
+}
+
+.gdh-remind-card__tag {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gdh-rm) 18%, transparent);
+  color: var(--gdh-rm);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.gdh-remind-card__arrow {
+  color: var(--gdh-rm);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.gdh-remind-card__close {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 16px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.gdh-remind-card__close:hover {
+  background: rgba(139, 147, 161, 0.2);
+  color: #fff;
+}
+
+.gdh-remind-card__symbol {
+  margin-top: 10px;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-remind-card__value {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.gdh-remind-card__label {
+  color: #8b93a1;
+  font-size: 13px;
+}
+
+.gdh-remind-card__num {
+  color: var(--gdh-rm);
+  font-size: 20px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.gdh-remind-card__foot {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(139, 147, 161, 0.18);
+  color: #8b93a1;
+  font-size: 12px;
+  text-align: right;
+}
+
 .gdh-color-button {
   flex: 0 0 auto;
   width: 12px;

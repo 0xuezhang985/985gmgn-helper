@@ -17,6 +17,7 @@
     enableManifestoToast: true,
     enableManifestoTab: true,
     enableSpecialWallet: true,
+    enableRemindAlert: true,
     hideLightningTrade: true,
     watchedDevs: [],
     blockedCallers: [],
@@ -1399,6 +1400,150 @@
     delete host.dataset.gdhHiddenLightning;
   }
 
+  // ---- 价格/市值提醒醒目化 ----
+  // GMGN 的提醒（价格/市值到价）触发时只弹一条很窄的小 toast（RemindToast.tsx），
+  // 极易错过。这里把它接管成画面正中的大卡片，涨绿跌红、带辉光与脉冲。
+  const REMIND_TOAST_SELECTOR = '[data-sentry-component="RemindToast"]';
+  const REMIND_CARD_MS = 15000;
+  const REMIND_CARD_MAX = 3;
+  let remindContainer = null;
+
+  function ensureRemindContainer() {
+    if (remindContainer && document.contains(remindContainer)) return remindContainer;
+    remindContainer = document.createElement('div');
+    remindContainer.className = 'gdh-remind-container';
+    document.body.appendChild(remindContainer);
+    return remindContainer;
+  }
+
+  function remindInfoFromToast(node) {
+    const link = node.matches('a[href]')
+      ? node
+      : node.querySelector('a[href]') || node.closest('a[href]');
+    const href = link?.getAttribute('href') || '';
+    let dir = '';
+    if (node.querySelector('.text-increase-100')) dir = 'up';
+    else if (node.querySelector('.text-decrease-100')) dir = 'down';
+
+    const texts = [...node.querySelectorAll('*')]
+      .filter((el) => el.children.length === 0)
+      .map((el) => (el.textContent || '').trim())
+      .filter(Boolean);
+    const labelIdx = texts.findIndex((t) => /价格|市值|price|mc|market/i.test(t) && t.length <= 8);
+    const label = labelIdx >= 0 ? texts[labelIdx] : '';
+    const value = labelIdx >= 0
+      ? (texts.slice(labelIdx + 1).find((t) => /[\d$]/.test(t)) || '')
+      : (texts.find((t) => /^[$≈]/.test(t)) || '');
+    const symbol = texts.find((t) => t && t !== label && t !== value && t.length <= 24) || '';
+    return { href, dir, label, value, symbol, raw: (node.textContent || '').replace(/\s+/g, ' ').trim() };
+  }
+
+  function showRemindCard(info) {
+    const container = ensureRemindContainer();
+    while (container.children.length >= REMIND_CARD_MAX) container.firstElementChild.remove();
+
+    const card = document.createElement('div');
+    card.className = 'gdh-remind-card';
+    if (info.dir) card.dataset.gdhDir = info.dir;
+
+    const head = document.createElement('div');
+    head.className = 'gdh-remind-card__head';
+    const bell = document.createElement('span');
+    bell.className = 'gdh-remind-card__bell';
+    bell.textContent = '🔔';
+    const tag = document.createElement('span');
+    tag.className = 'gdh-remind-card__tag';
+    tag.textContent = info.dir === 'down' ? '跌破提醒' : '到价提醒';
+    head.append(bell, tag);
+    if (info.dir) {
+      const arrow = document.createElement('span');
+      arrow.className = 'gdh-remind-card__arrow';
+      arrow.textContent = info.dir === 'down' ? '↓' : '↑';
+      head.appendChild(arrow);
+    }
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-remind-card__close';
+    close.textContent = '×';
+    close.title = '关闭';
+    head.appendChild(close);
+    card.appendChild(head);
+
+    const symbolEl = document.createElement('div');
+    symbolEl.className = 'gdh-remind-card__symbol';
+    symbolEl.textContent = info.symbol || '持仓代币';
+    card.appendChild(symbolEl);
+
+    const valueRow = document.createElement('div');
+    valueRow.className = 'gdh-remind-card__value';
+    if (info.label) {
+      const labelEl = document.createElement('span');
+      labelEl.className = 'gdh-remind-card__label';
+      labelEl.textContent = info.label;
+      valueRow.appendChild(labelEl);
+    }
+    const numEl = document.createElement('strong');
+    numEl.className = 'gdh-remind-card__num';
+    numEl.textContent = info.value || info.raw.slice(0, 40);
+    valueRow.appendChild(numEl);
+    card.appendChild(valueRow);
+
+    const foot = document.createElement('div');
+    foot.className = 'gdh-remind-card__foot';
+    foot.textContent = '点击进入代币页 →';
+    card.appendChild(foot);
+
+    let timer = 0;
+    const dismiss = () => {
+      window.clearTimeout(timer);
+      card.remove();
+      if (remindContainer && !remindContainer.children.length) {
+        remindContainer.remove();
+        remindContainer = null;
+      }
+    };
+    const arm = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(dismiss, REMIND_CARD_MS);
+    };
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    });
+    card.addEventListener('mouseenter', () => window.clearTimeout(timer));
+    card.addEventListener('mouseleave', arm);
+    card.addEventListener('click', () => {
+      dismiss();
+      if (info.href) window.location.assign(info.href);
+    });
+    arm();
+    container.appendChild(card);
+  }
+
+  function scanRemindToasts() {
+    if (settings.enableRemindAlert === false) {
+      document.querySelectorAll('[data-gdh-remind-taken="1"]').forEach((node) => {
+        node.style.removeProperty('display');
+        delete node.dataset.gdhRemindTaken;
+      });
+      remindContainer?.remove();
+      remindContainer = null;
+      return;
+    }
+    document.querySelectorAll(REMIND_TOAST_SELECTOR).forEach((node) => {
+      if (node.dataset.gdhRemindTaken === '1') return;
+      node.dataset.gdhRemindTaken = '1';
+      try {
+        showRemindCard(remindInfoFromToast(node));
+        // 原生小 toast 收起，避免同一条提醒重复出现两次。
+        node.style.setProperty('display', 'none', 'important');
+      } catch {
+        node.style.removeProperty('display');
+      }
+    });
+  }
+
   function scanFrontrunLightning() {
     if (settings.hideLightningTrade !== true) {
       document
@@ -1942,6 +2087,7 @@
     ensureManifestoTab();
     scanSpecialWallets();
     scanFrontrunLightning();
+    scanRemindToasts();
   }
 
   function scheduleScan() {
