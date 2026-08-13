@@ -18,6 +18,9 @@
     enableManifestoTab: true,
     enableSpecialWallet: true,
     enableRemindAlert: true,
+    enableHoldingSurge: true,
+    holdingSurgeThreshold: 20,
+    holdingWatchList: [],
     hideLightningTrade: true,
     watchedDevs: [],
     blockedCallers: [],
@@ -1450,10 +1453,10 @@
     head.className = 'gdh-remind-card__head';
     const bell = document.createElement('span');
     bell.className = 'gdh-remind-card__bell';
-    bell.textContent = '🔔';
+    bell.textContent = info.bell || '🔔';
     const tag = document.createElement('span');
     tag.className = 'gdh-remind-card__tag';
-    tag.textContent = info.dir === 'down' ? '跌破提醒' : '到价提醒';
+    tag.textContent = info.tagText || (info.dir === 'down' ? '跌破提醒' : '到价提醒');
     head.append(bell, tag);
     if (info.dir) {
       const arrow = document.createElement('span');
@@ -1519,6 +1522,160 @@
     });
     arm();
     container.appendChild(card);
+  }
+
+  // ---- 持仓暴涨提醒 ----
+  // 清单：持仓面板开着时从行上读 {chain,address,symbol} 缓存下来（面板只显示当前链，
+  // 切链再开一次就把那条链也收进来），之后面板关掉也在。
+  // 行情：走公开的 mutil_window_token_info（免登录，返回 price 与 price_1m/5m），
+  // 全程不碰任何登录凭据。
+  const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
+  const HOLDING_WATCH_MAX = 80;
+  const HOLDING_POLL_MS = 30000;
+  const HOLDING_COOLDOWN_MS = 10 * 60 * 1000;
+  const HOLDING_BATCH = 40;
+  const holdingAlertedAt = new Map();
+  let holdingWatchMap = new Map();
+  let holdingSaveTimer = 0;
+  let holdingPollTimer = 0;
+  let holdingPolling = false;
+
+  function rebuildHoldingWatch() {
+    holdingWatchMap = new Map(
+      (Array.isArray(settings.holdingWatchList) ? settings.holdingWatchList : [])
+        .filter((item) => item && item.chain && item.address)
+        .map((item) => [
+          `${item.chain}:${item.address}`,
+          {
+            chain: String(item.chain),
+            address: String(item.address),
+            symbol: String(item.symbol || ''),
+            at: Number(item.at) || 0,
+          },
+        ]),
+    );
+  }
+
+  function scheduleHoldingSave() {
+    if (holdingSaveTimer) return;
+    holdingSaveTimer = window.setTimeout(() => {
+      holdingSaveTimer = 0;
+      const list = [...holdingWatchMap.values()]
+        .sort((a, b) => b.at - a.at)
+        .slice(0, HOLDING_WATCH_MAX);
+      settings.holdingWatchList = list;
+      try {
+        chrome.storage.local.set({ holdingWatchList: list });
+      } catch {
+        // context invalidated
+      }
+    }, 800);
+  }
+
+  /** 从持仓面板行收集当前链的持仓，合并进缓存清单。 */
+  function collectHoldingRows() {
+    let changed = false;
+    document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach((row) => {
+      const chain = row.getAttribute('data-gdh-hold-chain') || '';
+      const address = row.getAttribute('data-gdh-hold-addr') || '';
+      if (!chain || !address) return;
+      const symbol = row.getAttribute('data-gdh-hold-symbol') || '';
+      const key = `${chain}:${address}`;
+      const prev = holdingWatchMap.get(key);
+      if (!prev || prev.symbol !== symbol) changed = true;
+      holdingWatchMap.set(key, { chain, address, symbol, at: Date.now() });
+    });
+    if (changed) scheduleHoldingSave();
+  }
+
+  function formatPriceShort(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n >= 1) return `$${n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+    return `$${n.toPrecision(4)}`;
+  }
+
+  async function pollHoldingSurge() {
+    if (holdingPolling) return;
+    if (settings.enableHoldingSurge === false) return;
+    if (!isTabVisibleForHolding()) return;
+    const entries = [...holdingWatchMap.values()];
+    if (!entries.length) return;
+
+    holdingPolling = true;
+    const threshold = Math.max(5, Number(settings.holdingSurgeThreshold) || 20);
+    const byChain = new Map();
+    entries.forEach((item) => {
+      if (!byChain.has(item.chain)) byChain.set(item.chain, []);
+      byChain.get(item.chain).push(item);
+    });
+
+    for (const [chain, items] of byChain) {
+      for (let i = 0; i < items.length; i += HOLDING_BATCH) {
+        const slice = items.slice(i, i + HOLDING_BATCH);
+        try {
+          const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${DEV_ATH_QS}`, {
+            method: 'POST',
+            credentials: 'omit',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chain, addresses: slice.map((s) => s.address) }),
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || body?.code !== 0 || !Array.isArray(body.data)) continue;
+          body.data.forEach((token) => {
+            const p = token?.price;
+            if (!p) return;
+            const now = Number(p.price);
+            const past = Number(p.price_5m);
+            if (!Number.isFinite(now) || !Number.isFinite(past) || past <= 0) return;
+            const pct = ((now - past) / past) * 100;
+            if (pct < threshold) return;
+            const address = String(token.address || p.address || '');
+            const key = `${chain}:${address}`;
+            const last = holdingAlertedAt.get(key) || 0;
+            if (Date.now() - last < HOLDING_COOLDOWN_MS) return;
+            holdingAlertedAt.set(key, Date.now());
+            const meta = holdingWatchMap.get(key);
+            showRemindCard({
+              href: `/${chain}/token/${address}`,
+              dir: 'up',
+              bell: '🚀',
+              tagText: '持仓暴涨',
+              symbol: meta?.symbol || token.symbol || '持仓代币',
+              label: '5分钟',
+              value: `+${pct.toFixed(0)}%  ${formatPriceShort(now)}`,
+              raw: '',
+            });
+          });
+        } catch {
+          // 网络失败静默跳过，下轮再试
+        }
+      }
+    }
+    holdingPolling = false;
+  }
+
+  function isTabVisibleForHolding() {
+    return document.visibilityState === 'visible';
+  }
+
+  function startHoldingPoll() {
+    if (holdingPollTimer) return;
+    holdingPollTimer = window.setInterval(() => {
+      pollHoldingSurge().catch(() => {});
+    }, HOLDING_POLL_MS);
+  }
+
+  function scanHoldingSurge() {
+    if (settings.enableHoldingSurge === false) {
+      if (holdingPollTimer) {
+        window.clearInterval(holdingPollTimer);
+        holdingPollTimer = 0;
+      }
+      return;
+    }
+    collectHoldingRows();
+    startHoldingPoll();
   }
 
   function scanRemindToasts() {
@@ -2088,6 +2245,7 @@
     scanSpecialWallets();
     scanFrontrunLightning();
     scanRemindToasts();
+    scanHoldingSurge();
   }
 
   function scheduleScan() {
@@ -2231,6 +2389,7 @@
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     rebuildSpecialWalletSet();
+    rebuildHoldingWatch();
     scheduleScan();
   });
 
@@ -2252,6 +2411,7 @@
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     rebuildSpecialWalletSet();
+    rebuildHoldingWatch();
     scheduleScan();
   });
 

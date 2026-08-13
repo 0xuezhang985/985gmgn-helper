@@ -8,6 +8,7 @@
     '[data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
+  const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
   let scanScheduled = false;
 
@@ -276,8 +277,62 @@
     }
   }
 
+  /** 持仓面板行：从 fiber 取 {chain,address,symbol}，供插件缓存持仓清单。 */
+  function readHoldingToken(element) {
+    const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
+    if (!fiberKey) return null;
+    const pick = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 4) return null;
+      if (value.address && value.symbol && value.chain) return value;
+      let keys;
+      try { keys = Object.keys(value); } catch { return null; }
+      for (const key of keys.slice(0, 50)) {
+        if (['_owner', 'return', 'child', 'sibling', 'alternate', 'stateNode'].includes(key)) continue;
+        let child;
+        try { child = value[key]; } catch { continue; }
+        if (child && typeof child === 'object') {
+          const hit = pick(child, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    let fiber = element[fiberKey];
+    for (let level = 0; fiber && level < 16; level += 1) {
+      for (const node of [fiber, fiber.alternate]) {
+        if (!node) continue;
+        for (const props of [node.memoizedProps, node.pendingProps]) {
+          const hit = pick(props, 0);
+          if (hit) {
+            return {
+              chain: String(hit.chain || '').slice(0, 16),
+              address: String(hit.address || '').slice(0, 64),
+              symbol: String(hit.symbol || '').slice(0, 24),
+            };
+          }
+        }
+      }
+      fiber = fiber.return;
+    }
+    return null;
+  }
+
+  function scanHoldingRow(element) {
+    const data = readHoldingToken(element);
+    if (!data || !data.chain || !data.address) {
+      element.removeAttribute('data-gdh-hold-chain');
+      element.removeAttribute('data-gdh-hold-addr');
+      element.removeAttribute('data-gdh-hold-symbol');
+      return;
+    }
+    setAttribute(element, 'data-gdh-hold-chain', data.chain);
+    setAttribute(element, 'data-gdh-hold-addr', data.address);
+    setAttribute(element, 'data-gdh-hold-symbol', data.symbol);
+  }
+
   function scanCards() {
     scanScheduled = false;
+    document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach(scanHoldingRow);
     document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
     document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
       scanCallerElement(element, 'callout');

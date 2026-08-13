@@ -11,6 +11,8 @@ const DEFAULTS = {
   enableManifestoTab: true,
   enableSpecialWallet: true,
   enableRemindAlert: true,
+  enableHoldingSurge: true,
+  holdingSurgeThreshold: 20,
   hideLightningTrade: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
@@ -26,10 +28,12 @@ const featureInputs = {
   enableManifestoTab: document.querySelector('#enable-manifesto-tab'),
   enableSpecialWallet: document.querySelector('#enable-special-wallet'),
   enableRemindAlert: document.querySelector('#enable-remind-alert'),
+  enableHoldingSurge: document.querySelector('#enable-holding-surge'),
   hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
+const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const status = document.querySelector('#status');
 const saveButton = document.querySelector('#save');
 const updateStatus = document.querySelector('#update-status');
@@ -82,6 +86,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
     Array.isArray(stored.watchedDevs) ? stored.watchedDevs : [],
   );
   colorInput.value = stored.highlightColor || DEFAULTS.highlightColor;
+  surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
   setStatus(`已配置 ${count} 个重点 Dev`);
 });
@@ -99,6 +104,7 @@ saveButton.addEventListener('click', () => {
     ),
     watchedDevs: parsed.entries,
     highlightColor: colorInput.value || DEFAULTS.highlightColor,
+    holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
   };
 
   chrome.storage.local.set(next, () => {

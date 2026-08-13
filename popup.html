@@ -80,6 +80,23 @@
           </label>
           <label class="switch-row">
             <span>
+              <strong>持仓暴涨提醒</strong>
+              <small>持仓 5 分钟涨幅超阈值弹窗（打开过持仓面板即生效）</small>
+            </span>
+            <input id="enable-holding-surge" type="checkbox" />
+          </label>
+          <label class="color-row" for="holding-surge-threshold">
+            <span>暴涨阈值（5 分钟）</span>
+            <select id="holding-surge-threshold">
+              <option value="10">+10%</option>
+              <option value="20">+20%</option>
+              <option value="30">+30%</option>
+              <option value="50">+50%</option>
+              <option value="100">+100%</option>
+            </select>
+          </label>
+          <label class="switch-row">
+            <span>
               <strong>价格提醒醒目化</strong>
               <small>到价/市值提醒改为画面正中大卡片，涨绿跌红</small>
             </span>
