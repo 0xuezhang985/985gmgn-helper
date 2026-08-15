@@ -560,6 +560,98 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   outline-offset: 1px;
 }
 
+/* 添加钱包弹窗内联的特别关注设置 */
+.gdh-addw-row {
+  margin: 10px 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(139, 147, 161, 0.28);
+  border-radius: 8px;
+  background: rgba(139, 147, 161, 0.06);
+  font: 400 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #d6d9df;
+}
+
+.gdh-addw-row.is-on {
+  border-color: rgba(245, 184, 61, 0.55);
+  background: rgba(245, 184, 61, 0.08);
+}
+
+.gdh-addw-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gdh-addw-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.gdh-addw-star {
+  color: #f5b83d;
+  font-size: 14px;
+}
+
+.gdh-addw-opts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  opacity: 0.35;
+  transition: opacity 140ms ease;
+}
+
+.gdh-addw-row.is-on .gdh-addw-opts {
+  opacity: 1;
+}
+
+.gdh-addw-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.gdh-addw-dot {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.gdh-addw-dot.is-current {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.gdh-addw-custom {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gdh-addw-custom::-webkit-color-swatch-wrapper { padding: 1px; }
+.gdh-addw-custom::-webkit-color-swatch { border: 0; border-radius: 50%; }
+
+.gdh-addw-pin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gdh-addw-pin input { margin: 0; cursor: pointer; }
+
 .gdh-sp-manage-button {
   flex: 0 0 auto;
   margin-left: 8px;

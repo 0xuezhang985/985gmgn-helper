@@ -21,6 +21,7 @@
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
     holdingWatchList: [],
+    addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
     hideLightningTrade: true,
     watchedDevs: [],
     blockedCallers: [],
@@ -783,13 +784,18 @@
     persistSpecialWallets(next);
   }
 
-  function addSpecialWallet(address, label) {
+  function addSpecialWallet(address, label, color, pin) {
     const normalized = normalizeAddress(address);
     if (!/^0x[a-f0-9]{40}$/.test(normalized) || specialWalletMap.has(normalized)) return false;
     const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
     persistSpecialWallets([
       ...current,
-      { address: normalized, label: String(label || '').trim().slice(0, 32), color: SPECIAL_COLOR_PALETTE[0], pin: false },
+      {
+        address: normalized,
+        label: String(label || '').trim().slice(0, 32),
+        color: normalizeSpecialColor(color),
+        pin: pin === true,
+      },
     ]);
     return true;
   }
@@ -1006,7 +1012,7 @@
       closeColorPalette();
       specialManageOpen = false;
       document
-        .querySelectorAll('.gdh-star-button, .gdh-color-button, .gdh-sp-manage-button, .gdh-sp-manage-modal, .gdh-pin-strip')
+        .querySelectorAll('.gdh-star-button, .gdh-color-button, .gdh-sp-manage-button, .gdh-sp-manage-modal, .gdh-pin-strip, .gdh-addw-row')
         .forEach((node) => node.remove());
       document.querySelectorAll('[data-gdh-special="1"]').forEach((node) => {
         delete node.dataset.gdhSpecial;
@@ -1049,6 +1055,7 @@
     });
 
     ensureAddressPageStar();
+    ensureAddWalletStarRow();
     ensureSpecialManageUI();
     scanPinnedPush();
   }
@@ -1073,6 +1080,160 @@
       const swatch = host.querySelector('.gdh-color-button');
       swatch?.classList.add('gdh-color-button--address');
     }
+  }
+
+  // ---- GMGN「添加钱包」弹窗内联特别关注设置 ----
+  // 用 placeholder / 按钮文案定位，不依赖 GMGN 的类名与组件标记（改版更抗造）。
+  const ADDR_PLACEHOLDER_RE = /钱包地址|wallet\s*address/i;
+  const NAME_PLACEHOLDER_RE = /钱包名称|wallet\s*name|备注/i;
+  const ADD_SUBMIT_RE = /^(添加钱包|add\s*wallet)$/i;
+
+  function findAddWalletDialog() {
+    const addrInput = [...document.querySelectorAll('input')].find((el) => (
+      ADDR_PLACEHOLDER_RE.test(el.getAttribute('placeholder') || '')
+      && el.getClientRects().length > 0
+    ));
+    if (!addrInput) return null;
+    let node = addrInput.parentElement;
+    for (let depth = 0; node && depth < 10; depth += 1) {
+      const submit = [...node.querySelectorAll('button, div[role="button"]')].find((el) => (
+        ADD_SUBMIT_RE.test((el.textContent || '').trim())
+      ));
+      if (submit) {
+        const nameInput = [...node.querySelectorAll('input')].find((el) => (
+          el !== addrInput && NAME_PLACEHOLDER_RE.test(el.getAttribute('placeholder') || '')
+        ));
+        return { dialog: node, addrInput, nameInput: nameInput || null, submit };
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function readAddWalletPref() {
+    const p = settings.addWalletStarPref;
+    return {
+      on: p?.on === true,
+      color: normalizeSpecialColor(p?.color),
+      pin: p?.pin === true,
+    };
+  }
+
+  function saveAddWalletPref(pref) {
+    settings.addWalletStarPref = pref;
+    try {
+      chrome.storage.local.set({ addWalletStarPref: pref });
+    } catch {
+      // context invalidated
+    }
+  }
+
+  function ensureAddWalletStarRow() {
+    const ctx = findAddWalletDialog();
+    if (!ctx) return;
+    if (settings.enableSpecialWallet === false) {
+      ctx.dialog.querySelector(':scope .gdh-addw-row')?.remove();
+      return;
+    }
+    let row = ctx.dialog.querySelector(':scope .gdh-addw-row');
+    if (row) return;
+
+    const pref = readAddWalletPref();
+    row = document.createElement('div');
+    row.className = 'gdh-addw-row';
+    row.addEventListener('pointerdown', (event) => event.stopPropagation());
+
+    const toggle = document.createElement('label');
+    toggle.className = 'gdh-addw-toggle';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = pref.on;
+    const star = document.createElement('span');
+    star.className = 'gdh-addw-star';
+    star.textContent = '★';
+    const text = document.createElement('span');
+    text.textContent = '同时特别关注';
+    toggle.append(box, star, text);
+    row.appendChild(toggle);
+
+    const opts = document.createElement('div');
+    opts.className = 'gdh-addw-opts';
+    const dots = document.createElement('div');
+    dots.className = 'gdh-addw-dots';
+    let chosen = pref.color;
+    const renderDots = () => {
+      [...dots.querySelectorAll('.gdh-addw-dot')].forEach((d) => {
+        d.classList.toggle('is-current', d.dataset.color === chosen);
+      });
+      star.style.color = chosen === 'rainbow' ? '' : chosen;
+      star.classList.toggle('gdh-rainbow-text', chosen === 'rainbow');
+    };
+    [...SPECIAL_COLOR_PALETTE, 'rainbow'].forEach((color) => {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'gdh-addw-dot';
+      dot.dataset.color = color;
+      applySwatchColor(dot, color);
+      dot.title = color === 'rainbow' ? '炫彩' : color;
+      dot.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        chosen = color;
+        renderDots();
+      });
+      dots.appendChild(dot);
+    });
+    const custom = document.createElement('input');
+    custom.type = 'color';
+    custom.className = 'gdh-addw-custom';
+    custom.value = chosen === 'rainbow' ? SPECIAL_COLOR_PALETTE[0] : chosen;
+    custom.title = '自定义颜色';
+    custom.addEventListener('input', () => {
+      chosen = custom.value;
+      renderDots();
+    });
+    dots.appendChild(custom);
+    opts.appendChild(dots);
+
+    const pinLabel = document.createElement('label');
+    pinLabel.className = 'gdh-addw-pin';
+    const pinBox = document.createElement('input');
+    pinBox.type = 'checkbox';
+    pinBox.checked = pref.pin;
+    const pinText = document.createElement('span');
+    pinText.textContent = '📌 推送置顶';
+    pinLabel.append(pinBox, pinText);
+    opts.appendChild(pinLabel);
+    row.appendChild(opts);
+
+    const syncEnabled = () => {
+      row.classList.toggle('is-on', box.checked);
+      opts.querySelectorAll('button, input').forEach((el) => { el.disabled = !box.checked; });
+    };
+    box.addEventListener('change', syncEnabled);
+    syncEnabled();
+    renderDots();
+
+    // 提交时把地址+备注登记为特别关注（捕获阶段先于 GMGN 关闭弹窗）。
+    ctx.submit.addEventListener('click', () => {
+      if (!box.checked) {
+        saveAddWalletPref({ on: false, color: chosen, pin: pinBox.checked });
+        return;
+      }
+      const address = String(ctx.addrInput.value || '').trim();
+      const label = String(ctx.nameInput?.value || '').trim();
+      saveAddWalletPref({ on: true, color: chosen, pin: pinBox.checked });
+      if (!addSpecialWallet(address, label, chosen, pinBox.checked)) {
+        // 已在名单里就只更新颜色/置顶
+        const normalized = normalizeAddress(address);
+        if (specialWalletMap.has(normalized)) {
+          setSpecialWalletColor(normalized, chosen);
+          setSpecialWalletPin(normalized, pinBox.checked);
+        }
+      }
+    }, true);
+
+    ctx.submit.parentElement?.insertBefore(row, ctx.submit);
   }
 
   // ---- 特别关注管理面板（钱包追踪面板头部入口）----
@@ -1532,7 +1693,7 @@
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   const HOLDING_WATCH_MAX = 80;
   const HOLDING_POLL_MS = 30000;
-  const HOLDING_COOLDOWN_MS = 10 * 60 * 1000;
+  const HOLDING_COOLDOWN_MS = 60 * 60 * 1000;
   const HOLDING_BATCH = 40;
   const holdingAlertedAt = new Map();
   let holdingWatchMap = new Map();
