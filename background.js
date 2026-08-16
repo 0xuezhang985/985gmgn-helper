@@ -92,7 +92,49 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) checkForUpdate();
 });
 
+// ---- fomo 代币数据（在后台取，避开页面 CORS/CSP；令牌由 fomo.family 上的脚本捕获）----
+const FOMO_API = 'https://prod-api.fomo.family';
+const FOMO_CACHE_MS = 20000;
+const fomoCache = new Map();
+
+async function fomoFetchToken({ tokenAddress, networkId, kind }) {
+  const key = `${kind}|${networkId}|${tokenAddress}`;
+  const hit = fomoCache.get(key);
+  if (hit && Date.now() - hit.at < FOMO_CACHE_MS) return hit.data;
+
+  const { fomoToken } = await chrome.storage.local.get('fomoToken');
+  const token = fomoToken?.token;
+  if (!token) return { ok: false, reason: 'no-token' };
+
+  const path = kind === 'thesis'
+    ? `/feed/token/thesis?tokenAddress=${tokenAddress}&networkId=${networkId}&threshold=0&limit=50`
+    : `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
+  try {
+    const res = await fetch(`${FOMO_API}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'omit',
+    });
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'auth' };
+    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    const body = await res.json().catch(() => null);
+    const ro = body?.responseObject;
+    const items = Array.isArray(ro) ? ro : (ro?.items || []);
+    const data = { ok: true, items, count: Array.isArray(ro) ? ro.length : (ro?.count ?? items.length) };
+    fomoCache.set(key, { at: Date.now(), data });
+    return data;
+  } catch (error) {
+    return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'fomo-token-feed') {
+    fomoFetchToken(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'check-update') {
     checkForUpdate().then(sendResponse);
     return true;

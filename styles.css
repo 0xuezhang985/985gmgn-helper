@@ -560,6 +560,159 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   outline-offset: 1px;
 }
 
+/* fomo 浮窗（GMGN 代币页） */
+.gdh-fomo-launcher {
+  position: fixed;
+  right: 16px;
+  bottom: 84px;
+  z-index: 2147482900;
+  padding: 6px 12px;
+  border: 1px solid rgba(139, 147, 161, 0.4);
+  border-radius: 999px;
+  background: #16181d;
+  color: #8b93a1;
+  font: 700 12px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.gdh-fomo-launcher:hover { color: #fff; border-color: rgba(245, 184, 61, 0.7); }
+.gdh-fomo-launcher.is-active { color: #f5b83d; border-color: rgba(245, 184, 61, 0.8); background: rgba(245, 184, 61, 0.12); }
+
+.gdh-fomo-panel {
+  position: fixed;
+  z-index: 2147482950;
+  width: 400px;
+  max-width: calc(100vw - 24px);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #14171c;
+  border: 1px solid rgba(139, 147, 161, 0.34);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.68);
+  color: #d6d9df;
+  font: 400 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.gdh-fomo__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.18);
+  cursor: move;
+  user-select: none;
+}
+
+.gdh-fomo__title { color: #f5b83d; font-size: 13px; }
+
+.gdh-fomo__tabs { display: flex; gap: 4px; }
+
+.gdh-fomo__tab {
+  padding: 2px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gdh-fomo__tab:hover { color: #d6d9df; }
+.gdh-fomo__tab.is-active { color: #fff; background: rgba(139, 147, 161, 0.18); border-color: rgba(139, 147, 161, 0.3); }
+
+.gdh-fomo__ext {
+  margin-left: auto;
+  color: #8b93a1;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.gdh-fomo__ext:hover { color: #f5b83d; }
+
+.gdh-fomo__close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 15px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.gdh-fomo__close:hover { background: rgba(139, 147, 161, 0.2); color: #fff; }
+
+.gdh-fomo__list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gdh-fomo__empty {
+  padding: 26px 12px;
+  text-align: center;
+  color: #8b93a1;
+}
+
+.gdh-fomo__link { color: #f5b83d; text-decoration: none; }
+.gdh-fomo__link:hover { text-decoration: underline; }
+
+.gdh-fomo__item {
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.12);
+}
+
+.gdh-fomo__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gdh-fomo__avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #23262d;
+  flex: 0 0 auto;
+}
+
+.gdh-fomo__name {
+  color: #fff;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+
+.gdh-fomo__pnl { font-weight: 700; font-size: 12px; }
+.gdh-fomo__pnl.is-up { color: #43c07a; }
+.gdh-fomo__pnl.is-down { color: #ef5350; }
+.gdh-fomo__size { color: #b48ae0; font-size: 11px; }
+
+.gdh-fomo__time {
+  margin-left: auto;
+  color: #8b93a1;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.gdh-fomo__text {
+  margin-top: 4px;
+  color: #d6d9df;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* 添加钱包弹窗内联的特别关注设置 */
 .gdh-addw-row {
   margin: 10px 0;

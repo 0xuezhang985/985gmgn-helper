@@ -4,6 +4,44 @@
   if (window.__gdhContentStarted) return;
   window.__gdhContentStarted = true;
 
+  // 在 fomo.family 上只做一件事：把你已登录的 fomo 访问令牌交给插件，
+  // 供 GMGN 代币页的 fomo 浮窗读取该代币的观点/交易（fomo 接口必须带 Bearer）。
+  // 令牌只存在浏览器本地，只会发给 fomo 自己的 API，不外传；之后不跑任何 GMGN 逻辑。
+  if (location.hostname === 'fomo.family' || location.hostname.endsWith('.fomo.family')) {
+    const readPrivyToken = () => {
+      try {
+        const raw = window.localStorage.getItem('privy:token');
+        if (!raw) return '';
+        let token = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'string') token = parsed;
+        } catch {
+          // 非 JSON 就按原样用
+        }
+        token = String(token || '').trim();
+        return token.length > 20 ? token : '';
+      } catch {
+        return '';
+      }
+    };
+    let lastSent = null;
+    const syncFomoToken = () => {
+      const token = readPrivyToken();
+      if (token === lastSent) return;
+      lastSent = token;
+      try {
+        chrome.storage.local.set({ fomoToken: token ? { token, at: Date.now() } : null });
+      } catch {
+        // 扩展上下文失效
+      }
+    };
+    syncFomoToken();
+    window.setInterval(syncFomoToken, 20000);
+    window.addEventListener('focus', syncFomoToken);
+    return;
+  }
+
   const CARD_SELECTOR =
     '[data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
@@ -18,6 +56,9 @@
     enableManifestoTab: true,
     enableSpecialWallet: true,
     enableRemindAlert: true,
+    enableFomoPanel: true,
+    fomoPanelPos: null,
+    fomoPanelOpen: false,
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
     holdingWatchList: [],
@@ -1685,6 +1726,322 @@
     container.appendChild(card);
   }
 
+  // ---- fomo 浮窗：在 GMGN 代币页看该代币在 fomo 的观点/交易 ----
+  const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149 };
+  const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol' };
+  const FOMO_REFRESH_MS = 30000;
+  let fomoPanelEl = null;
+  let fomoTab = 'thesis';
+  let fomoLoadedKey = '';
+  let fomoTimer = 0;
+  let fomoLoading = false;
+
+  function currentTokenRoute() {
+    const m = location.pathname.match(/^\/([a-z0-9]+)\/token\/([A-Za-z0-9]+)/);
+    if (!m) return null;
+    const chain = m[1];
+    if (!(chain in FOMO_NETWORK_ID)) return null;
+    return { chain, address: m[2], networkId: FOMO_NETWORK_ID[chain] };
+  }
+
+  function fomoAgo(value) {
+    const t = Number(new Date(value));
+    if (!Number.isFinite(t) || t <= 0) return '';
+    return formatRelTime(t);
+  }
+
+  function fomoUsd(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return '';
+    const abs = Math.abs(n);
+    const s = abs >= 1e6 ? `${(abs / 1e6).toFixed(1)}M`
+      : abs >= 1e3 ? `${(abs / 1e3).toFixed(1)}K`
+        : abs.toFixed(abs >= 10 ? 0 : 2);
+    return `${n < 0 ? '-' : ''}$${s}`;
+  }
+
+  function pick(obj, keys) {
+    for (const k of keys) {
+      const v = k.split('.').reduce((o, p) => (o == null ? o : o[p]), obj);
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return undefined;
+  }
+
+  function renderFomoItems(list, items, kind) {
+    list.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-fomo__empty';
+      empty.textContent = kind === 'thesis' ? '还没有人发表观点' : '暂无交易';
+      list.appendChild(empty);
+      return;
+    }
+    for (const item of items.slice(0, 50)) {
+      const row = document.createElement('div');
+      row.className = 'gdh-fomo__item';
+
+      const head = document.createElement('div');
+      head.className = 'gdh-fomo__head';
+      const avatarUrl = pick(item, ['user.profilePicture', 'user.profilePicUrl', 'user.avatar', 'profilePicture']);
+      if (typeof avatarUrl === 'string' && /^https:\/\//.test(avatarUrl)) {
+        const img = document.createElement('img');
+        img.className = 'gdh-fomo__avatar';
+        img.src = avatarUrl;
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        head.appendChild(img);
+      }
+      const name = document.createElement('strong');
+      name.className = 'gdh-fomo__name';
+      name.textContent = String(pick(item, ['user.username', 'user.displayName', 'username', 'user.name']) || '匿名');
+      head.appendChild(name);
+
+      const pnl = Number(pick(item, ['pnlUsd', 'pnl', 'realizedPnlUsd', 'position.pnlUsd']));
+      if (Number.isFinite(pnl) && pnl !== 0) {
+        const pnlEl = document.createElement('span');
+        pnlEl.className = `gdh-fomo__pnl ${pnl >= 0 ? 'is-up' : 'is-down'}`;
+        pnlEl.textContent = fomoUsd(pnl);
+        head.appendChild(pnlEl);
+      }
+      const sizeUsd = Number(pick(item, ['amountUsd', 'usdAmount', 'sizeUsd', 'position.valueUsd']));
+      if (Number.isFinite(sizeUsd) && sizeUsd > 0) {
+        const sz = document.createElement('span');
+        sz.className = 'gdh-fomo__size';
+        sz.textContent = fomoUsd(sizeUsd);
+        head.appendChild(sz);
+      }
+      const time = document.createElement('span');
+      time.className = 'gdh-fomo__time';
+      time.textContent = fomoAgo(pick(item, ['createdAt', 'timestamp', 'createdTime', 'time']));
+      head.appendChild(time);
+      row.appendChild(head);
+
+      const text = String(pick(item, ['thesis', 'text', 'content', 'body', 'message']) || '').trim();
+      if (text) {
+        const body = document.createElement('div');
+        body.className = 'gdh-fomo__text';
+        body.textContent = text;
+        row.appendChild(body);
+      }
+      list.appendChild(row);
+    }
+  }
+
+  async function loadFomoData(force) {
+    const route = currentTokenRoute();
+    if (!route || !fomoPanelEl) return;
+    const key = `${fomoTab}|${route.chain}|${route.address}`;
+    if (!force && key === fomoLoadedKey) return;
+    if (fomoLoading) return;
+    fomoLoading = true;
+    const list = fomoPanelEl.querySelector('.gdh-fomo__list');
+    if (key !== fomoLoadedKey) {
+      list.replaceChildren();
+      const loading = document.createElement('div');
+      loading.className = 'gdh-fomo__empty';
+      loading.textContent = '加载中…';
+      list.appendChild(loading);
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'fomo-token-feed',
+        payload: { tokenAddress: route.address, networkId: route.networkId, kind: fomoTab },
+      });
+      if (!fomoPanelEl) return;
+      if (res?.ok) {
+        fomoLoadedKey = key;
+        renderFomoItems(list, res.items || [], fomoTab);
+      } else {
+        list.replaceChildren();
+        const err = document.createElement('div');
+        err.className = 'gdh-fomo__empty';
+        if (res?.reason === 'no-token' || res?.reason === 'auth') {
+          err.innerHTML = '';
+          err.textContent = '需要先登录 fomo：';
+          const a = document.createElement('a');
+          a.className = 'gdh-fomo__link';
+          a.href = 'https://fomo.family/';
+          a.target = '_blank';
+          a.rel = 'noreferrer';
+          a.textContent = '打开 fomo.family 登录一次 →';
+          err.appendChild(document.createElement('br'));
+          err.appendChild(a);
+        } else {
+          err.textContent = `加载失败（${res?.reason || 'unknown'}）`;
+        }
+        list.appendChild(err);
+      }
+    } catch {
+      // 扩展上下文失效
+    }
+    fomoLoading = false;
+  }
+
+  function positionFomoPanel(panel) {
+    const pos = settings.fomoPanelPos;
+    if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+      panel.style.left = `${Math.max(0, Math.min(window.innerWidth - 120, pos.x))}px`;
+      panel.style.top = `${Math.max(0, Math.min(window.innerHeight - 60, pos.y))}px`;
+      panel.style.right = 'auto';
+    } else {
+      panel.style.right = '16px';
+      panel.style.top = '110px';
+      panel.style.left = 'auto';
+    }
+  }
+
+  function makeFomoDraggable(panel, handle) {
+    let sx = 0; let sy = 0; let ox = 0; let oy = 0; let dragging = false;
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('button, a')) return;
+      dragging = true;
+      const r = panel.getBoundingClientRect();
+      sx = event.clientX; sy = event.clientY; ox = r.left; oy = r.top;
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      const x = Math.max(0, Math.min(window.innerWidth - 120, ox + event.clientX - sx));
+      const y = Math.max(0, Math.min(window.innerHeight - 60, oy + event.clientY - sy));
+      panel.style.left = `${x}px`;
+      panel.style.top = `${y}px`;
+      panel.style.right = 'auto';
+    });
+    handle.addEventListener('pointerup', () => {
+      if (!dragging) return;
+      dragging = false;
+      const r = panel.getBoundingClientRect();
+      settings.fomoPanelPos = { x: Math.round(r.left), y: Math.round(r.top) };
+      try {
+        chrome.storage.local.set({ fomoPanelPos: settings.fomoPanelPos });
+      } catch {
+        // ignore
+      }
+    });
+  }
+
+  function setFomoOpen(open) {
+    settings.fomoPanelOpen = open;
+    try {
+      chrome.storage.local.set({ fomoPanelOpen: open });
+    } catch {
+      // ignore
+    }
+  }
+
+  function buildFomoPanel() {
+    const panel = document.createElement('section');
+    panel.className = 'gdh-fomo-panel';
+
+    const head = document.createElement('div');
+    head.className = 'gdh-fomo__bar';
+    const title = document.createElement('strong');
+    title.className = 'gdh-fomo__title';
+    title.textContent = 'fomo';
+    const tabs = document.createElement('div');
+    tabs.className = 'gdh-fomo__tabs';
+    [['thesis', '观点'], ['swaps', '交易']].forEach(([id, label]) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'gdh-fomo__tab';
+      btn.dataset.tab = id;
+      btn.textContent = label;
+      btn.classList.toggle('is-active', fomoTab === id);
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        fomoTab = id;
+        panel.querySelectorAll('.gdh-fomo__tab').forEach((t) => {
+          t.classList.toggle('is-active', t.dataset.tab === id);
+        });
+        loadFomoData(true);
+      });
+      tabs.appendChild(btn);
+    });
+    const open = document.createElement('a');
+    open.className = 'gdh-fomo__ext';
+    open.target = '_blank';
+    open.rel = 'noreferrer';
+    open.textContent = '↗';
+    open.title = '在 fomo.family 打开';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-fomo__close';
+    close.textContent = '×';
+    close.title = '收起（点右下角 fomo 按钮再打开）';
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setFomoOpen(false);
+      scheduleScan();
+    });
+    head.append(title, tabs, open, close);
+
+    const list = document.createElement('div');
+    list.className = 'gdh-fomo__list';
+    panel.append(head, list);
+    makeFomoDraggable(panel, head);
+    return panel;
+  }
+
+  function ensureFomoLauncher() {
+    let btn = document.querySelector('.gdh-fomo-launcher');
+    if (settings.enableFomoPanel === false || !currentTokenRoute()) {
+      btn?.remove();
+      return;
+    }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'gdh-fomo-launcher';
+      btn.textContent = 'fomo';
+      btn.title = '查看该代币在 fomo 的观点';
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setFomoOpen(!settings.fomoPanelOpen);
+        scheduleScan();
+      });
+      document.body.appendChild(btn);
+    }
+    btn.classList.toggle('is-active', settings.fomoPanelOpen === true);
+  }
+
+  function scanFomoPanel() {
+    const route = currentTokenRoute();
+    if (settings.enableFomoPanel === false || !route || settings.fomoPanelOpen !== true) {
+      if (fomoPanelEl) {
+        fomoPanelEl.remove();
+        fomoPanelEl = null;
+        fomoLoadedKey = '';
+      }
+      if (fomoTimer) {
+        window.clearInterval(fomoTimer);
+        fomoTimer = 0;
+      }
+      ensureFomoLauncher();
+      return;
+    }
+    ensureFomoLauncher();
+    if (!fomoPanelEl || !document.contains(fomoPanelEl)) {
+      fomoPanelEl = buildFomoPanel();
+      document.body.appendChild(fomoPanelEl);
+      positionFomoPanel(fomoPanelEl);
+      fomoLoadedKey = '';
+    }
+    const slug = FOMO_CHAIN_SLUG[route.chain] || route.chain;
+    const ext = fomoPanelEl.querySelector('.gdh-fomo__ext');
+    if (ext) ext.href = `https://fomo.family/tokens/${slug}/${route.address}`;
+    loadFomoData(false);
+    if (!fomoTimer) {
+      fomoTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') loadFomoData(true);
+      }, FOMO_REFRESH_MS);
+    }
+  }
+
   // ---- 持仓暴涨提醒 ----
   // 清单：持仓面板开着时从行上读 {chain,address,symbol} 缓存下来（面板只显示当前链，
   // 切链再开一次就把那条链也收进来），之后面板关掉也在。
@@ -2407,6 +2764,7 @@
     scanFrontrunLightning();
     scanRemindToasts();
     scanHoldingSurge();
+    scanFomoPanel();
   }
 
   function scheduleScan() {

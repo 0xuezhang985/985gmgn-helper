@@ -11,6 +11,7 @@ const DEFAULTS = {
   enableManifestoTab: true,
   enableSpecialWallet: true,
   enableRemindAlert: true,
+  enableFomoPanel: true,
   enableHoldingSurge: true,
   holdingSurgeThreshold: 20,
   hideLightningTrade: true,
@@ -28,6 +29,7 @@ const featureInputs = {
   enableManifestoTab: document.querySelector('#enable-manifesto-tab'),
   enableSpecialWallet: document.querySelector('#enable-special-wallet'),
   enableRemindAlert: document.querySelector('#enable-remind-alert'),
+  enableFomoPanel: document.querySelector('#enable-fomo-panel'),
   enableHoldingSurge: document.querySelector('#enable-holding-surge'),
   hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
