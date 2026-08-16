@@ -1733,6 +1733,7 @@
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
   let fomoLoadedKey = '';
+  let fomoLastItems = [];
   let fomoTimer = 0;
   let fomoLoading = false;
 
@@ -1768,6 +1769,52 @@
     return undefined;
   }
 
+  /**
+   * 自适应取值：按「键名正则 + 值类型」在对象里深搜。
+   * fomo 的字段名我没法实测确认，硬猜一份清单很容易全落空（0.21.0 就是这么翻车的），
+   * 所以改成按语义找，键名怎么拼都能命中。
+   */
+  function deepPick(obj, keyRe, kind, depth = 0, seen = new Set()) {
+    if (!obj || typeof obj !== 'object' || depth > 3 || seen.has(obj)) return undefined;
+    seen.add(obj);
+    const ok = (v) => {
+      if (kind === 'number') {
+        const n = Number(v);
+        return Number.isFinite(n) && v !== '' && v !== true && v !== false ? n : undefined;
+      }
+      if (kind === 'url') {
+        return typeof v === 'string' && /^https?:\/\//.test(v) ? v : undefined;
+      }
+      const s = typeof v === 'string' ? v.trim() : '';
+      return s && s.length <= 200 && !/^https?:\/\//.test(s) ? s : undefined;
+    };
+    // 先本层
+    for (const [k, v] of Object.entries(obj)) {
+      if (!keyRe.test(k)) continue;
+      const val = ok(v);
+      if (val !== undefined) return val;
+    }
+    // 再下钻
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const hit = deepPick(v, keyRe, kind, depth + 1, seen);
+        if (hit !== undefined) return hit;
+      }
+    }
+    return undefined;
+  }
+
+  function holderName(item) {
+    return deepPick(item, /^(username|userName|handle|displayName|nickname|name)$/i, 'string')
+      || deepPick(item, /(username|handle|displayname|nickname)/i, 'string')
+      || deepPick(item, /name/i, 'string')
+      || '匿名';
+  }
+
+  function holderAvatar(item) {
+    return deepPick(item, /(profilepic|profileimage|avatar|picture|image|photo)/i, 'url');
+  }
+
   /** Holders 表：交易者 / 持仓 / 盈亏 / 平均入场 / 观点 */
   function renderFomoHolders(list, items) {
     list.replaceChildren();
@@ -1783,8 +1830,8 @@
 
       const who = document.createElement('div');
       who.className = 'gdh-fomo__hwho';
-      const avatarUrl = pick(item, ['user.profilePicture', 'user.profilePicUrl', 'user.avatar', 'profilePicture', 'avatar']);
-      if (typeof avatarUrl === 'string' && /^https:\/\//.test(avatarUrl)) {
+      const avatarUrl = holderAvatar(item);
+      if (avatarUrl) {
         const img = document.createElement('img');
         img.className = 'gdh-fomo__avatar';
         img.src = avatarUrl;
@@ -1794,9 +1841,10 @@
       }
       const name = document.createElement('strong');
       name.className = 'gdh-fomo__name';
-      name.textContent = String(pick(item, ['user.username', 'user.displayName', 'username', 'displayName', 'user.name', 'name']) || '匿名');
+      name.textContent = holderName(item);
       who.appendChild(name);
-      const hold = pick(item, ['avgHoldTime', 'holdDuration', 'avgHoldDuration', 'holdTime']);
+      const hold = deepPick(item, /hold(ing)?(time|duration|period)|avghold/i, 'string')
+        || deepPick(item, /hold(ing)?(time|duration)/i, 'number');
       if (hold) {
         const h = document.createElement('span');
         h.className = 'gdh-fomo__hhold';
@@ -1808,18 +1856,21 @@
       const nums = document.createElement('div');
       nums.className = 'gdh-fomo__hnums';
 
-      const posUsd = Number(pick(item, ['positionUsd', 'valueUsd', 'position.valueUsd', 'balanceUsd', 'usdValue', 'position']));
+      const posUsd = Number(
+        deepPick(item, /(position|value|balance|holding|amount|size)(usd)?$/i, 'number')
+        ?? deepPick(item, /usd/i, 'number'),
+      );
       const posEl = document.createElement('span');
       posEl.className = 'gdh-fomo__hpos';
       posEl.textContent = Number.isFinite(posUsd) && posUsd > 0 ? fomoUsd(posUsd) : '—';
       nums.appendChild(posEl);
 
-      const pnl = Number(pick(item, ['pnlUsd', 'pnl', 'unrealizedPnlUsd', 'totalPnlUsd']));
+      const pnl = Number(deepPick(item, /(pnl|profit)(usd)?$/i, 'number') ?? deepPick(item, /(pnl|profit)/i, 'number'));
       const pnlEl = document.createElement('span');
       pnlEl.className = 'gdh-fomo__hpnl';
       if (Number.isFinite(pnl) && pnl !== 0) {
         pnlEl.classList.add(pnl >= 0 ? 'is-up' : 'is-down');
-        const pct = Number(pick(item, ['pnlPercent', 'pnlPct', 'roi', 'pnlPercentage']));
+        const pct = Number(deepPick(item, /(pnl|profit|roi).*(pct|percent|ratio)|^(roi|pnlpercent)/i, 'number'));
         pnlEl.textContent = Number.isFinite(pct) && pct !== 0
           ? `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)} (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`
           : `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)}`;
@@ -1828,7 +1879,7 @@
       }
       nums.appendChild(pnlEl);
 
-      const entry = pick(item, ['avgEntryMarketCap', 'avgEntryMc', 'averageEntryMarketCap', 'avgEntry', 'entryMarketCap']);
+      const entry = deepPick(item, /(entry|avg).*(marketcap|mc|price)|^(avgentry|entrymc)/i, 'number');
       const entryEl = document.createElement('span');
       entryEl.className = 'gdh-fomo__hentry';
       const entryNum = Number(entry);
@@ -1838,7 +1889,7 @@
       nums.appendChild(entryEl);
       row.appendChild(nums);
 
-      const thesis = String(pick(item, ['thesis', 'thesisText', 'latestThesis.thesis', 'note']) || '').trim();
+      const thesis = String(deepPick(item, /(thesis|content|message|note|comment)/i, 'string') || '').trim();
       if (thesis) {
         const t = document.createElement('div');
         t.className = 'gdh-fomo__htext';
@@ -1865,8 +1916,8 @@
 
       const head = document.createElement('div');
       head.className = 'gdh-fomo__head';
-      const avatarUrl = pick(item, ['user.profilePicture', 'user.profilePicUrl', 'user.avatar', 'profilePicture']);
-      if (typeof avatarUrl === 'string' && /^https:\/\//.test(avatarUrl)) {
+      const avatarUrl = holderAvatar(item);
+      if (avatarUrl) {
         const img = document.createElement('img');
         img.className = 'gdh-fomo__avatar';
         img.src = avatarUrl;
@@ -1876,17 +1927,17 @@
       }
       const name = document.createElement('strong');
       name.className = 'gdh-fomo__name';
-      name.textContent = String(pick(item, ['user.username', 'user.displayName', 'username', 'user.name']) || '匿名');
+      name.textContent = holderName(item);
       head.appendChild(name);
 
-      const pnl = Number(pick(item, ['pnlUsd', 'pnl', 'realizedPnlUsd', 'position.pnlUsd']));
+      const pnl = Number(deepPick(item, /(pnl|profit)(usd)?$/i, 'number') ?? deepPick(item, /(pnl|profit)/i, 'number'));
       if (Number.isFinite(pnl) && pnl !== 0) {
         const pnlEl = document.createElement('span');
         pnlEl.className = `gdh-fomo__pnl ${pnl >= 0 ? 'is-up' : 'is-down'}`;
         pnlEl.textContent = fomoUsd(pnl);
         head.appendChild(pnlEl);
       }
-      const sizeUsd = Number(pick(item, ['amountUsd', 'usdAmount', 'sizeUsd', 'position.valueUsd']));
+      const sizeUsd = Number(deepPick(item, /(amount|size|value|position)(usd)?$/i, 'number'));
       if (Number.isFinite(sizeUsd) && sizeUsd > 0) {
         const sz = document.createElement('span');
         sz.className = 'gdh-fomo__size';
@@ -1895,11 +1946,12 @@
       }
       const time = document.createElement('span');
       time.className = 'gdh-fomo__time';
-      time.textContent = fomoAgo(pick(item, ['createdAt', 'timestamp', 'createdTime', 'time']));
+      time.textContent = fomoAgo(pick(item, ['createdAt', 'timestamp', 'createdTime', 'time'])
+        || deepPick(item, /(createdat|created_at|timestamp|time)$/i, 'number'));
       head.appendChild(time);
       row.appendChild(head);
 
-      const text = String(pick(item, ['thesis', 'text', 'content', 'body', 'message']) || '').trim();
+      const text = String(deepPick(item, /(thesis|content|text|body|message|note)/i, 'string') || '').trim();
       if (text) {
         const body = document.createElement('div');
         body.className = 'gdh-fomo__text';
@@ -1999,7 +2051,8 @@
       if (!fomoPanelEl) return;
       if (res?.ok) {
         fomoLoadedKey = key;
-        renderFomoItems(list, res.items || [], fomoTab);
+        fomoLastItems = res.items || [];
+        renderFomoItems(list, fomoLastItems, fomoTab);
       } else {
         list.replaceChildren();
         list.appendChild(await buildFomoErrorBox(res));
@@ -2098,6 +2151,30 @@
     open.rel = 'noreferrer';
     open.textContent = '↗';
     open.title = '在 fomo.family 打开';
+    // 字段没认出来时用它看原始返回，一眼能定位（不需要开 DevTools）
+    const dbg = document.createElement('button');
+    dbg.type = 'button';
+    dbg.className = 'gdh-fomo__dbg';
+    dbg.textContent = '{}';
+    dbg.title = '显示原始数据（排查字段用）';
+    dbg.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const list = panel.querySelector('.gdh-fomo__list');
+      const existing = list.querySelector('.gdh-fomo__raw');
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      const pre = document.createElement('pre');
+      pre.className = 'gdh-fomo__raw';
+      const first = fomoLastItems[0];
+      pre.textContent = first
+        ? `共 ${fomoLastItems.length} 条 · 首条字段：\n${JSON.stringify(first, null, 1).slice(0, 1500)}`
+        : '当前没有数据（items 为空）';
+      list.prepend(pre);
+    });
+
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'gdh-fomo__close';
@@ -2109,7 +2186,7 @@
       setFomoOpen(false);
       scheduleScan();
     });
-    head.append(title, tabs, open, close);
+    head.append(title, tabs, dbg, open, close);
 
     const list = document.createElement('div');
     list.className = 'gdh-fomo__list';

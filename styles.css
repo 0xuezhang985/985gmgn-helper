@@ -623,8 +623,34 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 .gdh-fomo__tab:hover { color: #d6d9df; }
 .gdh-fomo__tab.is-active { color: #fff; background: rgba(139, 147, 161, 0.18); border-color: rgba(139, 147, 161, 0.3); }
 
-.gdh-fomo__ext {
+.gdh-fomo__dbg {
   margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid rgba(139, 147, 161, 0.3);
+  border-radius: 5px;
+  background: transparent;
+  color: #8b93a1;
+  font: 700 11px/18px ui-monospace, Menlo, Consolas, monospace;
+  cursor: pointer;
+}
+
+.gdh-fomo__dbg:hover { color: #f5b83d; border-color: rgba(245, 184, 61, 0.6); }
+
+.gdh-fomo__raw {
+  margin: 0;
+  padding: 8px 10px;
+  background: #0e1014;
+  border-bottom: 1px solid rgba(245, 184, 61, 0.35);
+  color: #b48ae0;
+  font: 400 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.gdh-fomo__ext {
+  margin-left: 6px;
   color: #8b93a1;
   text-decoration: none;
   font-size: 14px;

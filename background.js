@@ -97,6 +97,26 @@ const FOMO_API = 'https://prod-api.fomo.family';
 const FOMO_CACHE_MS = 20000;
 const fomoCache = new Map();
 
+/** 递归找出响应里第一个「对象数组」，避开各层包装字段名的不确定性。 */
+function firstObjectArray(value, depth) {
+  if (!value || typeof value !== 'object' || depth > 4) return null;
+  if (Array.isArray(value)) {
+    if (value.length && typeof value[0] === 'object' && value[0] !== null && !Array.isArray(value[0])) {
+      // 数组元素本身还套着一层（如 [{hodlers:[...]}]）时继续往里找
+      const inner = firstObjectArray(value[0], depth + 1);
+      const keys = Object.keys(value[0]);
+      if (inner && inner.length && keys.length <= 4) return inner;
+      return value;
+    }
+    return null;
+  }
+  for (const key of Object.keys(value).slice(0, 30)) {
+    const hit = firstObjectArray(value[key], depth + 1);
+    if (hit && hit.length) return hit;
+  }
+  return null;
+}
+
 async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   const key = `${kind}|${networkId}|${tokenAddress}`;
   const hit = fomoCache.get(key);
@@ -139,13 +159,11 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     const ro = body?.responseObject;
     let items;
     if (kind === 'holders') {
-      // /hodlers/top 返回按 token 分组的数组，取第一组里的持仓者清单
-      const group = Array.isArray(ro) ? ro[0] : ro;
-      items = Array.isArray(group)
-        ? group
-        : (group?.hodlers || group?.holders || group?.items || group?.users || group?.positions || []);
+      // /hodlers/top 的包装层不确定（responseObject[0] 里可能是 hodlers/tokens/...），
+      // 与其猜字段名，不如递归找出第一个「对象数组」。
+      items = firstObjectArray(ro, 0) || [];
     } else {
-      items = Array.isArray(ro) ? ro : (ro?.items || []);
+      items = Array.isArray(ro) ? ro : (ro?.items || firstObjectArray(ro, 0) || []);
     }
     if (!Array.isArray(items)) items = [];
     const data = { ok: true, items, count: items.length };
