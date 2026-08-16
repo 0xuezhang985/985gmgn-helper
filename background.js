@@ -105,9 +105,16 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   const { fomoToken } = await chrome.storage.local.get('fomoToken');
   const token = fomoToken?.token;
 
-  const path = kind === 'thesis'
-    ? `/feed/token/thesis?tokenAddress=${tokenAddress}&networkId=${networkId}&threshold=0&limit=50`
-    : `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
+  let path;
+  if (kind === 'thesis') {
+    path = `/feed/token/thesis?tokenAddress=${tokenAddress}&networkId=${networkId}&threshold=0&limit=50`;
+  } else if (kind === 'holders') {
+    // fomo 内部拼写是 hodlers；tokens 是 URL 编码后的 JSON 数组
+    const tokens = encodeURIComponent(JSON.stringify([{ address: tokenAddress, networkId }]));
+    path = `/hodlers/top?tokens=${tokens}`;
+  } else {
+    path = `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
+  }
   try {
     // 先直接复用浏览器里的 fomo 登录态（cookie）；拿到过 Bearer 令牌就一并带上。
     // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
@@ -130,8 +137,18 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     }
     const body = await res.json().catch(() => null);
     const ro = body?.responseObject;
-    const items = Array.isArray(ro) ? ro : (ro?.items || []);
-    const data = { ok: true, items, count: Array.isArray(ro) ? ro.length : (ro?.count ?? items.length) };
+    let items;
+    if (kind === 'holders') {
+      // /hodlers/top 返回按 token 分组的数组，取第一组里的持仓者清单
+      const group = Array.isArray(ro) ? ro[0] : ro;
+      items = Array.isArray(group)
+        ? group
+        : (group?.hodlers || group?.holders || group?.items || group?.users || group?.positions || []);
+    } else {
+      items = Array.isArray(ro) ? ro : (ro?.items || []);
+    }
+    if (!Array.isArray(items)) items = [];
+    const data = { ok: true, items, count: items.length };
     fomoCache.set(key, { at: Date.now(), data });
     return data;
   } catch (error) {

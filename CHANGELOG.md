@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.0 - 2026-08-13
+
+- fomo 浮窗新增「持仓者」标签（默认打开的第一个标签）：列出该代币在 fomo 上的持仓者——交易者、持仓金额、盈亏（金额+百分比，涨绿跌红）、平均入场市值、平均持有时长与观点。
+- 接口 `GET /hodlers/top?tokens=[{address,networkId}]`（fomo 内部拼写是 hodlers，故此前按 holders 搜不到）；响应做了 hodlers/holders/items/positions 多字段兼容。
+
 ## 0.20.2 - 2026-08-13
 
 - fomo 浮窗优先**直接复用浏览器里的 fomo 登录态（cookie）**：以前没捕获到 Bearer 令牌时直接放弃、压根没发请求；现在先带 cookie 试一次，cookie 认就无需任何额外操作，只有 cookie 也被拒（401）才提示去 fomo.family 抓一次令牌。

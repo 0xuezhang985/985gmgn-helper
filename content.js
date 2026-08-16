@@ -1768,7 +1768,89 @@
     return undefined;
   }
 
+  /** Holders 表：交易者 / 持仓 / 盈亏 / 平均入场 / 观点 */
+  function renderFomoHolders(list, items) {
+    list.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-fomo__empty';
+      empty.textContent = '暂无持仓者';
+      return void list.appendChild(empty);
+    }
+    for (const item of items.slice(0, 60)) {
+      const row = document.createElement('div');
+      row.className = 'gdh-fomo__hrow';
+
+      const who = document.createElement('div');
+      who.className = 'gdh-fomo__hwho';
+      const avatarUrl = pick(item, ['user.profilePicture', 'user.profilePicUrl', 'user.avatar', 'profilePicture', 'avatar']);
+      if (typeof avatarUrl === 'string' && /^https:\/\//.test(avatarUrl)) {
+        const img = document.createElement('img');
+        img.className = 'gdh-fomo__avatar';
+        img.src = avatarUrl;
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        who.appendChild(img);
+      }
+      const name = document.createElement('strong');
+      name.className = 'gdh-fomo__name';
+      name.textContent = String(pick(item, ['user.username', 'user.displayName', 'username', 'displayName', 'user.name', 'name']) || '匿名');
+      who.appendChild(name);
+      const hold = pick(item, ['avgHoldTime', 'holdDuration', 'avgHoldDuration', 'holdTime']);
+      if (hold) {
+        const h = document.createElement('span');
+        h.className = 'gdh-fomo__hhold';
+        h.textContent = String(hold).slice(0, 14);
+        who.appendChild(h);
+      }
+      row.appendChild(who);
+
+      const nums = document.createElement('div');
+      nums.className = 'gdh-fomo__hnums';
+
+      const posUsd = Number(pick(item, ['positionUsd', 'valueUsd', 'position.valueUsd', 'balanceUsd', 'usdValue', 'position']));
+      const posEl = document.createElement('span');
+      posEl.className = 'gdh-fomo__hpos';
+      posEl.textContent = Number.isFinite(posUsd) && posUsd > 0 ? fomoUsd(posUsd) : '—';
+      nums.appendChild(posEl);
+
+      const pnl = Number(pick(item, ['pnlUsd', 'pnl', 'unrealizedPnlUsd', 'totalPnlUsd']));
+      const pnlEl = document.createElement('span');
+      pnlEl.className = 'gdh-fomo__hpnl';
+      if (Number.isFinite(pnl) && pnl !== 0) {
+        pnlEl.classList.add(pnl >= 0 ? 'is-up' : 'is-down');
+        const pct = Number(pick(item, ['pnlPercent', 'pnlPct', 'roi', 'pnlPercentage']));
+        pnlEl.textContent = Number.isFinite(pct) && pct !== 0
+          ? `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)} (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`
+          : `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)}`;
+      } else {
+        pnlEl.textContent = '—';
+      }
+      nums.appendChild(pnlEl);
+
+      const entry = pick(item, ['avgEntryMarketCap', 'avgEntryMc', 'averageEntryMarketCap', 'avgEntry', 'entryMarketCap']);
+      const entryEl = document.createElement('span');
+      entryEl.className = 'gdh-fomo__hentry';
+      const entryNum = Number(entry);
+      entryEl.textContent = Number.isFinite(entryNum) && entryNum > 0
+        ? `${fomoUsd(entryNum)} MC`
+        : (entry ? String(entry).slice(0, 14) : '—');
+      nums.appendChild(entryEl);
+      row.appendChild(nums);
+
+      const thesis = String(pick(item, ['thesis', 'thesisText', 'latestThesis.thesis', 'note']) || '').trim();
+      if (thesis) {
+        const t = document.createElement('div');
+        t.className = 'gdh-fomo__htext';
+        t.textContent = thesis;
+        row.appendChild(t);
+      }
+      list.appendChild(row);
+    }
+  }
+
   function renderFomoItems(list, items, kind) {
+    if (kind === 'holders') return renderFomoHolders(list, items);
     list.replaceChildren();
     if (!items.length) {
       const empty = document.createElement('div');
@@ -1992,7 +2074,7 @@
     title.textContent = 'fomo';
     const tabs = document.createElement('div');
     tabs.className = 'gdh-fomo__tabs';
-    [['thesis', '观点'], ['swaps', '交易']].forEach(([id, label]) => {
+    [['holders', '持仓者'], ['thesis', '观点'], ['swaps', '交易']].forEach(([id, label]) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'gdh-fomo__tab';
