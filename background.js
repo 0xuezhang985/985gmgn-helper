@@ -104,18 +104,20 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
 
   const { fomoToken } = await chrome.storage.local.get('fomoToken');
   const token = fomoToken?.token;
-  if (!token) return { ok: false, reason: 'no-token' };
 
   const path = kind === 'thesis'
     ? `/feed/token/thesis?tokenAddress=${tokenAddress}&networkId=${networkId}&threshold=0&limit=50`
     : `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
   try {
-    // credentials:'include' —— fomo 在 Cloudflare 后面，带上 cookie 才更像正常浏览器请求；
+    // 先直接复用浏览器里的 fomo 登录态（cookie）；拿到过 Bearer 令牌就一并带上。
+    // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
     // 只发往 prod-api.fomo.family（manifest 里已声明该 host 权限）。
-    const res = await fetch(`${FOMO_API}${path}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      credentials: 'include',
-    });
+    const headers = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+    if (!res.ok && res.status === 401 && !token) {
+      return { ok: false, reason: 'no-token', status: 401, tokenAt: 0 };
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const blocked = /cloudflare|cf-ray|<!DOCTYPE html/i.test(text);
