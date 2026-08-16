@@ -110,12 +110,22 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     ? `/feed/token/thesis?tokenAddress=${tokenAddress}&networkId=${networkId}&threshold=0&limit=50`
     : `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
   try {
+    // credentials:'include' —— fomo 在 Cloudflare 后面，带上 cookie 才更像正常浏览器请求；
+    // 只发往 prod-api.fomo.family（manifest 里已声明该 host 权限）。
     const res = await fetch(`${FOMO_API}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: 'omit',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      credentials: 'include',
     });
-    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'auth' };
-    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const blocked = /cloudflare|cf-ray|<!DOCTYPE html/i.test(text);
+      return {
+        ok: false,
+        reason: blocked ? 'blocked' : (res.status === 401 ? 'expired' : `http-${res.status}`),
+        status: res.status,
+        tokenAt: fomoToken?.at || 0,
+      };
+    }
     const body = await res.json().catch(() => null);
     const ro = body?.responseObject;
     const items = Array.isArray(ro) ? ro : (ro?.items || []);
@@ -123,7 +133,12 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     fomoCache.set(key, { at: Date.now(), data });
     return data;
   } catch (error) {
-    return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
+    return {
+      ok: false,
+      reason: 'network',
+      message: String(error?.message || '').slice(0, 80),
+      tokenAt: fomoToken?.at || 0,
+    };
   }
 }
 

@@ -1828,6 +1828,72 @@
     }
   }
 
+  /** 出错时把真实原因摊开：到底是没拿到令牌、令牌过期，还是被 fomo 风控挡了。 */
+  async function buildFomoErrorBox(res) {
+    const box = document.createElement('div');
+    box.className = 'gdh-fomo__empty';
+    let stored = null;
+    try {
+      const got = await chrome.storage.local.get('fomoToken');
+      stored = got?.fomoToken || null;
+    } catch {
+      // ignore
+    }
+    const reason = res?.reason || 'unknown';
+
+    const title = document.createElement('div');
+    title.className = 'gdh-fomo__errtitle';
+    const hint = document.createElement('div');
+    hint.className = 'gdh-fomo__errhint';
+
+    if (reason === 'no-token') {
+      title.textContent = '还没拿到 fomo 登录态';
+      hint.textContent = '请在下方打开 fomo.family（已登录的话按 F5 刷新一次），插件会自动读取，然后回来点「观点」重试。';
+    } else if (reason === 'expired') {
+      title.textContent = 'fomo 登录态已过期';
+      hint.textContent = '打开 fomo.family 刷新一次即可自动续上。';
+    } else if (reason === 'blocked') {
+      title.textContent = '被 fomo 的风控拦截了';
+      hint.textContent = `请求返回 ${res?.status || '403'}（Cloudflare）。把这句话截图发我，我换成从 fomo 页面代取。`;
+    } else if (reason === 'network') {
+      title.textContent = '网络请求失败';
+      hint.textContent = String(res?.message || '').slice(0, 60);
+    } else {
+      title.textContent = `加载失败（${reason}${res?.status ? ' / ' + res.status : ''}）`;
+      hint.textContent = '把这行截图发我即可定位。';
+    }
+
+    const state = document.createElement('div');
+    state.className = 'gdh-fomo__errstate';
+    state.textContent = stored?.token
+      ? `令牌：已获取（${formatRelTime(stored.at || Date.now())}）`
+      : '令牌：未获取';
+
+    const link = document.createElement('a');
+    link.className = 'gdh-fomo__link';
+    link.href = 'https://fomo.family/';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = '打开 fomo.family →';
+
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'gdh-fomo__retry';
+    retry.textContent = '重试';
+    retry.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      fomoLoadedKey = '';
+      loadFomoData(true);
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'gdh-fomo__erractions';
+    actions.append(link, retry);
+    box.append(title, hint, state, actions);
+    return box;
+  }
+
   async function loadFomoData(force) {
     const route = currentTokenRoute();
     if (!route || !fomoPanelEl) return;
@@ -1854,23 +1920,7 @@
         renderFomoItems(list, res.items || [], fomoTab);
       } else {
         list.replaceChildren();
-        const err = document.createElement('div');
-        err.className = 'gdh-fomo__empty';
-        if (res?.reason === 'no-token' || res?.reason === 'auth') {
-          err.innerHTML = '';
-          err.textContent = '需要先登录 fomo：';
-          const a = document.createElement('a');
-          a.className = 'gdh-fomo__link';
-          a.href = 'https://fomo.family/';
-          a.target = '_blank';
-          a.rel = 'noreferrer';
-          a.textContent = '打开 fomo.family 登录一次 →';
-          err.appendChild(document.createElement('br'));
-          err.appendChild(a);
-        } else {
-          err.textContent = `加载失败（${res?.reason || 'unknown'}）`;
-        }
-        list.appendChild(err);
+        list.appendChild(await buildFomoErrorBox(res));
       }
     } catch {
       // 扩展上下文失效
