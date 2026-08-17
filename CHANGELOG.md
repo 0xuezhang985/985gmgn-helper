@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.2 - 2026-08-17
+
+- 彻底修好 fomo 浮窗「持仓者」空列表与「观点」用户名全是"匿名"：0.21.0 硬猜字段名、0.21.1 按语义猜，都是猜。这次从 fomo 前端自己的代码里读出了真实契约，按它写死。
+- 补上 fomo 每个请求都带的 `X-Supported-Chains` 头（缺它 `/hodlers/top` 返回空，这是「持仓者」空列表的直接原因）。
+- 修正响应解析：`/hodlers/top` → `responseObject[0].{totalHolders, topHolders}`；`/feed/token*` → `responseObject.items`。
+- **fomo 失败时照样返回 HTTP 200**，真实结果在 body 的 `success` / `statusCode` 里。以前不看这两个字段，于是把"登录过期"渲染成"没有数据"。现在会明确显示过期提示并带上 fomo 的原始错误文案。
+- 按 fomo 的真实字段与算式渲染：持仓者取 `holder.user.{userHandle, profilePictureLink}`；动态条目的用户信息是**扁平**的 `item.{userHandle, displayName, profilePictureLink}`（两者结构不同，这是"匿名"的根源）。盈亏百分比由 `pnl / costBasis` 算出（fomo 没有现成字段），持有时长由 `averageHoldTimeSeconds` 秒数格式化，均价按小数精度显示，观点正文取 `comment.comment`。
+
 ## 0.21.1 - 2026-08-13
 
 - 修复 fomo 浮窗「持仓者」为空、「观点」里用户名全是"匿名"：0.21.0 靠一份硬猜的字段名清单取值，与 fomo 实际返回对不上就全落空。现改为**按语义自适应识别字段**（键名怎么拼都能命中用户名/头像/持仓/盈亏/入场市值/持有时长/观点），并对 `/hodlers/top` 的响应改为递归找出其中的对象数组，不再依赖包装层字段名。

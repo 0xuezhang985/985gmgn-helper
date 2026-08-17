@@ -94,6 +94,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ---- fomo 代币数据（在后台取，避开页面 CORS/CSP；令牌由 fomo.family 上的脚本捕获）----
 const FOMO_API = 'https://prod-api.fomo.family';
+// fomo 自己每个请求都带这个头（少了它 /hodlers/top 会返回空）：eth,bnb,monad,robinhood,base,solana
+const FOMO_CHAINS = '1,56,143,4663,8453,1399811149';
 const FOMO_CACHE_MS = 20000;
 const fomoCache = new Map();
 
@@ -139,7 +141,7 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     // 先直接复用浏览器里的 fomo 登录态（cookie）；拿到过 Bearer 令牌就一并带上。
     // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
     // 只发往 prod-api.fomo.family（manifest 里已声明该 host 权限）。
-    const headers = { Accept: 'application/json' };
+    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
     if (!res.ok && res.status === 401 && !token) {
@@ -156,17 +158,36 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
       };
     }
     const body = await res.json().catch(() => null);
-    const ro = body?.responseObject;
-    let items;
-    if (kind === 'holders') {
-      // /hodlers/top 的包装层不确定（responseObject[0] 里可能是 hodlers/tokens/...），
-      // 与其猜字段名，不如递归找出第一个「对象数组」。
-      items = firstObjectArray(ro, 0) || [];
-    } else {
-      items = Array.isArray(ro) ? ro : (ro?.items || firstObjectArray(ro, 0) || []);
+    // fomo 失败时照样回 HTTP 200，真正的结果在 body.success / body.statusCode 里。
+    // 不看这两个字段就会把「登录过期」当成「没有数据」渲染成空列表。
+    const inner = Number(body?.statusCode);
+    if (body?.success === false || (Number.isFinite(inner) && inner !== 200)) {
+      const unauth = inner === 401 || inner === 403;
+      return {
+        ok: false,
+        reason: unauth ? (token ? 'expired' : 'no-token') : `api-${inner || 'error'}`,
+        status: inner || res.status,
+        message: String(body?.message || '').slice(0, 120),
+        tokenAt: fomoToken?.at || 0,
+      };
     }
-    if (!Array.isArray(items)) items = [];
+    const ro = body?.responseObject;
+    // 字段名取自 fomo 前端自己的取数代码：
+    //   /hodlers/top -> responseObject[0] = { totalHolders, topHolders: [...] }
+    //   /feed/token* -> responseObject   = { items: [...], hasNextPage, count }
+    let items;
+    let total;
+    if (kind === 'holders') {
+      const box = Array.isArray(ro) ? ro[0] : ro;
+      items = box?.topHolders;
+      total = Number(box?.totalHolders);
+    } else {
+      items = Array.isArray(ro) ? ro : ro?.items;
+    }
+    // fomo 改结构时的兜底：递归找出第一个对象数组
+    if (!Array.isArray(items)) items = firstObjectArray(ro, 0) || [];
     const data = { ok: true, items, count: items.length };
+    if (Number.isFinite(total)) data.total = total;
     fomoCache.set(key, { at: Date.now(), data });
     return data;
   } catch (error) {

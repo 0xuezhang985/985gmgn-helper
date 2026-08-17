@@ -1761,6 +1761,23 @@
     return `${n < 0 ? '-' : ''}$${s}`;
   }
 
+  /** 均价可能很小（0.0000012），不能走 fomoUsd 的两位小数。 */
+  function fomoPrice(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n >= 1) return `$${n.toFixed(2)}`;
+    return `$${n.toPrecision(3).replace(/0+$/, '').replace(/\.$/, '')}`;
+  }
+
+  /** fomo 的 averageHoldTimeSeconds 是秒数，要自己格式化。 */
+  function fomoDur(seconds) {
+    const s = Number(seconds);
+    if (!Number.isFinite(s) || s <= 0) return '';
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}分`;
+    if (s < 86400) return `${(s / 3600).toFixed(1)}时`;
+    return `${(s / 86400).toFixed(1)}天`;
+  }
+
   function pick(obj, keys) {
     for (const k of keys) {
       const v = k.split('.').reduce((o, p) => (o == null ? o : o[p]), obj);
@@ -1804,14 +1821,29 @@
     return undefined;
   }
 
+  /**
+   * 两个接口的用户信息结构不一样（照 fomo 前端自己的渲染代码）：
+   *   持仓者行：holder.user.{userHandle, profilePictureLink, id}
+   *   动态条目：item.{userHandle, displayName, profilePictureLink, userId}——扁平，不在 user 下
+   * 先按真实字段取，取不到才退回语义猜测。
+   */
+  function fomoUser(item) {
+    return (item && typeof item.user === 'object' && item.user) || item || {};
+  }
+
   function holderName(item) {
-    return deepPick(item, /^(username|userName|handle|displayName|nickname|name)$/i, 'string')
+    const u = fomoUser(item);
+    const handle = typeof u.userHandle === 'string' ? u.userHandle.trim() : '';
+    const display = typeof u.displayName === 'string' ? u.displayName.trim() : '';
+    return handle || display
       || deepPick(item, /(username|handle|displayname|nickname)/i, 'string')
-      || deepPick(item, /name/i, 'string')
       || '匿名';
   }
 
   function holderAvatar(item) {
+    const u = fomoUser(item);
+    const direct = u.profilePictureLink || item?.profilePictureLink;
+    if (typeof direct === 'string' && /^https?:\/\//.test(direct)) return direct;
     return deepPick(item, /(profilepic|profileimage|avatar|picture|image|photo)/i, 'url');
   }
 
@@ -1843,8 +1875,8 @@
       name.className = 'gdh-fomo__name';
       name.textContent = holderName(item);
       who.appendChild(name);
-      const hold = deepPick(item, /hold(ing)?(time|duration|period)|avghold/i, 'string')
-        || deepPick(item, /hold(ing)?(time|duration)/i, 'number');
+      const hold = fomoDur(item?.averageHoldTimeSeconds)
+        || deepPick(item, /hold(ing)?(time|duration|period)|avghold/i, 'string');
       if (hold) {
         const h = document.createElement('span');
         h.className = 'gdh-fomo__hhold';
@@ -1856,21 +1888,21 @@
       const nums = document.createElement('div');
       nums.className = 'gdh-fomo__hnums';
 
-      const posUsd = Number(
-        deepPick(item, /(position|value|balance|holding|amount|size)(usd)?$/i, 'number')
-        ?? deepPick(item, /usd/i, 'number'),
-      );
+      // fomo 的口径：有实时价就用 humanAmount×价格，否则用 value（这里没有价格，直接取 value）
+      const posUsd = Number(item?.value ?? deepPick(item, /(position|value|balance)(usd)?$/i, 'number'));
       const posEl = document.createElement('span');
       posEl.className = 'gdh-fomo__hpos';
       posEl.textContent = Number.isFinite(posUsd) && posUsd > 0 ? fomoUsd(posUsd) : '—';
       nums.appendChild(posEl);
 
-      const pnl = Number(deepPick(item, /(pnl|profit)(usd)?$/i, 'number') ?? deepPick(item, /(pnl|profit)/i, 'number'));
+      const pnl = Number(item?.pnl ?? item?.realizedPnl ?? deepPick(item, /(pnl|profit)(usd)?$/i, 'number'));
       const pnlEl = document.createElement('span');
       pnlEl.className = 'gdh-fomo__hpnl';
       if (Number.isFinite(pnl) && pnl !== 0) {
         pnlEl.classList.add(pnl >= 0 ? 'is-up' : 'is-down');
-        const pct = Number(deepPick(item, /(pnl|profit|roi).*(pct|percent|ratio)|^(roi|pnlpercent)/i, 'number'));
+        // fomo 没有现成的百分比字段，是用 pnl / costBasis 算出来的
+        const basis = Number(item?.costBasis);
+        const pct = Number.isFinite(basis) && basis > 0 ? (pnl / basis) * 100 : NaN;
         pnlEl.textContent = Number.isFinite(pct) && pct !== 0
           ? `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)} (${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)`
           : `${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)}`;
@@ -1879,17 +1911,16 @@
       }
       nums.appendChild(pnlEl);
 
-      const entry = deepPick(item, /(entry|avg).*(marketcap|mc|price)|^(avgentry|entrymc)/i, 'number');
+      // fomo 的 Avg. entry 列是「均价×总供应量」的市值，这里拿不到总供应量，直接显示均价
       const entryEl = document.createElement('span');
       entryEl.className = 'gdh-fomo__hentry';
-      const entryNum = Number(entry);
-      entryEl.textContent = Number.isFinite(entryNum) && entryNum > 0
-        ? `${fomoUsd(entryNum)} MC`
-        : (entry ? String(entry).slice(0, 14) : '—');
+      entryEl.textContent = fomoPrice(item?.averageEntryPrice)
+        || fomoPrice(deepPick(item, /(entry|average).*(price)/i, 'number')) || '—';
       nums.appendChild(entryEl);
       row.appendChild(nums);
 
-      const thesis = String(deepPick(item, /(thesis|content|message|note|comment)/i, 'string') || '').trim();
+      const thesis = String(item?.comment?.comment
+        || deepPick(item, /(thesis|content|message|note|comment)/i, 'string') || '').trim();
       if (thesis) {
         const t = document.createElement('div');
         t.className = 'gdh-fomo__htext';
@@ -1930,14 +1961,19 @@
       name.textContent = holderName(item);
       head.appendChild(name);
 
-      const pnl = Number(deepPick(item, /(pnl|profit)(usd)?$/i, 'number') ?? deepPick(item, /(pnl|profit)/i, 'number'));
+      // fomo 口径：已平仓看已实现，未平仓看已实现+未实现
+      const trade = item?.authorTrade;
+      const pnl = Number(trade
+        ? (trade.closedAt ? trade.realizedPnlUsd : (trade.realizedPnlUsd || 0) + (trade.unrealizedPnlUsd || 0))
+        : (item?.pnlChange ?? deepPick(item, /(pnl|profit)(usd)?$/i, 'number')));
       if (Number.isFinite(pnl) && pnl !== 0) {
         const pnlEl = document.createElement('span');
         pnlEl.className = `gdh-fomo__pnl ${pnl >= 0 ? 'is-up' : 'is-down'}`;
         pnlEl.textContent = fomoUsd(pnl);
         head.appendChild(pnlEl);
       }
-      const sizeUsd = Number(deepPick(item, /(amount|size|value|position)(usd)?$/i, 'number'));
+      const sizeUsd = Number(trade?.usdValue
+        ?? item?.positionUsd ?? deepPick(item, /(amount|size|value|position)(usd)?$/i, 'number'));
       if (Number.isFinite(sizeUsd) && sizeUsd > 0) {
         const sz = document.createElement('span');
         sz.className = 'gdh-fomo__size';
@@ -1951,7 +1987,9 @@
       head.appendChild(time);
       row.appendChild(head);
 
-      const text = String(deepPick(item, /(thesis|content|text|body|message|note)/i, 'string') || '').trim();
+      // 观点正文在 item.comment.comment
+      const text = String(item?.comment?.comment
+        || deepPick(item, /(thesis|content|text|body|message|note)/i, 'string') || '').trim();
       if (text) {
         const body = document.createElement('div');
         body.className = 'gdh-fomo__text';
