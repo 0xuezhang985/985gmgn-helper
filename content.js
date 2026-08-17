@@ -8,30 +8,50 @@
   // 供 GMGN 代币页的 fomo 浮窗读取该代币的观点/交易（fomo 接口必须带 Bearer）。
   // 令牌只存在浏览器本地，只会发给 fomo 自己的 API，不外传；之后不跑任何 GMGN 逻辑。
   if (location.hostname === 'fomo.family' || location.hostname.endsWith('.fomo.family')) {
-    const readPrivyToken = () => {
+    const unwrap = (raw) => {
+      if (!raw) return '';
+      let value = raw;
       try {
-        const raw = window.localStorage.getItem('privy:token');
-        if (!raw) return '';
-        let token = raw;
-        try {
-          const parsed = JSON.parse(raw);
-          if (typeof parsed === 'string') token = parsed;
-        } catch {
-          // 非 JSON 就按原样用
-        }
-        token = String(token || '').trim();
-        return token.length > 20 ? token : '';
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'string') value = parsed;
       } catch {
-        return '';
+        // 非 JSON 就按原样用
+      }
+      value = String(value || '').trim();
+      return value.length > 20 ? value : '';
+    };
+    // 多账号登录时 privy 会把键加上用户命名空间（privy:<userId>:token），所以按模式扫而不是写死键名
+    const readPrivy = () => {
+      const out = { token: '', refresh: '' };
+      try {
+        for (const key of Object.keys(window.localStorage)) {
+          if (!out.token && /^privy:(.+:)?token$/.test(key)) out.token = unwrap(window.localStorage.getItem(key));
+          else if (!out.refresh && /^privy:(.+:)?refresh_token$/.test(key)) out.refresh = unwrap(window.localStorage.getItem(key));
+        }
+      } catch {
+        // localStorage 不可用
+      }
+      return out;
+    };
+    const jwtExpMs = (token) => {
+      try {
+        const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return Number(payload.exp) > 0 ? Number(payload.exp) * 1000 : 0;
+      } catch {
+        return 0;
       }
     };
-    let lastSent = null;
+    let lastSent = '';
     const syncFomoToken = () => {
-      const token = readPrivyToken();
-      if (token === lastSent) return;
-      lastSent = token;
+      const { token, refresh } = readPrivy();
+      // 读不到就什么都不做：未登录、privy 还没水合、切页面的空档都会短暂读空，
+      // 以前这里会写 null，把一个还能用的令牌直接擦掉。
+      if (!token) return;
+      const stamp = `${token}|${refresh}`;
+      if (stamp === lastSent) return;
+      lastSent = stamp;
       try {
-        chrome.storage.local.set({ fomoToken: token ? { token, at: Date.now() } : null });
+        chrome.storage.local.set({ fomoToken: { token, refresh, at: Date.now(), exp: jwtExpMs(token) } });
       } catch {
         // 扩展上下文失效
       }
@@ -1734,6 +1754,9 @@
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
   let fomoLoadedKey = '';
+  let fomoErrKey = '';
+  let fomoErrAt = 0;
+  const FOMO_ERR_COOLDOWN = 20000;
   let fomoLastItems = [];
   let fomoTimer = 0;
   let fomoLoading = false;
@@ -2283,53 +2306,98 @@
     }
   }
 
-  /** 出错时把真实原因摊开：到底是没拿到令牌、令牌过期，还是被 fomo 风控挡了。 */
+  /** 令牌状态一句话：没有 / 还有多久过期 / 过期多久了。 */
+  function describeFomoToken(stored) {
+    if (!stored?.token) return { cls: 'is-bad', text: '尚未取到登录态' };
+    const exp = Number(stored.exp) || 0;
+    const got = formatRelTime(stored.at || Date.now());
+    if (!exp) return { cls: 'is-ok', text: `已取到（${got}）` };
+    const left = exp - Date.now();
+    if (left <= 0) return { cls: 'is-bad', text: `已过期（${formatRelTime(exp)}过期，${got}取到）` };
+    const mins = Math.round(left / 60000);
+    return {
+      cls: 'is-ok',
+      text: `有效，约 ${mins >= 60 ? `${Math.round(mins / 60)} 小时` : `${mins} 分钟`}后过期${stored.renewed ? '（自动续期）' : ''}`,
+    };
+  }
+
+  /** 拿不到数据时给一份能照着做完的引导，而不是只报一句错。 */
   async function buildFomoErrorBox(res) {
     const box = document.createElement('div');
-    box.className = 'gdh-fomo__empty';
+    box.className = 'gdh-fomo__guide';
     let stored = null;
     try {
       const got = await chrome.storage.local.get('fomoToken');
       stored = got?.fomoToken || null;
     } catch {
-      // ignore
+      // 扩展上下文失效
     }
     const reason = res?.reason || 'unknown';
+    const needLogin = reason === 'no-token' || reason === 'expired';
 
     const title = document.createElement('div');
-    title.className = 'gdh-fomo__errtitle';
-    const hint = document.createElement('div');
-    hint.className = 'gdh-fomo__errhint';
+    title.className = 'gdh-fomo__gtitle';
+    const why = document.createElement('div');
+    why.className = 'gdh-fomo__gwhy';
 
     if (reason === 'no-token') {
-      title.textContent = '还没拿到 fomo 登录态';
-      hint.textContent = '请在下方打开 fomo.family（已登录的话按 F5 刷新一次），插件会自动读取，然后回来点「观点」重试。';
+      title.textContent = '差一步：需要你的 fomo 登录态';
+      why.textContent = 'fomo 的持仓者和观点接口必须带登录令牌。插件会自己去你已登录的 fomo 页面读，你不用复制粘贴任何东西。';
     } else if (reason === 'expired') {
-      title.textContent = 'fomo 登录态已过期';
-      hint.textContent = '打开 fomo.family 刷新一次即可自动续上。';
+      title.textContent = 'fomo 登录态过期了';
+      why.textContent = stored?.refresh
+        ? '已尝试自动续期但没成功（通常是 fomo 那边把会话作废了）。照下面走一遍就能重新拿到，之后仍会自动续。'
+        : '这份令牌是在支持自动续期之前存下的，缺少续期凭证。照下面走一遍，新的令牌以后就能自动续了。';
     } else if (reason === 'blocked') {
-      title.textContent = '被 fomo 的风控拦截了';
-      hint.textContent = `请求返回 ${res?.status || '403'}（Cloudflare）。把这句话截图发我，我换成从 fomo 页面代取。`;
+      title.textContent = '被 fomo 的风控挡了';
+      why.textContent = `请求返回 ${res?.status || 403}（Cloudflare）。多半是短时间请求太密，等一会儿再点重试；一直这样就截图发我。`;
     } else if (reason === 'network') {
-      title.textContent = '网络请求失败';
-      hint.textContent = String(res?.message || '').slice(0, 60);
+      title.textContent = '网络没通';
+      why.textContent = `${String(res?.message || '请求失败').slice(0, 60)}。检查代理/网络后点重试。`;
     } else {
       title.textContent = `加载失败（${reason}${res?.status ? ' / ' + res.status : ''}）`;
-      hint.textContent = '把这行截图发我即可定位。';
+      why.textContent = String(res?.message || '把这一行截图发我即可定位。').slice(0, 90);
+    }
+    box.append(title, why);
+
+    if (needLogin) {
+      const steps = document.createElement('ol');
+      steps.className = 'gdh-fomo__steps';
+      [
+        ['点下面的按钮打开 fomo', '会在新标签页打开 fomo.family'],
+        ['确认已登录', '没登录就先登录；已登录的话按一次 F5 刷新'],
+        ['点右上角头像进自己的主页', '也就是持仓那一页，令牌在这页最稳定'],
+        ['切回这个标签页', '插件会自动接上，不用手动点重试'],
+      ].forEach(([main, sub]) => {
+        const li = document.createElement('li');
+        const b = document.createElement('b');
+        b.textContent = main;
+        const s = document.createElement('span');
+        s.textContent = sub;
+        li.append(b, s);
+        steps.appendChild(li);
+      });
+      box.appendChild(steps);
     }
 
     const state = document.createElement('div');
-    state.className = 'gdh-fomo__errstate';
-    state.textContent = stored?.token
-      ? `令牌：已获取（${formatRelTime(stored.at || Date.now())}）`
-      : '令牌：未获取';
+    const desc = describeFomoToken(stored);
+    state.className = `gdh-fomo__gstate ${desc.cls}`;
+    state.textContent = `登录态：${desc.text}`;
+    box.appendChild(state);
 
-    const link = document.createElement('a');
-    link.className = 'gdh-fomo__link';
-    link.href = 'https://fomo.family/';
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.textContent = '打开 fomo.family →';
+    const actions = document.createElement('div');
+    actions.className = 'gdh-fomo__gacts';
+
+    if (needLogin) {
+      const link = document.createElement('a');
+      link.className = 'gdh-fomo__gopen';
+      link.href = 'https://fomo.family/';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = '打开 fomo 并登录 →';
+      actions.appendChild(link);
+    }
 
     const retry = document.createElement('button');
     retry.type = 'button';
@@ -2339,13 +2407,11 @@
       event.preventDefault();
       event.stopPropagation();
       fomoLoadedKey = '';
+      fomoErrKey = '';
       loadFomoData(true);
     });
-
-    const actions = document.createElement('div');
-    actions.className = 'gdh-fomo__erractions';
-    actions.append(link, retry);
-    box.append(title, hint, state, actions);
+    actions.appendChild(retry);
+    box.appendChild(actions);
     return box;
   }
 
@@ -2354,10 +2420,14 @@
     if (!route || !fomoPanelEl) return;
     const key = `${fomoTab}|${route.chain}|${route.address}`;
     if (!force && key === fomoLoadedKey) return;
+    // 出错时不设 fomoLoadedKey，于是每个扫描周期都会重来一遍「清空→加载中→错误框」，
+    // 看起来就是整块一直在闪。失败后压一段冷却，期间只有手动重试/换页/令牌到位才再打。
+    if (!force && key === fomoErrKey && Date.now() - fomoErrAt < FOMO_ERR_COOLDOWN) return;
     if (fomoLoading) return;
     fomoLoading = true;
     const list = fomoPanelEl.querySelector('.gdh-fomo__list');
-    if (key !== fomoLoadedKey) {
+    const keepingGuide = key === fomoErrKey && list.querySelector('.gdh-fomo__guide');
+    if (key !== fomoLoadedKey && !keepingGuide) {
       list.replaceChildren();
       const loading = document.createElement('div');
       loading.className = 'gdh-fomo__empty';
@@ -2372,11 +2442,14 @@
       if (!fomoPanelEl) return;
       if (res?.ok) {
         fomoLoadedKey = key;
+        fomoErrKey = '';
         fomoLastItems = res.items || [];
         renderFomoItems(list, fomoLastItems, fomoTab);
       } else {
-        list.replaceChildren();
-        list.appendChild(await buildFomoErrorBox(res));
+        fomoErrKey = key;
+        fomoErrAt = Date.now();
+        const box = await buildFomoErrorBox(res);
+        list.replaceChildren(box);
       }
     } catch {
       // 扩展上下文失效
@@ -3474,12 +3547,23 @@
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
+    let fomoTokenArrived = false;
     for (const [key, change] of Object.entries(changes)) {
       if (key === MANI_SEEN_STORE_KEY) {
         mergeManiSeenKeys(change.newValue);
         continue;
       }
+      // 令牌不是设置项，别塞进 settings；它一到位就把浮窗接上，省得用户回来手动点重试
+      if (key === 'fomoToken') {
+        fomoTokenArrived = !!change.newValue?.token;
+        continue;
+      }
       settings[key] = change.newValue;
+    }
+    if (fomoTokenArrived && fomoPanelEl) {
+      fomoLoadedKey = '';
+      fomoErrKey = '';
+      loadFomoData(true);
     }
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();

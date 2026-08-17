@@ -688,17 +688,97 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 .gdh-fomo__link { color: #f5b83d; text-decoration: none; }
 .gdh-fomo__link:hover { text-decoration: underline; }
 
-.gdh-fomo__errtitle { color: #fff; font-size: 13px; font-weight: 700; }
-.gdh-fomo__errhint { margin-top: 6px; color: #8b93a1; line-height: 1.6; }
-.gdh-fomo__errstate { margin-top: 8px; color: #b48ae0; font-size: 11px; }
+/* 取不到数据时的分步引导 */
+.gdh-fomo__guide {
+  padding: 16px 14px;
+  color: #8b93a1;
+  font-size: 12px;
+}
 
-.gdh-fomo__erractions {
+.gdh-fomo__gtitle {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gdh-fomo__gwhy {
+  margin-top: 6px;
+  line-height: 1.65;
+}
+
+.gdh-fomo__steps {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: gdhstep;
+}
+
+.gdh-fomo__steps li {
+  position: relative;
+  margin-bottom: 9px;
+  padding-left: 26px;
+  line-height: 1.5;
+  counter-increment: gdhstep;
+}
+
+.gdh-fomo__steps li::before {
+  content: counter(gdhstep);
+  position: absolute;
+  top: 1px;
+  left: 0;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: rgba(245, 184, 61, 0.18);
+  color: #f5b83d;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+
+.gdh-fomo__steps b {
+  display: block;
+  color: #e6e8ee;
+  font-weight: 600;
+}
+
+.gdh-fomo__steps span {
+  color: #737c8b;
+  font-size: 11px;
+}
+
+.gdh-fomo__gstate {
+  margin-top: 12px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(139, 147, 161, 0.1);
+  font-size: 11px;
+}
+
+.gdh-fomo__gstate.is-ok { color: #4ade80; }
+.gdh-fomo__gstate.is-bad { color: #f0a05a; }
+
+.gdh-fomo__gacts {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
+
+.gdh-fomo__gopen {
+  flex: 1 1 auto;
+  padding: 6px 12px;
+  border-radius: 7px;
+  background: #f5b83d;
+  color: #1a1200;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.gdh-fomo__gopen:hover { opacity: 0.88; }
 
 .gdh-fomo__retry {
   padding: 3px 12px;

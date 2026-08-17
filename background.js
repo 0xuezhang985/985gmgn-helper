@@ -119,13 +119,101 @@ function firstObjectArray(value, depth) {
   return null;
 }
 
+// ---- 令牌自动续期 ----
+// fomo 用 privy 登录，访问令牌约一小时就过期。捕获时连 refresh_token 一起存下来，
+// 过期或被拒时用它去 privy 换新的，这样不必反复回 fomo 页面手动刷。
+const PRIVY_APP_ID = 'cm6h485o300n3zj9yl6vpedq7';
+const PRIVY_CLIENT = 'react-auth:3.34.0';
+let fomoRefreshInFlight = null;
+
+function jwtExpMs(token) {
+  try {
+    const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return Number(payload.exp) > 0 ? Number(payload.exp) * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function fomoRefreshSession() {
+  if (fomoRefreshInFlight) return fomoRefreshInFlight;
+  fomoRefreshInFlight = (async () => {
+    const { fomoToken } = await chrome.storage.local.get('fomoToken');
+    const refresh = fomoToken?.refresh;
+    if (!refresh) return null;
+    const res = await fetch('https://auth.privy.io/api/v1/sessions', {
+      method: 'POST',
+      headers: {
+        'privy-app-id': PRIVY_APP_ID,
+        'privy-client': PRIVY_CLIENT,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    // privy 明确说会话作废时才清，其它情况宁可留着旧的
+    if (body?.session_update_action === 'clear') {
+      await chrome.storage.local.set({ fomoToken: null });
+      return null;
+    }
+    const token = body?.token;
+    if (!token) return null;
+    const next = {
+      token,
+      refresh: body.refresh_token || refresh,
+      at: Date.now(),
+      exp: jwtExpMs(token),
+      renewed: true,
+    };
+    await chrome.storage.local.set({ fomoToken: next });
+    return next;
+  })().catch(() => null);
+  try {
+    return await fomoRefreshInFlight;
+  } finally {
+    fomoRefreshInFlight = null;
+  }
+}
+
+/** 带令牌打 fomo 接口：快过期先续，被拒再续一次并重试。 */
+async function fomoAuthedFetch(path) {
+  let stored = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
+  // 剩不到一分钟就当已过期，先换新的再发，省掉一次注定失败的请求
+  if (stored?.refresh && stored.exp && stored.exp - Date.now() < 60000) {
+    // 续期失败要区分两种：privy 把会话作废了（存储已被清空，应引导重新登录）
+    // 还是只是这次没成（旧令牌还留着，照旧拿它试一把）
+    stored = (await fomoRefreshSession())
+      || (await chrome.storage.local.get('fomoToken')).fomoToken
+      || null;
+  }
+  const send = (token) => {
+    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+  };
+  let res = await send(stored?.token);
+  let renewed = false;
+  if (res.status === 401 && stored?.refresh) {
+    const next = await fomoRefreshSession();
+    if (next?.token) {
+      renewed = true;
+      stored = next;
+      res = await send(next.token);
+    } else if (!(await chrome.storage.local.get('fomoToken')).fomoToken) {
+      stored = null; // 会话已被 privy 作废，按「没有令牌」上报，引导重新登录
+    }
+  }
+  return { res, stored, renewed };
+}
+
 async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   const key = `${kind}|${networkId}|${tokenAddress}`;
   const hit = fomoCache.get(key);
   if (hit && Date.now() - hit.at < FOMO_CACHE_MS) return hit.data;
 
-  const { fomoToken } = await chrome.storage.local.get('fomoToken');
-  const token = fomoToken?.token;
+  let token;
 
   let path;
   if (kind === 'thesis') {
@@ -138,12 +226,10 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     path = `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
   }
   try {
-    // 先直接复用浏览器里的 fomo 登录态（cookie）；拿到过 Bearer 令牌就一并带上。
+    // 复用浏览器里的 fomo 登录态（cookie）+ Bearer 令牌；令牌过期会自动用 refresh_token 续。
     // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
-    // 只发往 prod-api.fomo.family（manifest 里已声明该 host 权限）。
-    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+    const { res, stored, renewed } = await fomoAuthedFetch(path);
+    token = stored?.token;
     if (!res.ok && res.status === 401 && !token) {
       return { ok: false, reason: 'no-token', status: 401, tokenAt: 0 };
     }
@@ -154,7 +240,8 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
         ok: false,
         reason: blocked ? 'blocked' : (res.status === 401 ? 'expired' : `http-${res.status}`),
         status: res.status,
-        tokenAt: fomoToken?.at || 0,
+        tokenAt: stored?.at || 0,
+        renewed,
       };
     }
     const body = await res.json().catch(() => null);
@@ -168,7 +255,8 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
         reason: unauth ? (token ? 'expired' : 'no-token') : `api-${inner || 'error'}`,
         status: inner || res.status,
         message: String(body?.message || '').slice(0, 120),
-        tokenAt: fomoToken?.at || 0,
+        tokenAt: stored?.at || 0,
+        renewed,
       };
     }
     const ro = body?.responseObject;
@@ -195,7 +283,6 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
       ok: false,
       reason: 'network',
       message: String(error?.message || '').slice(0, 80),
-      tokenAt: fomoToken?.at || 0,
     };
   }
 }
@@ -213,12 +300,8 @@ async function fomoUserPnl7d({ userId }) {
 
   const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const path = `/v2/userTokens/aggregatedSnapshot?userId=${encodeURIComponent(userId)}&timestamp=${encodeURIComponent(since)}`;
-  const { fomoToken } = await chrome.storage.local.get('fomoToken');
-  const token = fomoToken?.token;
   try {
-    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+    const { res } = await fomoAuthedFetch(path);
     if (!res.ok) return { ok: false, reason: res.status === 401 ? 'expired' : `http-${res.status}` };
     const body = await res.json().catch(() => null);
     const inner = Number(body?.statusCode);
