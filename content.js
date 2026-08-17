@@ -58,6 +58,7 @@
     enableRemindAlert: true,
     enableFomoPanel: true,
     fomoPanelPos: null,
+    fomoTranslate: false,
     fomoPanelOpen: false,
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
@@ -1847,6 +1848,234 @@
     return deepPick(item, /(profilepic|profileimage|avatar|picture|image|photo)/i, 'url');
   }
 
+  // ---- fomo 榜单标注 ----
+  // 名单由 985monitor 的 24h/7d/30d/总榜 + 聪明钱 Top300 + KOL 名册编译而来。
+  // 值形如 "a1s21k"：总榜第 1 / 聪明钱第 21 / 在 KOL 名册。
+  const FOMO_BOARD = JSON.parse('{"change":"a1s21kW","frankdegods":"a2s7k","_logjam":"a3s165","chadbchilln":"a4","lesabre":"a5s47","remusofmars":"a6s126","collectible":"a7s102","dystopiansniper":"a8s40","game_for_one":"a9s164","breakingbad":"a10s39","notepad_h":"a11s27k","guavaguy2001":"a12","nfd":"a13","atom_xyz":"a14s38","thebtcgoose":"a15s19k","c1phervoyager":"a16s138","quakerrz":"a17","resellcalendar":"a18s54","vein":"a19s58","nosanityxbt":"a20s9k","billyballs72":"a21","notwashed":"a22s108","0xleo":"a23s17k","xxxfomoxxx":"a24s56","letsdance":"a25","midjetv2":"m13","letsfkingoooo":"m15","hihi33":"m9","runitbackghost":"m39s46","thevilla":"m43","jimbotrading":"m16","avgjoescrypto":"m8","juicycooks":"m18","metaversejoji":"w9s209","surveillor":"m7s193","smol_intern":"m24s188","rafaelonchain":"w14","jotagezin":"m2s41","sandmann":"w16","onmycheck":"w18","mevzoid":"w19s34D","alphacrew23":"w20","aoulss":"w21","letmehelpurmind":"m34","blackgoblin":"w23","traderpow":"w24s163","xventures":"w25","iceslayerman":"w26","xbtpika":"w27","clavtard":"m40","xet":"w29","tendersalt":"w30","gganon44":"w31","warrennakamotox":"m14","maverickdotsol":"w33","openvpp":"w34","kenzo13ro":"w35","trader":"w36s114","ffa888":"w37","jeetergriffin":"w38s271","octoseaa":"w39s6k","0xjiggy":"w40s210","exploit":"w41","moneyman32":"w42","0xdetweiler":"w43s256","0xwives":"w44","crypt0whalex":"w45","eyezenhour":"m31","cryptologykito":"w47","moneymancalls":"w48","just2addicted":"w49","ultimateoldpheasant":"w50","mabon_zsq":"m4","laolu":"m5","dns_err":"m10s287","unnattybrah":"m11","0xuberm":"m12s18k","0x10kliquid":"m17","fathermeme69":"m19","will__price":"m20","hushedlonelybaboon":"m21","cryptogodjohn":"m22","gwei":"m26","staticctrades":"m27","xbrazilzz":"m28s99","iamh3nry":"m29","komorodragon":"m30","fibs":"m32s255","dior100x":"m33","riskit":"m35","hankusun":"m36","riskanonymous":"m37","rtdquant":"m38s214","pxblocito":"m41","jaqs":"m42","randalltrades":"m44","pastlife":"m45","hdegrootvan":"m46","onchainsorcerer":"m47s139","basicexpecteddragon":"m49","wwayfboss":"m50s233","marcellxmarcell":"d6s94","wrld_sol":"d9","0xiamfake":"d13","daumenxyz":"d14s159","astaso1":"d17s121","0xjumpman":"d20","zinceth":"d22s14k","cryptoaeon":"d23","upnext":"d26","dipwheeler":"d27","ineedtowin":"d30","charles_h90":"d31","hp88":"d32","pemp":"d34","goldenchyna":"d41","ckoptimus":"d43","kr_kimkk":"d49","believer12137":"d50","_cr0wbar_":"s1k","spidercrypto0x":"s2k","1947km":"s3k","mystayor":"s4k","nightcore":"s5k","cutie":"s8k","papsio3k1":"s10k","paikcapital":"s11k","_wash3d_":"s12k","wenmoonsolana_":"s13k","onlyz":"s15k","100milly":"s16k","onchainrobber":"s20k","memeinc":"s22k","randomuser123":"s23k","honestregionallungfish":"s24k","0xvantaa":"s25k","thokani":"s26k","careful":"s28k","sized_in":"s29k","kjs16":"s30k","andy":"s31","kingfomo":"s32","nicktesla16":"s33","favel":"s35","flippingprofits":"s36","seyong":"s37","0xforte124":"s42","imim":"s43","moodywsw":"s44","stigstigstig_":"s45","squidward":"s48","eyeamfin":"s49","wealthmaxxer":"s50","seanlippel":"s51","obitouchiha":"s52","_happyk21":"s53","zemirch":"s55","tommy":"s57","kom3thazine":"s59","icemandot":"s60","account":"s61","spiritualscorch":"s62","colby":"s63","pointfarmcap":"s64","sonder_crypto":"s65","theprimegreek":"s66","loopifyyy":"s67","llonchain":"s68","elegantprecisetapir":"s69","igxyffiyofof":"s70","degentodisciple":"s71","mimiardrp":"s72","memeticpower":"s73","hotlneblng":"s74","foreskinnnnn":"s75","real_y22":"s76","0xheme":"s77","0xsneakky":"s78","user_0037":"s79","0xarchitectx0":"s80","kalexbt":"s81","garythegambler":"s82","losteverythingagain":"s83","runecrypto_":"s84","degengigi":"s85","slushie":"s86","adro808":"s87","blitzrun":"s88","mightyegoism":"s89","31337___":"s90","0xkillua_eth":"s91","0x7ama":"s92","spyda":"s93","fullportonly":"s95","jobsnotfinished":"s96","rynzoeth":"s97","parasite_eei":"s98","notanicecat69":"s100","bryptokenneth3":"s101","solswizzle":"s103","rugmeharder":"s104","kekwdjsjnd":"s105","joespina":"s106","mythos":"s107","4pfcoyote":"s109","senzu":"s110","pingucharts":"s111","lucacseth":"s112","horror":"s113","ghostonchain":"s115","samptsd":"s116","hamsa":"s117","guided":"s118","cuttycurryy":"s119","zimmwho":"s120","scalps":"s122","noahknowstrades":"s123","mnds":"s124","bulgugi":"s125","dragossden":"s127","imviriofficial":"s128","notsuavizim":"s129","growingdisabledgerbil":"s130","kidski":"s131","kongkapital":"s132","navalneutralhalibut":"s133","degnsol":"s134","paik_michael":"s135","choppeduncx":"s136","royalbelligerentplatypus":"s137","joeburrow246":"s140","jstacks___":"s141","onchainstudent":"s142","binkieee":"s143W","leftcurvemaxing":"s144","virtualbacon":"s145","halibutcrypto":"s146","graycandol":"s147","crip":"s148","samflintstone":"s149","privateneighbor":"s150","grampsxbt":"s151","77777777777777":"s152","woooooohooooo":"s153","gera_eth":"s154","bobius":"s155","airtightfish":"s156","lacostetn26":"s157","jxck_eth":"s158","ericceth":"s160","mispriced":"s161","kikaka10000":"s162","maximusfab1us":"s166","dumb_ape":"s167","wardsy0x":"s168","winnerx":"s169","x1x2":"s170","maisonghost":"s171","basedbroker":"s172","prewealthy":"s173","aurah":"s174","stinkysasha":"s175","kbz1":"s176","gr3gor14n":"s177","brox":"s178","10xjdog":"s179","rodotfun":"s180","muddy":"s181","thebiglong":"s182","exuro":"s183","shockedjs":"s184","legionyeni":"s185","good":"s186","mistystrictantelope":"s187","_veigarcrypto_xd":"s189","books":"s190","tassolago":"s191","teepanddestroy":"s192","manofwar":"s194","koyla_sol":"s195","takeiteasy":"s196","spicyperuvian_":"s197","t26x":"s198","ferbsol":"s199","tonyovo":"s200","captain_al_80":"s201","stoploss":"s202","hbutspecial":"s203","insentos":"s204","pius":"s205","ohmprovement":"s206","printgod":"s207","cryptojohnnyfap":"s208","deadass":"s211","quanterty":"s212","gnocity_":"s213","px_721":"s215","seikux":"s216","hehe":"s217","nervousfuzzylizard":"s218","cryptodjip":"s219","poorclick":"s220","aaabbbccc":"s221","osideus":"s222","newlowscore677777":"s223","downhorrndously":"s224","________________":"s225","0xforgivable":"s226","quotes":"s227","ocrxa":"s228","patrick33":"s229","vexrex23":"s230","999999999999999":"s231","chimpfone":"s232","katsucurryxbt":"s234","feanor_crypt":"s235","palequietherring":"s236","mino":"s237","scrooge":"s238","bigslime":"s239","toptickcrypto":"s240","xmediumrare":"s241","lay2000lbs":"s242","yogurt_eth":"s243","carlwheezor":"s244","frankneedsabeer":"s245","judee":"s246","charles":"s247","dictator":"s248","devilslayer1802":"s249","hasntpumpedyet":"s250","jikksol":"s251","zackory":"s252","ilillllliliilii":"s253","jlcryptohh":"s254","don999z":"s257","magica_conch":"s258","rebuild":"s259","zoomeroracle":"s260","finalearc":"s261","brrrgrrrz":"s262","lucasw99":"s263","arbiter":"s264","kusanagiyo_00":"s265","bleachsolana":"s266","degensaw":"s267","kobe":"s268","itackld":"s269","6foot4honda":"s270","0xsnibbler":"s272","brazen":"s273","altanxayan":"s274","maxxbiid":"s275","runitback":"s276","krazz":"s277","wizardcat":"s278","mickeymouse":"s279","quinn":"s280","nigayahu":"s281","casino1":"s282","jambalaya":"s283","allidoiswin":"s284","acetto":"s285","heiss_7":"s286","gluttony":"s288","jackson":"s289","theetherista":"s290","wildwilly":"s291","ashegan":"s292","macdegods":"s293","spyzer":"s294","qtags":"s295","shroom_daddy":"s296","paul":"s297","ishowmemecoins":"s298","basedshillbh":"s299","shownuniform08":"s300","zinc":"D","missoralways":"S","logjam":"W","killua":"F","sencrazy":"S","solo":"F","poorgoat🐂🀄️💛🐈":"W","rowdy":"S","rc":"D","solkcrow":"D","0xsun":"S","nobi":"S","lana":"S","smokξy":"F","frank":"D","pow🧲":"F","rune":"D","ozzy":"F","blknoiz06":"D","unipcs":"W","avast":"D","mr.mystery":"S","冷静冷静再冷静":"S","logan lim":"D"}');
+  const FOMO_BOARD_LABEL = { a: '总榜', m: '30天', w: '7天', d: '24h' };
+  const FOMO_TIER_ICON = { W: '🐳', D: '🐬', F: '🐟', S: '🦐' };
+  const FOMO_TIER_NAME = { W: '鲸', D: '海豚', F: '鱼', S: '虾' };
+
+  function fomoBoardMark(handle) {
+    const key = String(handle || '').trim().toLowerCase();
+    if (!key) return null;
+    const raw = FOMO_BOARD[key];
+    if (!raw) return null;
+    const board = raw.match(/^([awmd])(\d+)/);
+    const smart = raw.match(/s(\d+)/);
+    const kol = /k/.test(raw);
+    const tier = (raw.match(/[WDFS]/) || [])[0];
+    const text = [];
+    const tip = [];
+    if (tier) {
+      text.push(FOMO_TIER_ICON[tier]);
+      tip.push(`资金档 ${FOMO_TIER_NAME[tier]}`);
+    }
+    if (board) {
+      text.push(`🏆${FOMO_BOARD_LABEL[board[1]]}#${board[2]}`);
+      tip.push(`fomo ${FOMO_BOARD_LABEL[board[1]]}盈利榜第 ${board[2]} 名`);
+    }
+    if (smart) {
+      if (!board) text.push(`🧠#${smart[1]}`);
+      tip.push(`聪明钱榜第 ${smart[1]} 名`);
+    }
+    if (kol) {
+      text.push('⭐');
+      tip.push('在 KOL 名册');
+    }
+    if (!text.length) return null;
+    return { text: text.join(''), title: tip.join(' · '), top: !!(board && Number(board[2]) <= 10) };
+  }
+
+  function attachFomoBoard(container, handle) {
+    const mark = fomoBoardMark(handle);
+    if (!mark) return;
+    const chip = document.createElement('span');
+    chip.className = `gdh-fomo__board${mark.top ? ' is-top' : ''}`;
+    chip.textContent = mark.text;
+    chip.title = mark.title;
+    container.appendChild(chip);
+  }
+
+  // ---- 观点翻译（Chrome 138+ 内置本地翻译，与 985monitor 同一套 API，全程在本机跑）----
+  const fomoTrCache = new Map();
+  const fomoTranslators = new Map();
+  let fomoDetector = null;
+  let fomoTrQueue = [];
+  let fomoTrRunning = false;
+
+  const fomoTrApi = () => { try { return globalThis.Translator || null; } catch { return null; } };
+  const fomoDetApi = () => { try { return globalThis.LanguageDetector || null; } catch { return null; } };
+
+  /** 中文字符占比高就不用翻，省掉一次语言检测。 */
+  function fomoLooksChinese(text) {
+    const cjk = (text.match(/[一-鿿]/g) || []).length;
+    return cjk > 0 && cjk / text.replace(/\s/g, '').length > 0.2;
+  }
+
+  async function fomoDetectLang(text) {
+    const api = fomoDetApi();
+    if (!api) return 'en';
+    if (!fomoDetector) fomoDetector = await api.create();
+    const list = await fomoDetector.detect(text);
+    const top = Array.isArray(list) ? list[0] : null;
+    if (!top || Number(top.confidence) < 0.5) return '';
+    return String(top.detectedLanguage || '').split('-')[0];
+  }
+
+  async function fomoTranslatorFor(lang) {
+    if (fomoTranslators.has(lang)) return fomoTranslators.get(lang);
+    const api = fomoTrApi();
+    if (!api) return null;
+    const translator = await api.create({ sourceLanguage: lang, targetLanguage: 'zh' });
+    fomoTranslators.set(lang, translator);
+    return translator;
+  }
+
+  function paintTranslation(el, zh) {
+    if (!el.isConnected || !zh) return;
+    if (!el.dataset.gdhOrig) el.dataset.gdhOrig = el.textContent;
+    el.textContent = zh;
+    el.classList.add('gdh-fomo__translated');
+    el.title = `原文：${el.dataset.gdhOrig}`;
+  }
+
+  async function runFomoTranslate() {
+    if (fomoTrRunning) return;
+    fomoTrRunning = true;
+    while (fomoTrQueue.length) {
+      const { el, text } = fomoTrQueue.shift();
+      try {
+        const cached = fomoTrCache.get(text);
+        if (cached) { paintTranslation(el, cached); continue; }
+        const lang = await fomoDetectLang(text);
+        if (!lang || lang === 'zh') { fomoTrCache.set(text, ''); continue; }
+        const translator = await fomoTranslatorFor(lang);
+        if (!translator) continue;
+        const zh = String(await translator.translate(text) || '').trim();
+        if (!zh) continue;
+        fomoTrCache.set(text, zh);
+        paintTranslation(el, zh);
+      } catch {
+        // 语言包缺失/下载失败：保留原文，不打断其余条目
+      }
+    }
+    fomoTrRunning = false;
+  }
+
+  /** 把一段正文排进翻译队列（已是中文、太短、翻译没开都直接跳过）。 */
+  function queueFomoTranslate(el, text) {
+    if (!settings.fomoTranslate || !fomoTrApi()) return;
+    const raw = String(text || '').trim();
+    if (raw.length < 3 || fomoLooksChinese(raw)) return;
+    const cached = fomoTrCache.get(raw);
+    if (cached !== undefined) { if (cached) paintTranslation(el, cached); return; }
+    fomoTrQueue.push({ el, text: raw });
+    // 渲染时这一行还没挂进列表，等本轮 DOM 拼完再跑，否则整批都会被当成已移除丢掉
+    if (!fomoTrRunning) setTimeout(runFomoTranslate, 0);
+  }
+
+  /** 开关切换后重刷当前列表：开则翻译，关则还原原文。 */
+  function refreshFomoTranslations() {
+    if (!fomoPanelEl) return;
+    const nodes = fomoPanelEl.querySelectorAll('.gdh-fomo__text, .gdh-fomo__htext');
+    if (!settings.fomoTranslate) {
+      fomoTrQueue = [];
+      nodes.forEach((el) => {
+        if (el.dataset.gdhOrig) {
+          el.textContent = el.dataset.gdhOrig;
+          delete el.dataset.gdhOrig;
+          el.classList.remove('gdh-fomo__translated');
+          el.removeAttribute('title');
+        }
+      });
+      return;
+    }
+    nodes.forEach((el) => queueFomoTranslate(el, el.dataset.gdhOrig || el.textContent));
+  }
+
+  // ---- 持仓者的 7 天盈亏标记 ----
+  // 分档同时看金额和收益率，取较低的一档：大户小赚不算高手，小号翻倍也不算大神。
+  const FOMO_TIERS = [
+    { icon: '💀', label: '重亏' },
+    { icon: '🔴', label: '亏损' },
+    { icon: '⚪', label: '持平' },
+    { icon: '🟢', label: '盈利' },
+    { icon: '🔥', label: '顶级' },
+  ];
+
+  function fomoTier(pnl, equity) {
+    const abs = pnl >= 5e4 ? 4 : pnl >= 5e3 ? 3 : pnl > -5e3 ? 2 : pnl > -5e4 ? 1 : 0;
+    // 仓位太小时比例噪音大（几百美元的号能刷出夸张百分比），只按金额定档
+    if (!(equity > 100)) return abs;
+    const rate = (pnl / equity) * 100;
+    const pct = rate >= 30 ? 4 : rate >= 5 ? 3 : rate > -5 ? 2 : rate > -30 ? 1 : 0;
+    return Math.min(abs, pct);
+  }
+
+  const FOMO_PNL_TTL = 10 * 60 * 1000;
+  const fomoPnlCache = new Map();
+  let fomoPnlQueue = [];
+  let fomoPnlActive = 0;
+  let fomoPnlObserver = null;
+
+  function paintFomoTag(el, data) {
+    const pnl = Number(data?.pnl);
+    if (!data?.ok || !Number.isFinite(pnl)) {
+      el.className = 'gdh-fomo__tag is-none';
+      el.textContent = '—';
+      el.title = data?.reason === 'expired' ? 'fomo 登录态已过期' : '暂无 7 天盈亏数据';
+      return;
+    }
+    const equity = Number(data.equity) || 0;
+    const tier = fomoTier(pnl, equity);
+    const meta = FOMO_TIERS[tier];
+    const rate = equity > 100 ? (pnl / equity) * 100 : NaN;
+    el.className = `gdh-fomo__tag is-t${tier}`;
+    el.textContent = `${meta.icon} ${pnl >= 0 ? '+' : ''}${fomoUsd(pnl) || '$0'}`;
+    el.title = Number.isFinite(rate)
+      ? `${meta.label} · 7天盈亏 ${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)}（${rate > 0 ? '+' : ''}${rate.toFixed(1)}%）· 组合 ${fomoUsd(equity)}`
+      : `${meta.label} · 7天盈亏 ${pnl >= 0 ? '+' : ''}${fomoUsd(pnl)}`;
+  }
+
+  function pumpFomoPnl() {
+    while (fomoPnlActive < 4 && fomoPnlQueue.length) {
+      const job = fomoPnlQueue.shift();
+      if (!job.el.isConnected) continue;
+      fomoPnlActive += 1;
+      chrome.runtime.sendMessage({ type: 'fomo-user-pnl', payload: { userId: job.userId } })
+        .then((res) => {
+          fomoPnlCache.set(job.userId, { at: Date.now(), data: res });
+          if (job.el.isConnected) paintFomoTag(job.el, res);
+        })
+        .catch(() => {})
+        .finally(() => { fomoPnlActive -= 1; pumpFomoPnl(); });
+    }
+  }
+
+  /** 只给滚到可见的行取数，同一用户 10 分钟内不重复请求。 */
+  function watchFomoTag(el, userId) {
+    const hit = fomoPnlCache.get(userId);
+    if (hit && Date.now() - hit.at < FOMO_PNL_TTL) return void paintFomoTag(el, hit.data);
+    if (!fomoPnlObserver) return;
+    el.dataset.gdhUid = userId;
+    fomoPnlObserver.observe(el);
+  }
+
+  function resetFomoTagObserver(root) {
+    if (fomoPnlObserver) fomoPnlObserver.disconnect();
+    fomoPnlQueue = [];
+    fomoPnlObserver = new IntersectionObserver((entries, obs) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        obs.unobserve(e.target);
+        const userId = e.target.dataset.gdhUid;
+        if (userId) fomoPnlQueue.push({ el: e.target, userId });
+      }
+      pumpFomoPnl();
+    }, { root, rootMargin: '120px' });
+  }
+
   /** Holders 表：交易者 / 持仓 / 盈亏 / 平均入场 / 观点 */
   function renderFomoHolders(list, items) {
     list.replaceChildren();
@@ -1856,6 +2085,7 @@
       empty.textContent = '暂无持仓者';
       return void list.appendChild(empty);
     }
+    resetFomoTagObserver(list);
     for (const item of items.slice(0, 60)) {
       const row = document.createElement('div');
       row.className = 'gdh-fomo__hrow';
@@ -1875,6 +2105,18 @@
       name.className = 'gdh-fomo__name';
       name.textContent = holderName(item);
       who.appendChild(name);
+      attachFomoBoard(who, fomoUser(item)?.userHandle);
+
+      const uid = fomoUser(item)?.id;
+      if (uid) {
+        const tag = document.createElement('span');
+        tag.className = 'gdh-fomo__tag is-loading';
+        tag.textContent = '…';
+        tag.title = '7 天盈亏加载中';
+        who.appendChild(tag);
+        watchFomoTag(tag, String(uid));
+      }
+
       const hold = fomoDur(item?.averageHoldTimeSeconds)
         || deepPick(item, /hold(ing)?(time|duration|period)|avghold/i, 'string');
       if (hold) {
@@ -1926,6 +2168,7 @@
         t.className = 'gdh-fomo__htext';
         t.textContent = thesis;
         row.appendChild(t);
+        queueFomoTranslate(t, thesis);
       }
       list.appendChild(row);
     }
@@ -1960,6 +2203,7 @@
       name.className = 'gdh-fomo__name';
       name.textContent = holderName(item);
       head.appendChild(name);
+      attachFomoBoard(head, fomoUser(item)?.userHandle);
 
       // fomo 口径：已平仓看已实现，未平仓看已实现+未实现
       const trade = item?.authorTrade;
@@ -1995,6 +2239,7 @@
         body.className = 'gdh-fomo__text';
         body.textContent = text;
         row.appendChild(body);
+        queueFomoTranslate(body, text);
       }
       list.appendChild(row);
     }
@@ -2213,6 +2458,28 @@
       list.prepend(pre);
     });
 
+    // 首次下载语言包需要用户手势，所以做成按钮而不是自动开
+    const tr = document.createElement('button');
+    tr.type = 'button';
+    tr.className = `gdh-fomo__tr${settings.fomoTranslate ? ' is-on' : ''}`;
+    tr.textContent = '译';
+    const syncTrTitle = () => {
+      tr.title = !fomoTrApi()
+        ? '当前浏览器不支持内置本地翻译（需 Chrome 138+）'
+        : (settings.fomoTranslate ? '关闭翻译，恢复原文' : '把英文等非中文观点翻成中文（本机翻译，首次会下载语言包）');
+    };
+    syncTrTitle();
+    if (!fomoTrApi()) tr.classList.add('is-off');
+    tr.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      settings.fomoTranslate = !settings.fomoTranslate;
+      tr.classList.toggle('is-on', settings.fomoTranslate);
+      syncTrTitle();
+      chrome.storage.local.set({ fomoTranslate: settings.fomoTranslate });
+      refreshFomoTranslations();
+    });
+
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'gdh-fomo__close';
@@ -2224,7 +2491,7 @@
       setFomoOpen(false);
       scheduleScan();
     });
-    head.append(title, tabs, dbg, open, close);
+    head.append(title, tabs, tr, dbg, open, close);
 
     const list = document.createElement('div');
     list.className = 'gdh-fomo__list';

@@ -200,7 +200,63 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   }
 }
 
+// ---- 单个用户的 7 天盈亏（给持仓者打标记用）----
+// fomo 悬浮卡是「实时余额算的累计 PnL − 7 天前快照的 PnL」，要两个请求。
+// 这里用同一条快照序列的首末差，一个请求就够，代价是最多滞后一小时——打标记足够了。
+const FOMO_PNL_TTL = 10 * 60 * 1000;
+const fomoPnlCache = new Map();
+
+async function fomoUserPnl7d({ userId }) {
+  if (!userId) return { ok: false, reason: 'no-user' };
+  const hit = fomoPnlCache.get(userId);
+  if (hit && Date.now() - hit.at < FOMO_PNL_TTL) return hit.data;
+
+  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const path = `/v2/userTokens/aggregatedSnapshot?userId=${encodeURIComponent(userId)}&timestamp=${encodeURIComponent(since)}`;
+  const { fomoToken } = await chrome.storage.local.get('fomoToken');
+  const token = fomoToken?.token;
+  try {
+    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+    if (!res.ok) return { ok: false, reason: res.status === 401 ? 'expired' : `http-${res.status}` };
+    const body = await res.json().catch(() => null);
+    const inner = Number(body?.statusCode);
+    if (body?.success === false || (Number.isFinite(inner) && inner !== 200)) {
+      return { ok: false, reason: inner === 401 ? 'expired' : `api-${inner || 'error'}` };
+    }
+    // 快照项：{ snapshotId, equity, pnl }，pnl 是「截至该时刻的累计盈亏」
+    const rows = (Array.isArray(body?.responseObject) ? body.responseObject : [])
+      .filter((r) => r && Number.isFinite(Number(r.pnl)))
+      .sort((a, b) => Number(a.snapshotId) - Number(b.snapshotId));
+    if (rows.length < 2) {
+      const data = { ok: true, pnl: null, equity: Number(rows[0]?.equity) || 0, points: rows.length };
+      fomoPnlCache.set(userId, { at: Date.now(), data });
+      return data;
+    }
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const data = {
+      ok: true,
+      pnl: Number(last.pnl) - Number(first.pnl),
+      equity: Number(last.equity) || 0,
+      points: rows.length,
+    };
+    fomoPnlCache.set(userId, { at: Date.now(), data });
+    return data;
+  } catch (error) {
+    return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'fomo-user-pnl') {
+    fomoUserPnl7d(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'fomo-token-feed') {
     fomoFetchToken(message.payload || {})
       .then(sendResponse)
