@@ -25,8 +25,14 @@ $files = @(
 )
 
 foreach ($relativePath in $files) {
-  if (-not (Test-Path -LiteralPath (Join-Path $root $relativePath))) {
+  $fullPath = Join-Path $root $relativePath
+  if (-not (Test-Path -LiteralPath $fullPath)) {
     throw "发布文件不存在：$relativePath"
+  }
+  # 空文件是脚本改写出错的典型后果（比如以写模式打开文件把它先截断了），
+  # 打进包里要等用户装的时候才炸，这里直接拦下。
+  if ((Get-Item -LiteralPath $fullPath).Length -eq 0) {
+    throw "发布文件为空：$relativePath"
   }
 }
 
