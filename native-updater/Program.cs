@@ -214,7 +214,9 @@ namespace Gmgn985Updater
         internal static Dictionary<string, object> Update()
         {
             EnsureInstalled();
-            string installedVersion = ExtensionPackage.ReadManifestVersion(ProductInfo.ExtensionPath, null);
+            // 装坏了就读不出版本号，此时当作 0.0.0：任何线上版本都算更新，从而顺带把目录修好，
+            // 而不是卡在「插件缺少 manifest.json」上连升级也走不了。
+            string installedVersion = ExtensionPackage.TryReadManifestVersion(ProductInfo.ExtensionPath) ?? "0.0.0";
             ReleaseInfo release = GetLatestRelease();
             if (VersionTools.Compare(release.Version, installedVersion) <= 0)
             {
@@ -274,9 +276,9 @@ namespace Gmgn985Updater
 
                 string stagedPath = Path.Combine(tempRoot, "Extension");
                 string version = ExtensionPackage.ExtractValidated(zipPath, stagedPath, null);
-                string previousVersion = Directory.Exists(ProductInfo.ExtensionPath)
-                    ? ExtensionPackage.ReadManifestVersion(ProductInfo.ExtensionPath, null)
-                    : null;
+                // 旧目录残缺时（装到一半中断、被杀毒清理、或只是点过「打开插件目录」建出的空目录）
+                // 读不出版本号。这种情况恰恰最需要修复，不能让它把安装挡下来——版本号只用于备份命名。
+                string previousVersion = ExtensionPackage.TryReadManifestVersion(ProductInfo.ExtensionPath);
                 ExtensionPackage.ReplaceInstalled(stagedPath, previousVersion);
 
                 string currentFullPath = Path.GetFullPath(runningExecutable);
@@ -514,6 +516,20 @@ namespace Gmgn985Updater
             return ReadManifestVersion(destinationPath, expectedVersion);
         }
 
+        /// <summary>读不出版本号就返回 null（目录不存在、缺 manifest、内容损坏都算），不抛异常。</summary>
+        internal static string TryReadManifestVersion(string extensionPath)
+        {
+            if (!Directory.Exists(extensionPath)) return null;
+            try
+            {
+                return ReadManifestVersion(extensionPath, null);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         internal static string ReadManifestVersion(string extensionPath, string expectedVersion)
         {
             string manifestPath = Path.Combine(extensionPath, "manifest.json");
@@ -726,14 +742,10 @@ namespace Gmgn985Updater
             {
                 return "尚未安装。目标目录：" + ProductInfo.ExtensionPath;
             }
-            try
-            {
-                return "已安装插件 v" + ExtensionPackage.ReadManifestVersion(ProductInfo.ExtensionPath, null) + "，可执行修复安装。";
-            }
-            catch
-            {
-                return "检测到不完整安装，点击“安装 / 修复”恢复。";
-            }
+            string installed = ExtensionPackage.TryReadManifestVersion(ProductInfo.ExtensionPath);
+            return installed == null
+                ? "检测到不完整安装，点击“安装 / 修复”即可直接覆盖恢复，无需手动删除目录。"
+                : "已安装插件 v" + installed + "，可执行修复安装。";
         }
 
         private static void OpenExtensionFolder()
