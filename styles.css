@@ -810,9 +810,21 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   cursor: not-allowed;
 }
 
-.gdh-fomo__translated {
-  border-left: 2px solid rgba(96, 165, 250, 0.5);
-  padding-left: 6px;
+.gdh-fomo__tr.is-wait {
+  color: #fbbf24;
+}
+
+/* 译文：接在原文下面，缩进并压暗，一眼能分清哪句是原文 */
+.gdh-fomo__zh {
+  margin-top: 3px;
+  padding: 3px 7px;
+  border-left: 2px solid rgba(96, 165, 250, 0.55);
+  border-radius: 0 4px 4px 0;
+  background: rgba(96, 165, 250, 0.08);
+  color: #a9b2c3;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 /* 持仓者的 7 天盈亏标记：档位越高越亮 */

@@ -58,7 +58,7 @@
     enableRemindAlert: true,
     enableFomoPanel: true,
     fomoPanelPos: null,
-    fomoTranslate: false,
+    fomoTranslate: true,
     fomoPanelOpen: false,
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
@@ -1903,6 +1903,25 @@
   let fomoDetector = null;
   let fomoTrQueue = [];
   let fomoTrRunning = false;
+  let fomoTrGesture = false;
+  let fomoTrNeedsGesture = false;
+
+  /** 把「译」按钮的样子和当前状态对齐（含"需要点一下下载语言包"这种中间态）。 */
+  function syncFomoTrButton() {
+    const btn = fomoPanelEl && fomoPanelEl.querySelector('.gdh-fomo__tr');
+    if (!btn) return;
+    const supported = !!fomoTrApi();
+    btn.classList.toggle('is-on', supported && settings.fomoTranslate && !fomoTrNeedsGesture);
+    btn.classList.toggle('is-off', !supported);
+    btn.classList.toggle('is-wait', supported && settings.fomoTranslate && fomoTrNeedsGesture);
+    btn.title = !supported
+      ? '当前浏览器不支持内置本地翻译（需 Chrome 138+）'
+      : fomoTrNeedsGesture && settings.fomoTranslate
+        ? '点一下开始下载中文语言包（只需一次，之后自动翻译）'
+        : settings.fomoTranslate
+          ? '关闭翻译（原文下方的译文会移除）'
+          : '在原文下方补上中文翻译（本机翻译，内容不外传）';
+  }
 
   const fomoTrApi = () => { try { return globalThis.Translator || null; } catch { return null; } };
   const fomoDetApi = () => { try { return globalThis.LanguageDetector || null; } catch { return null; } };
@@ -1927,17 +1946,43 @@
     if (fomoTranslators.has(lang)) return fomoTranslators.get(lang);
     const api = fomoTrApi();
     if (!api) return null;
+    // 语言包没下过时，create() 必须发生在用户手势里，否则浏览器直接拒绝。
+    // 默认开启的情况下首屏拿不到手势，所以先探可用性，缺包就等用户点一下「译」。
+    let availability = 'available';
+    try {
+      if (typeof api.availability === 'function') {
+        availability = String(await api.availability({ sourceLanguage: lang, targetLanguage: 'zh' }) || 'available');
+      }
+    } catch {
+      availability = 'available';
+    }
+    if (availability === 'unavailable') {
+      fomoTranslators.set(lang, null);
+      return null;
+    }
+    if (availability !== 'available' && !fomoTrGesture) {
+      fomoTrNeedsGesture = true;
+      syncFomoTrButton();
+      return null;
+    }
     const translator = await api.create({ sourceLanguage: lang, targetLanguage: 'zh' });
     fomoTranslators.set(lang, translator);
+    fomoTrNeedsGesture = false;
+    syncFomoTrButton();
     return translator;
   }
 
+  /** 原文不动，译文补一行挂在它下面。 */
   function paintTranslation(el, zh) {
-    if (!el.isConnected || !zh) return;
-    if (!el.dataset.gdhOrig) el.dataset.gdhOrig = el.textContent;
-    el.textContent = zh;
-    el.classList.add('gdh-fomo__translated');
-    el.title = `原文：${el.dataset.gdhOrig}`;
+    // 不能要求 el 已进文档：命中缓存时这一步发生在渲染途中，那会儿整行还没挂上去
+    if (!zh || !el.parentNode) return;
+    let zhEl = el.nextElementSibling;
+    if (!zhEl || !zhEl.classList.contains('gdh-fomo__zh')) {
+      zhEl = document.createElement('div');
+      zhEl.className = 'gdh-fomo__zh';
+      el.after(zhEl);
+    }
+    zhEl.textContent = zh;
   }
 
   async function runFomoTranslate() {
@@ -1981,17 +2026,10 @@
     const nodes = fomoPanelEl.querySelectorAll('.gdh-fomo__text, .gdh-fomo__htext');
     if (!settings.fomoTranslate) {
       fomoTrQueue = [];
-      nodes.forEach((el) => {
-        if (el.dataset.gdhOrig) {
-          el.textContent = el.dataset.gdhOrig;
-          delete el.dataset.gdhOrig;
-          el.classList.remove('gdh-fomo__translated');
-          el.removeAttribute('title');
-        }
-      });
+      fomoPanelEl.querySelectorAll('.gdh-fomo__zh').forEach((el) => el.remove());
       return;
     }
-    nodes.forEach((el) => queueFomoTranslate(el, el.dataset.gdhOrig || el.textContent));
+    nodes.forEach((el) => queueFomoTranslate(el, el.textContent));
   }
 
   // ---- 持仓者的 7 天盈亏标记 ----
@@ -2461,22 +2499,23 @@
     // 首次下载语言包需要用户手势，所以做成按钮而不是自动开
     const tr = document.createElement('button');
     tr.type = 'button';
-    tr.className = `gdh-fomo__tr${settings.fomoTranslate ? ' is-on' : ''}`;
+    tr.className = 'gdh-fomo__tr';
     tr.textContent = '译';
-    const syncTrTitle = () => {
-      tr.title = !fomoTrApi()
-        ? '当前浏览器不支持内置本地翻译（需 Chrome 138+）'
-        : (settings.fomoTranslate ? '关闭翻译，恢复原文' : '把英文等非中文观点翻成中文（本机翻译，首次会下载语言包）');
-    };
-    syncTrTitle();
-    if (!fomoTrApi()) tr.classList.add('is-off');
     tr.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      // 缺语言包时这一下点击就是那个"用户手势"，此时不该顺手把翻译关掉
+      if (settings.fomoTranslate && fomoTrNeedsGesture) {
+        fomoTrGesture = true;
+        fomoTrNeedsGesture = false;
+        syncFomoTrButton();
+        refreshFomoTranslations();
+        return;
+      }
       settings.fomoTranslate = !settings.fomoTranslate;
-      tr.classList.toggle('is-on', settings.fomoTranslate);
-      syncTrTitle();
+      if (settings.fomoTranslate) fomoTrGesture = true;
       chrome.storage.local.set({ fomoTranslate: settings.fomoTranslate });
+      syncFomoTrButton();
       refreshFomoTranslations();
     });
 
@@ -2543,6 +2582,7 @@
       fomoPanelEl = buildFomoPanel();
       document.body.appendChild(fomoPanelEl);
       positionFomoPanel(fomoPanelEl);
+      syncFomoTrButton();
       fomoLoadedKey = '';
     }
     const slug = FOMO_CHAIN_SLUG[route.chain] || route.chain;
