@@ -865,10 +865,13 @@
         event.stopPropagation();
         toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
       });
-      const nameNode = findTrackerSymbolNode(card, symbol);
-      if (nameNode) nameNode.insertAdjacentElement('afterend', button);
+      // 首选 GMGN 自己给币名那一行的 testid（取自其 TrackerListItem.tsx），最稳；
+      // 其次按渲染文本匹配币名；都不行才退到动作文案后面。
+      const symbolRow = card.querySelector('[data-testid="follow-tracking-row-symbol"]');
+      const nameNode = symbolRow ? null : findTrackerSymbolNode(card, symbol);
+      if (symbolRow) symbolRow.appendChild(button);
+      else if (nameNode) nameNode.insertAdjacentElement('afterend', button);
       else {
-        // 定不到币名节点时退到动作文案后面，功能不受影响
         const fallback = findCardActionContainer(card);
         if (fallback) fallback.appendChild(button);
         else card.appendChild(button);

@@ -318,20 +318,64 @@
     return null;
   }
 
-  /** 追踪事件卡：只取代币 symbol，且必须与卡片 href 里的地址一致才认（读错就不采用）。 */
+  /**
+   * 追踪事件卡：字段名取自 GMGN 自己的 TrackerListItem.tsx（分包 2085-*.js）——
+   * base_address / base_symbol 是被交易的那个币，quote_* 是计价币（WBNB 之类），
+   * 另有 token_address 与 chain。不靠 href 也不靠猜。
+   */
+  function readTrackerRecord(element) {
+    const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
+    if (!fiberKey) return null;
+    const pick = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 4) return null;
+      if (typeof value.base_address === 'string' && value.base_address) return value;
+      let keys;
+      try { keys = Object.keys(value); } catch { return null; }
+      for (const key of keys.slice(0, 50)) {
+        if (['_owner', 'return', 'child', 'sibling', 'alternate', 'stateNode'].includes(key)) continue;
+        let child;
+        try { child = value[key]; } catch { continue; }
+        if (child && typeof child === 'object') {
+          const hit = pick(child, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    let fiber = element[fiberKey];
+    for (let level = 0; fiber && level < 16; level += 1) {
+      for (const node of [fiber, fiber.alternate]) {
+        if (!node) continue;
+        for (const props of [node.memoizedProps, node.pendingProps]) {
+          const hit = pick(props, 0);
+          if (hit) {
+            return {
+              address: String(hit.token_address || hit.base_address || '').slice(0, 64),
+              symbol: String(hit.base_symbol || '').slice(0, 24),
+              chain: String(hit.chain || '').slice(0, 16),
+            };
+          }
+        }
+      }
+      fiber = fiber.return;
+    }
+    return null;
+  }
+
   function scanTrackerCard(element) {
-    const href = element.getAttribute('href') || '';
-    const match = href.match(/\/([a-z0-9]+)\/token\/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})/);
-    if (!match) {
-      element.removeAttribute('data-gdh-track-addr');
-      element.removeAttribute('data-gdh-track-symbol');
+    const data = readTrackerRecord(element);
+    if (data && data.address) {
+      setAttribute(element, 'data-gdh-track-addr', data.address);
+      if (data.symbol) setAttribute(element, 'data-gdh-track-symbol', data.symbol);
+      else element.removeAttribute('data-gdh-track-symbol');
       return;
     }
-    setAttribute(element, 'data-gdh-track-addr', match[2]);
-    const data = readHoldingToken(element);
-    const same = data && String(data.address || '').toLowerCase() === match[2].toLowerCase();
-    if (same && data.symbol) setAttribute(element, 'data-gdh-track-symbol', data.symbol);
-    else element.removeAttribute('data-gdh-track-symbol');
+    // 兜底：卡片本身是 next/link 渲染的 <a>，href 里可能带代币地址
+    const href = element.getAttribute('href') || '';
+    const match = href.match(/\/([a-z0-9]+)\/token\/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})/);
+    if (match) setAttribute(element, 'data-gdh-track-addr', match[2]);
+    else element.removeAttribute('data-gdh-track-addr');
+    element.removeAttribute('data-gdh-track-symbol');
   }
 
   function scanHoldingRow(element) {
