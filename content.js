@@ -88,6 +88,7 @@
     hideLightningTrade: true,
     watchedDevs: [],
     blockedCallers: [],
+    blockedTokens: [],
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -771,6 +772,118 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
+  // ---- 追踪里屏蔽某个币 ----
+  // 只影响追踪流的显示，不动 GMGN 自己的任何设置。
+  let blockedTokenSet = new Set();
+
+  function getBlockedTokens() {
+    return (Array.isArray(settings.blockedTokens) ? settings.blockedTokens : [])
+      .filter((item) => item && typeof item.address === 'string');
+  }
+
+  function rebuildBlockedTokenIndex() {
+    blockedTokenSet = new Set(getBlockedTokens().map((item) => item.address.toLowerCase()));
+  }
+
+  function isTokenBlocked(address) {
+    return Boolean(address && blockedTokenSet.has(String(address).toLowerCase()));
+  }
+
+  function persistBlockedTokens(next, message) {
+    const previous = getBlockedTokens();
+    settings.blockedTokens = next;
+    rebuildBlockedTokenIndex();
+    scanSpecialWallets();
+
+    chrome.storage.local.set({ blockedTokens: next }, () => {
+      const error = chrome.runtime?.lastError;
+      if (error) {
+        settings.blockedTokens = previous;
+        rebuildBlockedTokenIndex();
+        scanSpecialWallets();
+        return;
+      }
+      showTrackToast(message);
+    });
+  }
+
+  function toggleBlockedToken(address, symbol) {
+    if (!address) return;
+    const key = String(address).toLowerCase();
+    const list = getBlockedTokens();
+    if (blockedTokenSet.has(key)) {
+      persistBlockedTokens(
+        list.filter((item) => item.address.toLowerCase() !== key),
+        `已恢复 ${symbol || '该币'} 的追踪推送`,
+      );
+      return;
+    }
+    persistBlockedTokens(
+      [{ address: key, symbol: String(symbol || '').slice(0, 24), at: Date.now() }, ...list].slice(0, 300),
+      `已屏蔽 ${symbol || '该币'}，可在 🚫 列表里恢复`,
+    );
+  }
+
+  let trackToastTimer = 0;
+  function showTrackToast(text) {
+    const panel = document.querySelector('[data-sentry-component="WalletTrack"]');
+    if (!panel || !text) return;
+    let toast = panel.querySelector(':scope > .gdh-track-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'gdh-track-toast';
+      panel.appendChild(toast);
+    }
+    toast.textContent = text;
+    window.clearTimeout(trackToastTimer);
+    trackToastTimer = window.setTimeout(() => toast.remove(), 2000);
+  }
+
+  /** 币名所在的叶子节点：拿 fiber 读到的 symbol 去比对渲染文本，命中才算，不靠类名猜。 */
+  function findTrackerSymbolNode(card, symbol) {
+    if (!symbol) return null;
+    const target = symbol.trim();
+    if (!target) return null;
+    const nodes = card.querySelectorAll('span, div, p');
+    for (const node of nodes) {
+      if (node.querySelector('span, div, p')) continue;
+      if (node.closest('a[href*="/address/0x"]')) continue;
+      if ((node.textContent || '').trim() === target) return node;
+    }
+    return null;
+  }
+
+  function ensureTokenBlockButton(card, address, symbol) {
+    let button = card.querySelector('.gdh-tokenblock');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gdh-tokenblock';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+      });
+      const nameNode = findTrackerSymbolNode(card, symbol);
+      if (nameNode) nameNode.insertAdjacentElement('afterend', button);
+      else {
+        // 定不到币名节点时退到动作文案后面，功能不受影响
+        const fallback = findCardActionContainer(card);
+        if (fallback) fallback.appendChild(button);
+        else card.appendChild(button);
+      }
+    }
+    button.dataset.gdhTbAddr = address;
+    button.dataset.gdhTbSymbol = symbol || '';
+    const blocked = isTokenBlocked(address);
+    button.textContent = blocked ? '🔔' : '🚫';
+    button.title = blocked
+      ? `恢复 ${symbol || '该币'} 在追踪里的推送`
+      : `不再在追踪里显示 ${symbol || '该币'} 的推送`;
+    button.classList.toggle('is-blocked', blocked);
+  }
+
   // ---- 钱包追踪"特别关注"高亮 ----
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
@@ -1095,6 +1208,13 @@
       if (!address) return;
       if (card.dataset.gdhStarHost !== '1') card.dataset.gdhStarHost = '1';
       applySpecialState(card, address);
+      const tokenAddr = card.dataset.gdhTrackAddr || '';
+      if (tokenAddr) {
+        ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
+        const host = card.closest('.gmgn-vlist-item') || card;
+        if (isTokenBlocked(tokenAddr)) host.dataset.gdhTokenBlocked = '1';
+        else delete host.dataset.gdhTokenBlocked;
+      }
       ensureStarButton(
         card,
         address,
@@ -3539,6 +3659,7 @@
     settings = { ...DEFAULTS, ...stored };
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
+    rebuildBlockedTokenIndex();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
     scheduleScan();
@@ -3572,6 +3693,7 @@
     }
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
+    rebuildBlockedTokenIndex();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
     scheduleScan();

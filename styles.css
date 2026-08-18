@@ -1708,3 +1708,50 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* 追踪里屏蔽某个币：平时不占眼，悬停卡片才显形 */
+.gdh-tokenblock {
+  margin-left: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+[data-gdh-star-host="1"]:hover .gdh-tokenblock {
+  opacity: 0.75;
+}
+
+.gdh-tokenblock:hover {
+  opacity: 1;
+  filter: brightness(1.35);
+}
+
+.gdh-tokenblock.is-blocked {
+  opacity: 1;
+}
+
+/* 被屏蔽的币：整条追踪推送不再显示 */
+[data-gdh-token-blocked="1"] {
+  display: none !important;
+}
+
+.gdh-track-toast {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  padding: 6px 10px;
+  border: 1px solid #2b3140;
+  border-radius: 8px;
+  background: rgba(15, 17, 23, 0.97);
+  color: #e6e8ee;
+  font-size: 12px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}

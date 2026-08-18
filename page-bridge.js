@@ -9,6 +9,7 @@
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
+  const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
   let scanScheduled = false;
 
@@ -317,6 +318,22 @@
     return null;
   }
 
+  /** 追踪事件卡：只取代币 symbol，且必须与卡片 href 里的地址一致才认（读错就不采用）。 */
+  function scanTrackerCard(element) {
+    const href = element.getAttribute('href') || '';
+    const match = href.match(/\/([a-z0-9]+)\/token\/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})/);
+    if (!match) {
+      element.removeAttribute('data-gdh-track-addr');
+      element.removeAttribute('data-gdh-track-symbol');
+      return;
+    }
+    setAttribute(element, 'data-gdh-track-addr', match[2]);
+    const data = readHoldingToken(element);
+    const same = data && String(data.address || '').toLowerCase() === match[2].toLowerCase();
+    if (same && data.symbol) setAttribute(element, 'data-gdh-track-symbol', data.symbol);
+    else element.removeAttribute('data-gdh-track-symbol');
+  }
+
   function scanHoldingRow(element) {
     const data = readHoldingToken(element);
     if (!data || !data.chain || !data.address) {
@@ -333,6 +350,7 @@
   function scanCards() {
     scanScheduled = false;
     document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach(scanHoldingRow);
+    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach(scanTrackerCard);
     document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
     document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
       scanCallerElement(element, 'callout');
