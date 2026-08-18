@@ -89,6 +89,7 @@
     watchedDevs: [],
     blockedCallers: [],
     blockedTokens: [],
+    mergeFomoHolders: true,
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -772,6 +773,115 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
+  // ---- 把 fomo 持仓者并进 GMGN 代币页的「持有者」列表 ----
+  // GMGN 行的 balance 与 fomo 的 humanAmount 都是「持币数量」，可直接比大小定位插入点。
+  // fomo 持仓者没有链上钱包地址（他们的仓位在 fomo 自己的钱包里），所以只能作为新行插入，
+  // 不能与链上持有者去重——因此插入的行一律带 fomo 标记，避免和真实链上持有者混淆。
+  const HOLDER_ROW_SELECTOR = '[data-sentry-component="HolderItemView"]';
+  let fomoHolderCache = { key: '', at: 0, items: [] };
+  let fomoHolderLoading = false;
+
+  function holderRowAmount(row) {
+    const raw = Number(row.dataset.gdhHolderBalance);
+    return Number.isFinite(raw) ? raw : NaN;
+  }
+
+  function buildFomoHolderRow(item, supply) {
+    const row = document.createElement('div');
+    row.className = 'gdh-fomo-holder';
+    row.dataset.gdhFomoHolder = String(fomoUser(item)?.id || holderName(item));
+
+    const left = document.createElement('div');
+    left.className = 'gdh-fomo-holder__who';
+    const avatarUrl = holderAvatar(item);
+    if (avatarUrl) {
+      const img = document.createElement('img');
+      img.className = 'gdh-fomo-holder__avatar';
+      img.src = avatarUrl;
+      img.referrerPolicy = 'no-referrer';
+      left.appendChild(img);
+    }
+    const name = document.createElement('span');
+    name.className = 'gdh-fomo-holder__name';
+    name.textContent = holderName(item);
+    const tag = document.createElement('span');
+    tag.className = 'gdh-fomo-holder__tag';
+    tag.textContent = 'fomo';
+    tag.title = 'fomo 上的持仓者，仓位在 fomo 自己的钱包里，不是独立的链上地址';
+    left.append(name, tag);
+
+    const right = document.createElement('div');
+    right.className = 'gdh-fomo-holder__nums';
+    const amount = Number(item?.humanAmount);
+    const pct = document.createElement('span');
+    pct.className = 'gdh-fomo-holder__pct';
+    const supplyNum = Number(supply);
+    pct.textContent = Number.isFinite(amount) && supplyNum > 0
+      ? `${((amount / supplyNum) * 100).toFixed(2)}%`
+      : '--';
+    const usd = document.createElement('span');
+    usd.className = 'gdh-fomo-holder__usd';
+    usd.textContent = fomoUsd(Number(item?.value)) || '--';
+    right.append(pct, usd);
+
+    row.append(left, right);
+    row.title = `${holderName(item)} · 持有 ${Number.isFinite(amount) ? amount.toLocaleString('zh-CN') : '--'} 枚 · 约 ${fomoUsd(Number(item?.value)) || '--'}`;
+    return row;
+  }
+
+  /** 按持币数量把 fomo 持仓者插进 GMGN 的持有者列表（列表本身是从多到少排的）。 */
+  function mergeFomoHolders(items) {
+    const rows = [...document.querySelectorAll(HOLDER_ROW_SELECTOR)];
+    if (!rows.length) return;
+    const parent = rows[0].parentElement;
+    if (!parent) return;
+    const supply = rows.map((r) => Number(r.dataset.gdhHolderSupply)).find((n) => Number.isFinite(n) && n > 0);
+
+    const seen = new Set([...parent.querySelectorAll('.gdh-fomo-holder')].map((el) => el.dataset.gdhFomoHolder));
+    for (const item of items) {
+      const amount = Number(item?.humanAmount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const id = String(fomoUser(item)?.id || holderName(item));
+      if (seen.has(id)) continue;
+      seen.add(id);
+
+      const row = buildFomoHolderRow(item, supply);
+      // 落在第一个「持币数量比它少」的链上行之前；都比它多就排到末尾
+      const after = [...parent.querySelectorAll(HOLDER_ROW_SELECTOR)]
+        .find((r) => { const b = holderRowAmount(r); return Number.isFinite(b) && b < amount; });
+      if (after) parent.insertBefore(row, after);
+      else parent.appendChild(row);
+    }
+  }
+
+  function clearFomoHolders() {
+    document.querySelectorAll('.gdh-fomo-holder').forEach((el) => el.remove());
+  }
+
+  function scanFomoHolderMerge() {
+    if (settings.mergeFomoHolders === false) return void clearFomoHolders();
+    const route = currentTokenRoute();
+    if (!route) return void clearFomoHolders();
+    if (!document.querySelector(HOLDER_ROW_SELECTOR)) return;
+
+    const key = `${route.chain}|${route.address}`;
+    // 空结果只缓存 15 秒：首拉可能赶上 fomo 登录态还没就绪，不该让用户干等一分钟
+    const ttl = fomoHolderCache.items.length ? 60000 : 15000;
+    if (fomoHolderCache.key === key && Date.now() - fomoHolderCache.at < ttl) {
+      if (fomoHolderCache.items.length) mergeFomoHolders(fomoHolderCache.items);
+      return;
+    }
+    if (fomoHolderLoading) return;
+    fomoHolderLoading = true;
+    chrome.runtime.sendMessage({
+      type: 'fomo-token-feed',
+      payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'holders' },
+    }).then((res) => {
+      fomoHolderCache = { key, at: Date.now(), items: res?.ok ? (res.items || []) : [] };
+      if (fomoHolderCache.items.length) mergeFomoHolders(fomoHolderCache.items);
+    }).catch(() => {}).finally(() => { fomoHolderLoading = false; });
+  }
+
   // ---- 追踪里屏蔽某个币 ----
   // 只影响追踪流的显示，不动 GMGN 自己的任何设置。
   let blockedTokenSet = new Set();
@@ -1214,7 +1324,9 @@
       const tokenAddr = card.dataset.gdhTrackAddr || '';
       if (tokenAddr) {
         ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
-        const host = card.closest('.gmgn-vlist-item') || card;
+        // react-virtuoso 用 ResizeObserver 量每一项的高度，而它会忽略 display:none 的测量
+        // 结果（避免闪烁），所以隐藏会留下占位空档。改为把外层量高的壳折叠成 0 高度。
+        const host = card.closest('[data-index]') || card.closest('.gmgn-vlist-item') || card;
         if (isTokenBlocked(tokenAddr)) host.dataset.gdhTokenBlocked = '1';
         else delete host.dataset.gdhTokenBlocked;
       }
@@ -1240,6 +1352,7 @@
       });
     });
 
+    scanFomoHolderMerge();
     ensureAddressPageStar();
     ensureAddWalletStarRow();
     ensureSpecialManageUI();
@@ -1474,7 +1587,7 @@
       head.className = 'gdh-sp-manage__head';
       const title = document.createElement('strong');
       title.className = 'gdh-sp-manage__title';
-      title.textContent = '特别关注管理';
+      title.textContent = '特别关注 / 屏蔽的币';
       const close = document.createElement('button');
       close.type = 'button';
       close.className = 'gdh-sp-manage__close';
@@ -1516,7 +1629,9 @@
 
       const list = document.createElement('div');
       list.className = 'gdh-sp-manage__list';
-      modal.append(head, addRow, list);
+      const blocked = document.createElement('div');
+      blocked.className = 'gdh-sp-manage__blocked';
+      modal.append(head, addRow, list, blocked);
       panel.appendChild(modal);
     }
 
@@ -1531,6 +1646,52 @@
       modal.style.top = '34px';
     }
     renderSpecialManageList(modal);
+    renderBlockedTokenList(modal);
+  }
+
+  /** 管理面板里的「屏蔽的币」一栏：看得到、点一下就能恢复。 */
+  function renderBlockedTokenList(modal) {
+    const box = modal.querySelector('.gdh-sp-manage__blocked');
+    if (!box) return;
+    box.replaceChildren();
+
+    const head = document.createElement('div');
+    head.className = 'gdh-sp-manage__subhead';
+    const list = getBlockedTokens();
+    head.textContent = `追踪里屏蔽的币（${list.length}）`;
+    box.appendChild(head);
+
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-sp-manage__empty';
+      empty.textContent = '还没有屏蔽任何币。在追踪推送卡上把鼠标移到币名旁点 🚫 即可。';
+      box.appendChild(empty);
+      return;
+    }
+
+    for (const item of list) {
+      const row = document.createElement('div');
+      row.className = 'gdh-sp-manage__brow';
+      const name = document.createElement('span');
+      name.className = 'gdh-sp-manage__bname';
+      name.textContent = item.symbol || '(未知币名)';
+      const addr = document.createElement('span');
+      addr.className = 'gdh-sp-manage__baddr';
+      addr.textContent = `${item.address.slice(0, 6)}…${item.address.slice(-4)}`;
+      addr.title = item.address;
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'gdh-sp-manage__undo';
+      undo.textContent = '恢复';
+      undo.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleBlockedToken(item.address, item.symbol);
+        renderBlockedTokenList(modal);
+      });
+      row.append(name, addr, undo);
+      box.appendChild(row);
+    }
   }
 
   function renderSpecialManageList(modal) {

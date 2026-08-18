@@ -10,6 +10,7 @@
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
+  const HOLDER_ROW_SELECTOR = '[data-sentry-component="HolderItemView"]';
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
   let scanScheduled = false;
 
@@ -391,10 +392,53 @@
     setAttribute(element, 'data-gdh-hold-symbol', data.symbol);
   }
 
+  /**
+   * 代币页「持有者」行：字段名取自 GMGN 自己的 HolderItemView（分包 6042-*.js）——
+   * { address, chain, balance, amount_percentage, total_supply, twitter_username }。
+   * 只把排序要用的持币数量和地址透出来，供插入 fomo 持仓者时定位。
+   */
+  function scanHolderRow(element) {
+    const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
+    if (!fiberKey) return;
+    const pick = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 4) return null;
+      if (typeof value.address === 'string' && value.address && value.balance !== undefined) return value;
+      let keys;
+      try { keys = Object.keys(value); } catch { return null; }
+      for (const key of keys.slice(0, 50)) {
+        if (['_owner', 'return', 'child', 'sibling', 'alternate', 'stateNode'].includes(key)) continue;
+        let child;
+        try { child = value[key]; } catch { continue; }
+        if (child && typeof child === 'object') {
+          const hit = pick(child, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    let fiber = element[fiberKey];
+    for (let level = 0; fiber && level < 12; level += 1) {
+      for (const node of [fiber, fiber.alternate]) {
+        if (!node) continue;
+        for (const props of [node.memoizedProps, node.pendingProps]) {
+          const hit = pick(props, 0);
+          if (hit) {
+            setAttribute(element, 'data-gdh-holder-addr', String(hit.address).slice(0, 64));
+            setAttribute(element, 'data-gdh-holder-balance', String(hit.balance ?? ''));
+            if (hit.total_supply !== undefined) setAttribute(element, 'data-gdh-holder-supply', String(hit.total_supply));
+            return;
+          }
+        }
+      }
+      fiber = fiber.return;
+    }
+  }
+
   function scanCards() {
     scanScheduled = false;
     document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach(scanHoldingRow);
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach(scanTrackerCard);
+    document.querySelectorAll(HOLDER_ROW_SELECTOR).forEach(scanHolderRow);
     document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
     document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
       scanCallerElement(element, 'callout');
