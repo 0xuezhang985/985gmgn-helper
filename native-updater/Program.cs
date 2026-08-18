@@ -626,13 +626,15 @@ namespace Gmgn985Updater
     {
         private readonly Label statusLabel;
         private readonly Button installButton;
+        private readonly Label stepsLabel;
+        private readonly TextBox pathBox;
 
         internal InstallerForm()
         {
             Text = "985gmgn助手安装器";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(540, 330);
-            MinimumSize = new Size(556, 369);
+            ClientSize = new Size(540, 494);
+            MinimumSize = new Size(556, 533);
             BackColor = Color.FromArgb(17, 19, 24);
             ForeColor = Color.FromArgb(244, 246, 248);
             Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
@@ -685,13 +687,89 @@ namespace Gmgn985Updater
             installButton.Click += InstallButtonClick;
             Controls.Add(installButton);
 
-            Button folderButton = MakeButton("打开插件目录", new Point(31, 276), new Size(230, 34), false);
-            folderButton.Click += delegate { OpenExtensionFolder(); };
+            Label pathTitle = new Label
+            {
+                Text = "插件目录（加载时把这个路径粘进去）",
+                AutoSize = true,
+                ForeColor = Color.FromArgb(144, 151, 163),
+                Location = new Point(31, 272)
+            };
+            Controls.Add(pathTitle);
+
+            // 路径必须看得见、能选中、能复制：用户卡住的正是「加载插件时找不到目录」这一步
+            pathBox = new TextBox
+            {
+                Text = ProductInfo.ExtensionPath,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(24, 27, 33),
+                ForeColor = Color.FromArgb(230, 233, 238),
+                Size = new Size(360, 24),
+                Location = new Point(31, 294)
+            };
+            pathBox.Click += delegate { pathBox.SelectAll(); };
+            Controls.Add(pathBox);
+
+            Button copyButton = MakeButton("复制路径", new Point(399, 292), new Size(110, 27), false);
+            copyButton.Click += delegate { CopyExtensionPath(true); };
+            Controls.Add(copyButton);
+
+            stepsLabel = new Label
+            {
+                Text = StepsText(ExtensionPackage.TryReadManifestVersion(ProductInfo.ExtensionPath) != null
+                    ? "还要在浏览器里加载它（路径见上方，可点「复制路径」）："
+                    : "装完后还需要在浏览器里加载一次："),
+                AutoSize = false,
+                Size = new Size(478, 92),
+                ForeColor = Color.FromArgb(174, 180, 191),
+                Location = new Point(31, 330)
+            };
+            Controls.Add(stepsLabel);
+
+            Button folderButton = MakeButton("打开插件目录", new Point(31, 434), new Size(230, 34), false);
+            folderButton.Click += delegate { CopyExtensionPath(true); OpenExtensionFolder(); };
             Controls.Add(folderButton);
 
-            Button extensionsButton = MakeButton("打开扩展程序页面", new Point(279, 276), new Size(230, 34), false);
+            Button extensionsButton = MakeButton("打开扩展程序页面", new Point(279, 434), new Size(230, 34), false);
             extensionsButton.Click += delegate { OpenExtensionsPage(); };
             Controls.Add(extensionsButton);
+        }
+
+        /// <summary>装完之后还要在浏览器里加载一次，这几步是绝大多数人卡住的地方，必须写在窗口里。</summary>
+        private static string StepsText(string head)
+        {
+            string[] steps =
+            {
+                head,
+                "① 在扩展程序页面，打开右上角的「开发者模式」开关",
+                "② 点左上角「加载已解压的扩展程序」",
+                "③ 在弹出的文件夹选择框里按 Ctrl+V 粘贴路径，回车",
+                "④ 选中 Extension 文件夹后点「选择文件夹」即可"
+            };
+            return string.Join(Environment.NewLine, steps);
+        }
+
+        private void CopyExtensionPath(bool notify)
+        {
+            try
+            {
+                Clipboard.SetText(ProductInfo.ExtensionPath);
+                stepsLabel.Text = StepsText("路径已复制到剪贴板，接着做：");
+                if (notify)
+                {
+                    statusLabel.ForeColor = Color.FromArgb(103, 212, 154);
+                    statusLabel.Text = "已复制路径，加载时在文件夹选择框里按 Ctrl+V 粘贴即可。";
+                }
+            }
+            catch
+            {
+                // 剪贴板被别的程序占用时不算失败，路径本来就显示在窗口里
+                if (notify)
+                {
+                    statusLabel.ForeColor = Color.FromArgb(240, 160, 90);
+                    statusLabel.Text = "复制失败，请手动选中上面的路径复制。";
+                }
+            }
         }
 
         private static Button MakeButton(string text, Point location, Size size, bool primary)
@@ -721,7 +799,11 @@ namespace Gmgn985Updater
             {
                 string version = UpdateService.InstallEmbeddedPackage(Application.ExecutablePath);
                 statusLabel.ForeColor = Color.FromArgb(103, 212, 154);
-                statusLabel.Text = "安装完成：插件 v" + version + "。请在扩展程序页面加载下方目录。";
+                statusLabel.Text = "文件已装好（v" + version + "）。还差最后一步：在浏览器里加载它，照下面 4 步做。";
+                stepsLabel.Text = StepsText("路径已复制到剪贴板，接着做：");
+                stepsLabel.ForeColor = Color.FromArgb(230, 233, 238);
+                // 路径直接进剪贴板：加载时那个文件夹选择框里粘上去即可，省掉一层层找目录
+                CopyExtensionPath(false);
                 OpenExtensionFolder();
                 OpenExtensionsPage();
             }
@@ -756,16 +838,18 @@ namespace Gmgn985Updater
 
         private static void OpenExtensionsPage()
         {
+            // UseShellExecute 会让 chrome:// 这类内部协议走 shell 解析，浏览器可能只开个首页
+            // （用户反馈的“弹出浏览器窗口然后没了”）。直接把地址作为命令行参数交给浏览器进程。
             string chrome = FindBrowserExecutable("Google\\Chrome\\Application\\chrome.exe", "chrome.exe");
             if (!string.IsNullOrEmpty(chrome))
             {
-                Process.Start(new ProcessStartInfo(chrome, "chrome://extensions") { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(chrome, "chrome://extensions/") { UseShellExecute = false });
                 return;
             }
             string edge = FindBrowserExecutable("Microsoft\\Edge\\Application\\msedge.exe", "msedge.exe");
             if (!string.IsNullOrEmpty(edge))
             {
-                Process.Start(new ProcessStartInfo(edge, "edge://extensions") { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(edge, "edge://extensions/") { UseShellExecute = false });
                 return;
             }
             MessageBox.Show("未找到 Chrome 或 Edge，请手动打开扩展程序管理页面。", "985gmgn助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
