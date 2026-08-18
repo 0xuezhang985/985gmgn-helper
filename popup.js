@@ -14,6 +14,7 @@ const DEFAULTS = {
   enableFomoPanel: true,
   enableHoldingSurge: true,
   holdingSurgeThreshold: 20,
+  holdingSurgeCooldown: 60,
   hideLightningTrade: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
@@ -36,6 +37,7 @@ const featureInputs = {
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
+const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const status = document.querySelector('#status');
 const saveButton = document.querySelector('#save');
 const updateStatus = document.querySelector('#update-status');
@@ -89,6 +91,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   );
   colorInput.value = stored.highlightColor || DEFAULTS.highlightColor;
   surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
+  surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
   setStatus(`已配置 ${count} 个重点 Dev`);
 });
@@ -107,6 +110,7 @@ saveButton.addEventListener('click', () => {
     watchedDevs: parsed.entries,
     highlightColor: colorInput.value || DEFAULTS.highlightColor,
     holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
+    holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
   };
 
   chrome.storage.local.set(next, () => {

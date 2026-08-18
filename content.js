@@ -82,6 +82,7 @@
     fomoPanelOpen: false,
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
+    holdingSurgeCooldown: 60,
     holdingWatchList: [],
     addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
     hideLightningTrade: true,
@@ -2677,7 +2678,11 @@
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   const HOLDING_WATCH_MAX = 80;
   const HOLDING_POLL_MS = 30000;
-  const HOLDING_COOLDOWN_MS = 60 * 60 * 1000;
+  /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
+  function holdingCooldownMs() {
+    const minutes = Number(settings.holdingSurgeCooldown);
+    return (Number.isFinite(minutes) && minutes > 0 ? minutes : 60) * 60 * 1000;
+  }
   const HOLDING_BATCH = 40;
   const holdingAlertedAt = new Map();
   let holdingWatchMap = new Map();
@@ -2778,7 +2783,7 @@
             const address = String(token.address || p.address || '');
             const key = `${chain}:${address}`;
             const last = holdingAlertedAt.get(key) || 0;
-            if (Date.now() - last < HOLDING_COOLDOWN_MS) return;
+            if (Date.now() - last < holdingCooldownMs()) return;
             holdingAlertedAt.set(key, Date.now());
             const meta = holdingWatchMap.get(key);
             showRemindCard({
