@@ -1843,7 +1843,31 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   color: #f5b83d;
 }
 
-/* fomo 持仓者并入 GMGN 持有者列表时插入的行 */
+/* fomo 持仓者的「链上第几名」徽章 */
+.gdh-fomo-rank {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(91, 155, 217, 0.18);
+  color: #7fb6e8;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.gdh-fomo-rank.is-top {
+  background: rgba(245, 184, 61, 0.2);
+  color: #f5b83d;
+}
+
+.gdh-fomo-rank.is-out {
+  background: rgba(139, 147, 161, 0.14);
+  color: #8b93a1;
+}
+
+/* fomo 持仓者并入 GMGN 持有者列表时插入的行（0.26.x 起不再插入，样式保留兼容） */
 .gdh-fomo-holder {
   display: flex;
   align-items: center;

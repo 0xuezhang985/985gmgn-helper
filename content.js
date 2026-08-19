@@ -773,118 +773,59 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
-  // ---- 把 fomo 持仓者并进 GMGN 代币页的「持有者」列表 ----
-  // GMGN 行的 balance 与 fomo 的 humanAmount 都是「持币数量」，可直接比大小定位插入点。
-  // fomo 持仓者没有链上钱包地址（他们的仓位在 fomo 自己的钱包里），所以只能作为新行插入，
-  // 不能与链上持有者去重——因此插入的行一律带 fomo 标记，避免和真实链上持有者混淆。
+  // ---- 用 GMGN 持有者表的持仓量，给 fomo 持仓者标出「链上第几名」----
+  // 不往 GMGN 那张表里插行：它是虚拟化的，每行各自绝对定位，插进去必然跟它抢布局。
+  // 只读取它已加载行的持仓量，拿来给 fomo 浮窗里的人算排名。
   const HOLDER_ROW_SELECTOR = '[data-testid="token-detail-holders-row"]';
-  let fomoHolderCache = { key: '', at: 0, items: [] };
-  let fomoHolderLoading = false;
+  let onchainBalances = { key: '', list: [], loaded: 0 };
 
-  function holderRowAmount(row) {
-    const raw = Number(row.dataset.gdhHolderBalance);
-    return Number.isFinite(raw) ? raw : NaN;
-  }
-
-  function buildFomoHolderRow(item, supply) {
-    const row = document.createElement('div');
-    row.className = 'gdh-fomo-holder';
-    row.dataset.gdhFomoHolder = String(fomoUser(item)?.id || holderName(item));
-
-    const left = document.createElement('div');
-    left.className = 'gdh-fomo-holder__who';
-    const avatarUrl = holderAvatar(item);
-    if (avatarUrl) {
-      const img = document.createElement('img');
-      img.className = 'gdh-fomo-holder__avatar';
-      img.src = avatarUrl;
-      img.referrerPolicy = 'no-referrer';
-      left.appendChild(img);
-    }
-    const name = document.createElement('span');
-    name.className = 'gdh-fomo-holder__name';
-    name.textContent = holderName(item);
-    const tag = document.createElement('span');
-    tag.className = 'gdh-fomo-holder__tag';
-    tag.textContent = 'fomo';
-    tag.title = 'fomo 上的持仓者，仓位在 fomo 自己的钱包里，不是独立的链上地址';
-    left.append(name, tag);
-
-    const right = document.createElement('div');
-    right.className = 'gdh-fomo-holder__nums';
-    const amount = Number(item?.humanAmount);
-    const pct = document.createElement('span');
-    pct.className = 'gdh-fomo-holder__pct';
-    const supplyNum = Number(supply);
-    pct.textContent = Number.isFinite(amount) && supplyNum > 0
-      ? `${((amount / supplyNum) * 100).toFixed(2)}%`
-      : '--';
-    const usd = document.createElement('span');
-    usd.className = 'gdh-fomo-holder__usd';
-    usd.textContent = fomoUsd(Number(item?.value)) || '--';
-    right.append(pct, usd);
-
-    row.append(left, right);
-    row.title = `${holderName(item)} · 持有 ${Number.isFinite(amount) ? amount.toLocaleString('zh-CN') : '--'} 枚 · 约 ${fomoUsd(Number(item?.value)) || '--'}`;
-    return row;
-  }
-
-  /** 按持币数量把 fomo 持仓者插进 GMGN 的持有者列表（列表本身是从多到少排的）。 */
-  function mergeFomoHolders(items) {
+  function refreshOnchainBalances() {
+    const route = currentTokenRoute();
+    if (!route) return;
     const rows = [...document.querySelectorAll(HOLDER_ROW_SELECTOR)];
     if (!rows.length) return;
-    const parent = rows[0].parentElement;
-    if (!parent) return;
-    // 行里没有总量，用「持币数量 ÷ 小数占比」反推
-    const supply = rows.map((r) => {
-      const bal = Number(r.dataset.gdhHolderBalance);
-      const pct = Number(r.dataset.gdhHolderPct);
-      return Number.isFinite(bal) && Number.isFinite(pct) && pct > 0 ? bal / pct : NaN;
-    }).find((n) => Number.isFinite(n) && n > 0);
-
-    const seen = new Set([...parent.querySelectorAll('.gdh-fomo-holder')].map((el) => el.dataset.gdhFomoHolder));
-    for (const item of items) {
-      const amount = Number(item?.humanAmount);
-      if (!Number.isFinite(amount) || amount <= 0) continue;
-      const id = String(fomoUser(item)?.id || holderName(item));
-      if (seen.has(id)) continue;
-      seen.add(id);
-
-      const row = buildFomoHolderRow(item, supply);
-      // 落在第一个「持币数量比它少」的链上行之前；都比它多就排到末尾
-      const after = [...parent.querySelectorAll(HOLDER_ROW_SELECTOR)]
-        .find((r) => { const b = holderRowAmount(r); return Number.isFinite(b) && b < amount; });
-      if (after) parent.insertBefore(row, after);
-      else parent.appendChild(row);
-    }
-  }
-
-  function clearFomoHolders() {
-    document.querySelectorAll('.gdh-fomo-holder').forEach((el) => el.remove());
-  }
-
-  function scanFomoHolderMerge() {
-    if (settings.mergeFomoHolders === false) return void clearFomoHolders();
-    const route = currentTokenRoute();
-    if (!route) return void clearFomoHolders();
-    if (!document.querySelector(HOLDER_ROW_SELECTOR)) return;
-
+    const list = rows
+      .map((r) => Number(r.dataset.gdhHolderBalance))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => b - a);
+    if (!list.length) return;
     const key = `${route.chain}|${route.address}`;
-    // 空结果只缓存 15 秒：首拉可能赶上 fomo 登录态还没就绪，不该让用户干等一分钟
-    const ttl = fomoHolderCache.items.length ? 60000 : 15000;
-    if (fomoHolderCache.key === key && Date.now() - fomoHolderCache.at < ttl) {
-      if (fomoHolderCache.items.length) mergeFomoHolders(fomoHolderCache.items);
-      return;
+    // 表格是虚拟化的，一次只渲染可见的十几行；滚动时并进已知集合，覆盖面才会变大
+    const merged = key === onchainBalances.key
+      ? [...new Set([...onchainBalances.list, ...list])].sort((a, b) => b - a)
+      : list;
+    onchainBalances = { key, list: merged, loaded: merged.length };
+  }
+
+  /** 某个持仓量在链上持有者里排第几（只按已加载的行估算）。 */
+  function onchainRank(amount) {
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const route = currentTokenRoute();
+    if (!route || onchainBalances.key !== `${route.chain}|${route.address}`) return null;
+    const list = onchainBalances.list;
+    if (!list.length) return null;
+    let above = 0;
+    for (const b of list) { if (b > amount) above += 1; else break; }
+    const smallest = list[list.length - 1];
+    // 比已加载的最小持仓还少时，只能说"在这些之外"，不能编一个名次
+    return { rank: above + 1, exact: amount >= smallest, loaded: list.length };
+  }
+
+  function buildRankBadge(amount) {
+    const info = onchainRank(amount);
+    if (!info) return null;
+    const el = document.createElement('span');
+    el.className = 'gdh-fomo-rank';
+    if (info.exact) {
+      el.textContent = `链上#${info.rank}`;
+      el.classList.toggle('is-top', info.rank <= 10);
+      el.title = `按持仓量，在 GMGN 持有者里排第 ${info.rank} 名（已加载 ${info.loaded} 行）`;
+    } else {
+      el.textContent = `#${info.loaded}+`;
+      el.classList.add('is-out');
+      el.title = `持仓量小于已加载的 ${info.loaded} 行，名次在 ${info.loaded} 名之后。多滚动几屏 GMGN 持有者表可让排名更准`;
     }
-    if (fomoHolderLoading) return;
-    fomoHolderLoading = true;
-    chrome.runtime.sendMessage({
-      type: 'fomo-token-feed',
-      payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'holders' },
-    }).then((res) => {
-      fomoHolderCache = { key, at: Date.now(), items: res?.ok ? (res.items || []) : [] };
-      if (fomoHolderCache.items.length) mergeFomoHolders(fomoHolderCache.items);
-    }).catch(() => {}).finally(() => { fomoHolderLoading = false; });
+    return el;
   }
 
   // ---- 追踪里屏蔽某个币 ----
@@ -1383,7 +1324,7 @@
       });
     });
 
-    scanFomoHolderMerge();
+    refreshOnchainBalances();
     ensureAddressPageStar();
     ensureAddWalletStarRow();
     ensureSpecialManageUI();
@@ -2489,6 +2430,11 @@
       name.textContent = holderName(item);
       who.appendChild(name);
       attachFomoBoard(who, fomoUser(item)?.userHandle);
+
+      if (settings.mergeFomoHolders !== false) {
+        const rankEl = buildRankBadge(Number(item?.humanAmount));
+        if (rankEl) who.appendChild(rankEl);
+      }
 
       const uid = fomoUser(item)?.id;
       if (uid) {
