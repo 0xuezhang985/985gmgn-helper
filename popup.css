@@ -243,3 +243,23 @@ footer {
   text-align: center;
   font-size: 11px;
 }
+
+/* 「怎么用」：只写光看开关发现不了的交互 */
+.gdh-howto {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  color: #aeb4bf;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.gdh-howto li { margin-bottom: 6px; }
+.gdh-howto b { color: #e6e8ee; }
+
+.gdh-howto-link {
+  color: #f5b83d;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.gdh-howto-link:hover { text-decoration: underline; }
