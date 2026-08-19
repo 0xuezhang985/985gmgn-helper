@@ -10,7 +10,8 @@
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
-  const HOLDER_ROW_SELECTOR = '[data-sentry-component="HolderItemView"]';
+  // 代币页「持有者」表格的行（实测自线上 DOM，不是紧凑列表的 HolderItemView）
+  const HOLDER_ROW_SELECTOR = '[data-testid="token-detail-holders-row"]';
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
   let scanScheduled = false;
 
@@ -393,8 +394,8 @@
   }
 
   /**
-   * 代币页「持有者」行：字段名取自 GMGN 自己的 HolderItemView（分包 6042-*.js）——
-   * { address, chain, balance, amount_percentage, total_supply, twitter_username }。
+   * 代币页「持有者」表格行：字段实测自线上 DOM 的 React fiber ——
+   * { address, balance（持币数量）, amount_percentage（小数占比）, usd_value, ... }。
    * 只把排序要用的持币数量和地址透出来，供插入 fomo 持仓者时定位。
    */
   function scanHolderRow(element) {
@@ -425,7 +426,8 @@
           if (hit) {
             setAttribute(element, 'data-gdh-holder-addr', String(hit.address).slice(0, 64));
             setAttribute(element, 'data-gdh-holder-balance', String(hit.balance ?? ''));
-            if (hit.total_supply !== undefined) setAttribute(element, 'data-gdh-holder-supply', String(hit.total_supply));
+            // 行里没有 total_supply，但 amount_percentage 是小数占比，可反推总量
+            if (hit.amount_percentage !== undefined) setAttribute(element, 'data-gdh-holder-pct', String(hit.amount_percentage));
             return;
           }
         }

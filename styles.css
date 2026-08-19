@@ -1188,6 +1188,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 
 .gdh-sp-manage__list {
   flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1737,6 +1738,17 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
   opacity: 1;
 }
 
+/* 长按一秒才屏蔽：按住时给出进度反馈，误触不会生效 */
+.gdh-tokenblock.is-holding {
+  opacity: 1 !important;
+  animation: gdh-tb-hold 1s linear forwards;
+}
+
+@keyframes gdh-tb-hold {
+  from { filter: none; transform: scale(1); }
+  to { filter: brightness(1.6) drop-shadow(0 0 5px rgba(248, 113, 113, 0.9)); transform: scale(1.45); }
+}
+
 /* 被屏蔽的币：整条追踪推送折叠掉。
    追踪流是 react-virtuoso，靠 ResizeObserver 量每项高度，而它会忽略 display:none 的
    测量结果（避免闪烁），于是被隐藏的项仍占着位置、留下空档。折成 0 高度它才会重新量。 */
@@ -1768,7 +1780,12 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 
 /* 管理面板里的「屏蔽的币」一栏 */
 .gdh-sp-manage__blocked {
-  margin-top: 10px;
+  /* 模态框是 overflow:hidden 的 flex 列：这一栏必须固定不收缩，
+     否则会被上面的钱包列表挤出可视区、看得见摸不着（点击落空）。 */
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow-y: auto;
+  margin: 10px 12px 12px;
   padding-top: 10px;
   border-top: 1px solid rgba(139, 147, 161, 0.16);
 }

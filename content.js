@@ -777,7 +777,7 @@
   // GMGN 行的 balance 与 fomo 的 humanAmount 都是「持币数量」，可直接比大小定位插入点。
   // fomo 持仓者没有链上钱包地址（他们的仓位在 fomo 自己的钱包里），所以只能作为新行插入，
   // 不能与链上持有者去重——因此插入的行一律带 fomo 标记，避免和真实链上持有者混淆。
-  const HOLDER_ROW_SELECTOR = '[data-sentry-component="HolderItemView"]';
+  const HOLDER_ROW_SELECTOR = '[data-testid="token-detail-holders-row"]';
   let fomoHolderCache = { key: '', at: 0, items: [] };
   let fomoHolderLoading = false;
 
@@ -835,7 +835,12 @@
     if (!rows.length) return;
     const parent = rows[0].parentElement;
     if (!parent) return;
-    const supply = rows.map((r) => Number(r.dataset.gdhHolderSupply)).find((n) => Number.isFinite(n) && n > 0);
+    // 行里没有总量，用「持币数量 ÷ 小数占比」反推
+    const supply = rows.map((r) => {
+      const bal = Number(r.dataset.gdhHolderBalance);
+      const pct = Number(r.dataset.gdhHolderPct);
+      return Number.isFinite(bal) && Number.isFinite(pct) && pct > 0 ? bal / pct : NaN;
+    }).find((n) => Number.isFinite(n) && n > 0);
 
     const seen = new Set([...parent.querySelectorAll('.gdh-fomo-holder')].map((el) => el.dataset.gdhFomoHolder));
     for (const item of items) {
@@ -969,11 +974,37 @@
       button = document.createElement('button');
       button.type = 'button';
       button.className = 'gdh-tokenblock';
-      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      // 屏蔽要长按一秒才生效（这个按钮就在币名边上，单击太容易误触）；
+      // 解除屏蔽是无害操作，保持单击即可。
+      let holdTimer = 0;
+      const cancelHold = () => {
+        window.clearTimeout(holdTimer);
+        holdTimer = 0;
+        button.classList.remove('is-holding');
+      };
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isTokenBlocked(button.dataset.gdhTbAddr || '')) return;
+        button.classList.add('is-holding');
+        holdTimer = window.setTimeout(() => {
+          cancelHold();
+          button.dataset.gdhTbFiredAt = String(Date.now());
+          toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+        }, 1000);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((type) => {
+        button.addEventListener(type, cancelHold);
+      });
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+        // 长按刚触发过，紧随其后的这一下 click 是它的尾巴，不能又把它解除。
+        // 用时间戳而不是一次性标志：万一那下 click 没产生，标志会残留下来吃掉下一次点击。
+        if (Date.now() - Number(button.dataset.gdhTbFiredAt || 0) < 500) return;
+        if (isTokenBlocked(button.dataset.gdhTbAddr || '')) {
+          toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+        }
       });
       // 首选 GMGN 自己给币名那一行的 testid（取自其 TrackerListItem.tsx），最稳；
       // 其次按渲染文本匹配币名；都不行才退到动作文案后面。
@@ -992,8 +1023,8 @@
     const blocked = isTokenBlocked(address);
     button.textContent = blocked ? '🔔' : '🚫';
     button.title = blocked
-      ? `恢复 ${symbol || '该币'} 在追踪里的推送`
-      : `不再在追踪里显示 ${symbol || '该币'} 的推送`;
+      ? `点一下恢复 ${symbol || '该币'} 在追踪里的推送`
+      : `长按一秒，不再在追踪里显示 ${symbol || '该币'} 的推送`;
     button.classList.toggle('is-blocked', blocked);
   }
 
@@ -1653,6 +1684,11 @@
   function renderBlockedTokenList(modal) {
     const box = modal.querySelector('.gdh-sp-manage__blocked');
     if (!box) return;
+    // 没变就别重建：扫描每秒至少跑一次，无条件重建会把「恢复」按钮反复销毁重建，
+    // 真实鼠标点击要求 mousedown 与 mouseup 落在同一元素上，中间一重建 click 就不会产生。
+    const key = JSON.stringify(getBlockedTokens().map((x) => `${x.address}|${x.symbol || ''}`));
+    if (box.dataset.gdhBlockedKey === key) return;
+    box.dataset.gdhBlockedKey = key;
     box.replaceChildren();
 
     const head = document.createElement('div');
@@ -1687,6 +1723,7 @@
         event.preventDefault();
         event.stopPropagation();
         toggleBlockedToken(item.address, item.symbol);
+        delete box.dataset.gdhBlockedKey;
         renderBlockedTokenList(modal);
       });
       row.append(name, addr, undo);
