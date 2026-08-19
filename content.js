@@ -90,6 +90,12 @@
     blockedCallers: [],
     blockedTokens: [],
     mergeFomoHolders: true,
+    markedHolders: [
+      { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
+      { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
+      { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
+    ],
+    enableMarkedHolders: true,
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -773,6 +779,104 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
+  // ---- 标注人物持仓徽章 ----
+  // 反过来查：不去逐个代币问"持有人里有谁"（那是几十上百个请求），
+  // 而是查这几个被标注的钱包各自持有哪些币（人数个请求，缓存复用），
+  // 再给命中的代币卡片打上 👤N。
+  const MARKED_TTL = 120000;
+  let markedMap = new Map();      // 代币地址 -> [人名]
+  let markedCache = { chain: '', at: 0 };
+  let markedLoading = false;
+
+  function getMarkedHolders() {
+    return (Array.isArray(settings.markedHolders) ? settings.markedHolders : [])
+      .filter((x) => x && typeof x.address === 'string' && /^0x[a-fA-F0-9]{40}$/.test(x.address));
+  }
+
+  function currentChain() {
+    const m = location.pathname.match(/^\/([a-z0-9]+)\//);
+    return m && m[1] in FOMO_NETWORK_ID ? m[1] : '';
+  }
+
+  async function loadMarkedHoldings() {
+    const chain = currentChain();
+    if (!chain) return;
+    if (settings.enableMarkedHolders === false) return void (markedMap = new Map());
+    const people = getMarkedHolders();
+    if (!people.length) return void (markedMap = new Map());
+    if (markedCache.chain === chain && Date.now() - markedCache.at < MARKED_TTL) return;
+    if (markedLoading) return;
+    markedLoading = true;
+    const next = new Map();
+    try {
+      for (const person of people) {
+        try {
+          // 契约取自 GMGN 自己的取数代码：eth 链地址要小写
+          const addr = chain === 'eth' ? person.address.toLowerCase() : person.address;
+          const res = await fetch(`https://gmgn.ai/api/v1/wallet_holdings/${chain}/${addr}?limit=50`, {
+            credentials: 'omit',
+          });
+          const body = await res.json().catch(() => null);
+          const holdings = body?.data?.holdings || body?.holdings || [];
+          for (const h of holdings) {
+            const token = String(h?.token?.address || h?.address || '').toLowerCase();
+            if (!token) continue;
+            if (!next.has(token)) next.set(token, []);
+            const list = next.get(token);
+            if (!list.includes(person.name)) list.push(person.name);
+          }
+        } catch {
+          // 单个人失败不影响其他人
+        }
+      }
+      markedMap = next;
+      markedCache = { chain, at: Date.now() };
+    } finally {
+      markedLoading = false;
+    }
+  }
+
+  function ensureMarkedBadge(host, tokenAddress) {
+    const names = markedMap.get(String(tokenAddress).toLowerCase());
+    let badge = host.querySelector(':scope > .gdh-marked');
+    if (!names || !names.length) {
+      badge?.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'gdh-marked';
+      host.appendChild(badge);
+    }
+    badge.textContent = `👤${names.length}`;
+    badge.title = `持有这个币的标注人物：${names.join('、')}`;
+  }
+
+  function scanMarkedBadges() {
+    if (settings.enableMarkedHolders === false) {
+      document.querySelectorAll('.gdh-marked').forEach((el) => el.remove());
+      return;
+    }
+    loadMarkedHoldings();
+    if (!markedMap.size) return;
+
+    // 追踪推送卡：币名那一行（位置已在 0.25.1 实测确认）
+    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((card) => {
+      const addr = card.dataset.gdhTrackAddr;
+      if (!addr) return;
+      const row = card.querySelector('[data-testid="follow-tracking-row-symbol"]') || card;
+      ensureMarkedBadge(row, addr);
+    });
+
+    // 搜索结果等其它地方：凡是指向代币页的链接都算一行，不依赖组件名
+    document.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
+      if (link.closest(TRACKER_ITEM_SELECTOR)) return;
+      const m = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/);
+      if (!m) return;
+      ensureMarkedBadge(link, m[1]);
+    });
+  }
+
   // ---- 用 GMGN 持有者表的持仓量，给 fomo 持仓者标出「链上第几名」----
   // 不往 GMGN 那张表里插行：它是虚拟化的，每行各自绝对定位，插进去必然跟它抢布局。
   // 只读取它已加载行的持仓量，拿来给 fomo 浮窗里的人算排名。
@@ -907,6 +1011,25 @@
       if ((node.textContent || '').trim() === target) return node;
     }
     return null;
+  }
+
+  /**
+   * 折叠被屏蔽的推送。追踪流是 react-virtuoso：它用 ResizeObserver 量高，且会忽略
+   * display:none 的测量结果，所以隐藏会留下占位空档；而 GMGN 在卡片外面到底套了
+   * 几层壳、哪一层才是被量的那层，并不确定。这里不猜层数——从卡片往上，只要某一层
+   * 「只包着这一张追踪卡」就说明它是这张卡的专属外壳，一并折叠；一旦某层里出现了
+   * 别的追踪卡，那就是列表容器，停手。
+   */
+  function markBlockedHosts(card, blocked) {
+    let el = card;
+    for (let level = 0; level < 6 && el instanceof HTMLElement; level += 1) {
+      if (blocked) el.dataset.gdhTokenBlocked = '1';
+      else delete el.dataset.gdhTokenBlocked;
+      const parent = el.parentElement;
+      if (!parent) break;
+      if (parent.querySelectorAll(TRACKER_ITEM_SELECTOR).length > 1) break;
+      el = parent;
+    }
   }
 
   function ensureTokenBlockButton(card, address, symbol) {
@@ -1296,11 +1419,7 @@
       const tokenAddr = card.dataset.gdhTrackAddr || '';
       if (tokenAddr) {
         ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
-        // react-virtuoso 用 ResizeObserver 量每一项的高度，而它会忽略 display:none 的测量
-        // 结果（避免闪烁），所以隐藏会留下占位空档。改为把外层量高的壳折叠成 0 高度。
-        const host = card.closest('[data-index]') || card.closest('.gmgn-vlist-item') || card;
-        if (isTokenBlocked(tokenAddr)) host.dataset.gdhTokenBlocked = '1';
-        else delete host.dataset.gdhTokenBlocked;
+        markBlockedHosts(card, isTokenBlocked(tokenAddr));
       }
       ensureStarButton(
         card,
@@ -1325,6 +1444,7 @@
     });
 
     refreshOnchainBalances();
+    scanMarkedBadges();
     ensureAddressPageStar();
     ensureAddWalletStarRow();
     ensureSpecialManageUI();

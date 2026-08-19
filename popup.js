@@ -16,6 +16,12 @@ const DEFAULTS = {
   holdingSurgeThreshold: 20,
   holdingSurgeCooldown: 60,
   mergeFomoHolders: true,
+  enableMarkedHolders: true,
+  markedHolders: [
+    { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
+    { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
+    { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
+  ],
   hideLightningTrade: true,
   watchedDevs: [],
   highlightColor: '#f5b83d',
@@ -40,6 +46,25 @@ const colorInput = document.querySelector('#highlight-color');
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
+const markedEnableInput = document.querySelector('#enable-marked-holders');
+const markedListInput = document.querySelector('#marked-list');
+
+function markedToText(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((x) => `${x.address} ${x.name || ''}`.trim())
+    .join('\n');
+}
+
+function markedFromText(text) {
+  return String(text || '').split('\n')
+    .map((line) => line.trim()).filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(0x[a-fA-F0-9]{40})\s*(.*)$/);
+      return m ? { address: m[1].toLowerCase(), name: m[2].trim() || m[1].slice(0, 8) } : null;
+    })
+    .filter(Boolean);
+}
+
 const status = document.querySelector('#status');
 const saveButton = document.querySelector('#save');
 const updateStatus = document.querySelector('#update-status');
@@ -95,6 +120,9 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
   surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
   mergeHoldersInput.checked = stored.mergeFomoHolders !== false;
+  markedEnableInput.checked = stored.enableMarkedHolders !== false;
+  markedListInput.value = markedToText(
+    Array.isArray(stored.markedHolders) ? stored.markedHolders : DEFAULTS.markedHolders);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
   setStatus(`已配置 ${count} 个重点 Dev`);
 });
@@ -115,6 +143,8 @@ saveButton.addEventListener('click', () => {
     holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
     holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
     mergeFomoHolders: mergeHoldersInput.checked,
+    enableMarkedHolders: markedEnableInput.checked,
+    markedHolders: markedFromText(markedListInput.value),
   };
 
   chrome.storage.local.set(next, () => {

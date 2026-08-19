@@ -1924,3 +1924,21 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
 
 .gdh-fomo-holder__pct { color: #e6e8ee; }
 .gdh-fomo-holder__usd { color: #8b93a1; font-size: 11px; }
+
+/* 标注人物持仓徽章：这个币被几个被标注的人持有 */
+.gdh-marked {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(245, 184, 61, 0.18);
+  color: #f5b83d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  white-space: nowrap;
+  cursor: default;
+  vertical-align: middle;
+}
