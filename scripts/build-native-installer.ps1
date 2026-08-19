@@ -53,10 +53,10 @@ $output = Join-Path $dist "985gmgn-helper-setup-v$version.exe"
 $assemblyVersion = "$version.0"
 $assemblySource = @"
 using System.Reflection;
-[assembly: AssemblyTitle("985gmgn助手安装器")]
-[assembly: AssemblyDescription("985gmgn助手 Native Messaging 更新器")]
+[assembly: AssemblyTitle("better gmgn 安装器")]
+[assembly: AssemblyDescription("better gmgn Native Messaging 更新器")]
 [assembly: AssemblyCompany("0xuezhang985")]
-[assembly: AssemblyProduct("985gmgn助手")]
+[assembly: AssemblyProduct("better gmgn")]
 [assembly: AssemblyVersion("$assemblyVersion")]
 [assembly: AssemblyFileVersion("$assemblyVersion")]
 "@

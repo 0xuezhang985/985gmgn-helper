@@ -22,11 +22,11 @@ async function saveUpdateState(state) {
   if (state.updateAvailable) {
     await chrome.action.setBadgeBackgroundColor({ color: '#29d17d' });
     await chrome.action.setBadgeText({ text: 'UP' });
-    await chrome.action.setTitle({ title: `985gmgn助手：发现 v${state.latestVersion}` });
+    await chrome.action.setTitle({ title: `better gmgn：发现 v${state.latestVersion}` });
     return;
   }
   await chrome.action.setBadgeText({ text: '' });
-  await chrome.action.setTitle({ title: '985gmgn助手' });
+  await chrome.action.setTitle({ title: 'better gmgn' });
 }
 
 async function checkForUpdate() {

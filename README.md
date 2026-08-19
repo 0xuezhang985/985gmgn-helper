@@ -1,6 +1,8 @@
-# 985gmgn助手
+# better gmgn
 
-给 GMGN.ai 加一层交易辅助的 Chrome 扩展（Manifest V3）：高亮重点 Dev、把 fomo.family 的观点与持仓者搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
+给 GMGN.ai 加一层交易辅助的 Chrome 扩展（Manifest V3）。原名「985gmgn助手」，v0.28.0 起改名 **better gmgn**——扩展 ID 未变，升级后你的名单与配置都在。
+
+高亮重点 Dev、把 fomo.family 的观点与持仓者搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

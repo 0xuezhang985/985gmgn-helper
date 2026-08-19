@@ -404,7 +404,7 @@ namespace Gmgn985Updater
         {
             if (!File.Exists(ProductInfo.ConfigPath) || !Directory.Exists(ProductInfo.ExtensionPath))
             {
-                throw new InvalidOperationException("本地安装信息缺失，请重新运行 985gmgn助手安装器");
+                throw new InvalidOperationException("本地安装信息缺失，请重新运行 better gmgn 安装器");
             }
         }
 
@@ -412,7 +412,7 @@ namespace Gmgn985Updater
         {
             Dictionary<string, object> manifest = Json.Object(
                 "name", ProductInfo.NativeHostName,
-                "description", "985gmgn助手本地更新器",
+                "description", "better gmgn 本地更新器",
                 "path", ProductInfo.UpdaterPath,
                 "type", "stdio",
                 "allowed_origins", new[] { ProductInfo.ExtensionOrigin }
@@ -539,7 +539,13 @@ namespace Gmgn985Updater
             string name = Json.StringValue(manifest, "name");
             string key = Json.StringValue(manifest, "key");
             string version = Json.StringValue(manifest, "version");
-            if (!string.Equals(name, "985gmgn助手", StringComparison.Ordinal)) throw new InvalidDataException("插件名称校验失败");
+            // 0.28.0 起显示名改为 better gmgn；旧名同时接受，避免跨版本升级时互相拒绝。
+            // 扩展 ID（manifest key）没有变，用户的名单与配置不受影响。
+            if (!string.Equals(name, "better gmgn", StringComparison.Ordinal)
+                && !string.Equals(name, "985gmgn助手", StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("插件名称校验失败");
+            }
             if (!string.Equals(key, ProductInfo.ManifestKey, StringComparison.Ordinal)) throw new InvalidDataException("插件固定 ID 校验失败");
             if (!VersionTools.IsValid(version)) throw new InvalidDataException("插件版本号无效");
             if (!string.IsNullOrEmpty(expectedVersion) && !string.Equals(version, expectedVersion, StringComparison.OrdinalIgnoreCase))
@@ -631,7 +637,7 @@ namespace Gmgn985Updater
 
         internal InstallerForm()
         {
-            Text = "985gmgn助手安装器";
+            Text = "better gmgn 安装器";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(540, 494);
             MinimumSize = new Size(556, 533);
@@ -643,7 +649,7 @@ namespace Gmgn985Updater
 
             Label title = new Label
             {
-                Text = "985gmgn助手",
+                Text = "better gmgn",
                 Font = new Font("Microsoft YaHei UI", 20F, FontStyle.Bold, GraphicsUnit.Point),
                 ForeColor = Color.White,
                 AutoSize = true,
@@ -852,7 +858,7 @@ namespace Gmgn985Updater
                 Process.Start(new ProcessStartInfo(edge, "edge://extensions/") { UseShellExecute = false });
                 return;
             }
-            MessageBox.Show("未找到 Chrome 或 Edge，请手动打开扩展程序管理页面。", "985gmgn助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("未找到 Chrome 或 Edge，请手动打开扩展程序管理页面。", "better gmgn", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private static string FindBrowserExecutable(string relativePath, string fileName)
