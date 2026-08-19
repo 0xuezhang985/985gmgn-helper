@@ -3,6 +3,11 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $root = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $root 'manifest.json'
+# 先查空文件：脚本改写出错（以写模式打开的同时读同一个文件）会把它截成 0 字节，
+# 那样下面的版本号检查只会报"版本号无效"，看不出真正原因。
+if ((Get-Item -LiteralPath $manifestPath).Length -eq 0) {
+  throw "manifest.json 是空文件（多半是改写脚本把它截断了），请从上一个 tag 恢复"
+}
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = [string]$manifest.version
 if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
