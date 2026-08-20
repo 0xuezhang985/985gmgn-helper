@@ -1119,6 +1119,26 @@
     return [...found];
   }
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
+  const TRACK_TAB_CELL = '[data-testid="follow-tracking-wallet-tab"], [data-testid="follow-tracking-tab"]';
+
+  /**
+   * 钱包列表所在的容器。和追踪卡同理：不能只认 data-sentry-component，
+   * 实测有用户页面上这类构建期标记一个都没有。用 GMGN 自己的标签栏 testid 作锚，
+   * 往上找到同时含有钱包地址链接的那一层作为扫描范围——既不依赖标记，也不会
+   * 扩散到代币页的持有者表等别处的地址链接。
+   */
+  function walletTableScopes() {
+    const scopes = new Set();
+    document.querySelectorAll(WALLET_TABLE_SELECTOR).forEach((el) => scopes.add(el));
+    document.querySelectorAll(TRACK_TAB_CELL).forEach((tab) => {
+      let el = tab.parentElement;
+      for (let level = 0; level < 8 && el instanceof HTMLElement; level += 1) {
+        if (el.querySelector('a[href*="/address/0x"]')) return void scopes.add(el);
+        el = el.parentElement;
+      }
+    });
+    return [...scopes];
+  }
 
   function extractRowWalletAddress(scope) {
     const link = scope.querySelector('a[href*="/address/0x"]');
@@ -1460,7 +1480,7 @@
     });
 
     // 钱包列表行：从地址链接爬到行容器。
-    document.querySelectorAll(WALLET_TABLE_SELECTOR).forEach((table) => {
+    walletTableScopes().forEach((table) => {
       table.querySelectorAll('a[href*="/address/0x"]').forEach((link) => {
         const row = findWalletTableRow(link);
         if (!(row instanceof HTMLElement)) return;
