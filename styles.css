@@ -2,16 +2,15 @@
   --gdh-highlight: #f5b83d;
 }
 
-[data-sentry-component="PumpSubX"]
-  [data-sentry-source-file="TokenItem.tsx"][data-gdh-highlighted="1"] {
+/* 只认 data-gdh-highlighted：祖先是否带 sentry 标记不该决定高亮显不显示 */
+[data-gdh-highlighted="1"] {
   background: color-mix(in srgb, var(--gdh-highlight) 18%, transparent) !important;
   box-shadow:
     inset 4px 0 0 var(--gdh-highlight),
     inset 0 0 0 1px color-mix(in srgb, var(--gdh-highlight) 72%, transparent) !important;
 }
 
-[data-sentry-component="PumpSubX"]
-  [data-sentry-source-file="TokenItem.tsx"][data-gdh-highlighted="1"]::after {
+[data-gdh-highlighted="1"]::after {
   content: attr(data-gdh-badge);
   position: absolute;
   z-index: 8;
@@ -258,7 +257,8 @@
   color: #f5b83d;
 }
 
-a[data-sentry-component="TrackerListItem"] > .gdh-star-button {
+a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
+[data-gdh-star-host="1"] > .gdh-star-button:not(.gdh-star-button--inline) {
   position: absolute;
   right: 4px;
   top: 50%;

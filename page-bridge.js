@@ -4,8 +4,10 @@
   if (window.__gdhPageBridgeStarted) return;
   window.__gdhPageBridgeStarted = true;
 
+  // 战壕卡：GMGN 自己写的 testid 优先，构建期的 sentry 标记作兼容
+  // （实测有用户页面上一个 data-sentry-* 都没有，只认后者会让整块功能哑掉）
   const CARD_SELECTOR =
-    '[data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
+    '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
@@ -218,7 +220,10 @@
   }
 
   function scanCard(card) {
-    if (!card.closest('[data-sentry-component="PumpSubX"]')) return;
+    // 这层护栏只为把范围限定在战壕三列；页面不带 sentry 标记时，
+    // 卡片自身的 testid 已经足够说明它就是战壕卡，不能因为没有护栏就整个跳过
+    if (!card.closest('[data-sentry-component="PumpSubX"]')
+      && !card.matches('[data-testid="trench-token-card"]')) return;
     const address = getCardAddress(card);
     if (!address) return;
 
