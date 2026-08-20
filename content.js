@@ -1099,12 +1099,17 @@
   function extractRowWalletAddress(scope) {
     const link = scope.querySelector('a[href*="/address/0x"]');
     const match = link?.getAttribute('href')?.match(/\/address\/(0x[a-fA-F0-9]{40})/);
-    return match ? match[1].toLowerCase() : '';
+    if (match) return match[1].toLowerCase();
+    // GMGN 改版后追踪卡里的钱包名不一定还是 /address/ 链接了；page-bridge 从卡片数据
+    // 里读到的 maker 就是这条推送的钱包地址，拿它兜底，否则高亮/☆/🚫 会一起失效。
+    const maker = scope.dataset?.gdhTrackMaker || '';
+    return /^0x[a-fA-F0-9]{40}$/.test(maker) ? maker.toLowerCase() : '';
   }
 
   function extractRowWalletLabel(scope) {
     const link = scope.querySelector('a[href*="/address/0x"]');
-    return String(link?.textContent || '').trim().slice(0, 32);
+    const text = String(link?.textContent || '').trim();
+    return (text || scope.dataset?.gdhTrackNick || '').slice(0, 32);
   }
 
   function isSpecialWallet(address) {

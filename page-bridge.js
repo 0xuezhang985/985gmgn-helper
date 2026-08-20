@@ -355,6 +355,10 @@
               address: String(hit.token_address || hit.base_address || '').slice(0, 64),
               symbol: String(hit.base_symbol || '').slice(0, 24),
               chain: String(hit.chain || '').slice(0, 16),
+              // maker = 这条推送的钱包地址。GMGN 改版后卡片里的钱包名不一定还是
+              // <a href="/address/0x..."> 了，只靠 DOM 取地址会整段失效。
+              maker: String(hit.maker || '').slice(0, 64),
+              nick: String(hit.nick_name || hit.maker_info?.name || '').slice(0, 32),
             };
           }
         }
@@ -367,9 +371,13 @@
   function scanTrackerCard(element) {
     const data = readTrackerRecord(element);
     if (data && data.address) {
-      setAttribute(element, 'data-gdh-track-addr', data.address);
+        setAttribute(element, 'data-gdh-track-addr', data.address);
       if (data.symbol) setAttribute(element, 'data-gdh-track-symbol', data.symbol);
       else element.removeAttribute('data-gdh-track-symbol');
+      if (data.maker) setAttribute(element, 'data-gdh-track-maker', data.maker);
+      else element.removeAttribute('data-gdh-track-maker');
+      if (data.nick) setAttribute(element, 'data-gdh-track-nick', data.nick);
+      else element.removeAttribute('data-gdh-track-nick');
       return;
     }
     // 兜底：卡片本身是 next/link 渲染的 <a>，href 里可能带代币地址
