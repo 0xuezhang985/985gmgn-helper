@@ -861,10 +861,10 @@
     if (!markedMap.size) return;
 
     // 追踪推送卡：币名那一行（位置已在 0.25.1 实测确认）
-    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((card) => {
+    trackerCards().forEach((card) => {
       const addr = card.dataset.gdhTrackAddr;
       if (!addr) return;
-      const row = card.querySelector('[data-testid="follow-tracking-row-symbol"]') || card;
+      const row = card.querySelector(TRACKER_SYMBOL_CELL) || card;
       ensureMarkedBadge(row, addr);
     });
 
@@ -1072,7 +1072,7 @@
       });
       // 首选 GMGN 自己给币名那一行的 testid（取自其 TrackerListItem.tsx），最稳；
       // 其次按渲染文本匹配币名；都不行才退到动作文案后面。
-      const symbolRow = card.querySelector('[data-testid="follow-tracking-row-symbol"]');
+      const symbolRow = card.querySelector(TRACKER_SYMBOL_CELL);
       const nameNode = symbolRow ? null : findTrackerSymbolNode(card, symbol);
       if (symbolRow) symbolRow.appendChild(button);
       else if (nameNode) nameNode.insertAdjacentElement('afterend', button);
@@ -1094,6 +1094,30 @@
 
   // ---- 钱包追踪"特别关注"高亮 ----
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
+  const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
+  const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
+
+  /**
+   * 找出页面上的追踪推送卡。
+   * 只认 data-sentry-component 是不够的：那是构建工具打的标记，GMGN 在某些布局/构建下
+   * 并不带它（实测有用户页面上一个都没有，于是高亮/☆/🚫 整块失效）。这里同时用 GMGN
+   * 自己写的 testid 反查——币名行和钱包行都在同一张卡里，往上找到同时包含这两者的
+   * 那一层，就是卡片本身。
+   */
+  function trackerCards() {
+    const found = new Set();
+    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => found.add(el));
+    document.querySelectorAll(TRACKER_SYMBOL_CELL).forEach((cell) => {
+      const tagged = cell.closest(TRACKER_ITEM_SELECTOR);
+      if (tagged) return void found.add(tagged);
+      let el = cell.parentElement;
+      for (let level = 0; level < 6 && el instanceof HTMLElement; level += 1) {
+        if (el.querySelector(TRACKER_MAKER_CELL)) return void found.add(el);
+        el = el.parentElement;
+      }
+    });
+    return [...found];
+  }
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
 
   function extractRowWalletAddress(scope) {
@@ -1416,7 +1440,7 @@
     }
 
     // 追踪事件卡：卡片即 <a>，钱包地址取内部 /address/ 链接。
-    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((card) => {
+    trackerCards().forEach((card) => {
       const address = extractRowWalletAddress(card);
       if (!address) return;
       if (card.dataset.gdhStarHost !== '1') card.dataset.gdhStarHost = '1';

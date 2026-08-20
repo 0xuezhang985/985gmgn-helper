@@ -447,7 +447,19 @@
   function scanCards() {
     scanScheduled = false;
     document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach(scanHoldingRow);
-    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach(scanTrackerCard);
+    // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
+    const trackerSeen = new Set();
+    document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => trackerSeen.add(el));
+    document.querySelectorAll('[data-testid="follow-tracking-row-symbol"]').forEach((cell) => {
+      const tagged = cell.closest(TRACKER_ITEM_SELECTOR);
+      if (tagged) return void trackerSeen.add(tagged);
+      let el = cell.parentElement;
+      for (let level = 0; level < 6 && el; level += 1) {
+        if (el.querySelector('[data-testid="follow-tracking-row-maker"]')) { trackerSeen.add(el); return; }
+        el = el.parentElement;
+      }
+    });
+    trackerSeen.forEach(scanTrackerCard);
     document.querySelectorAll(HOLDER_ROW_SELECTOR).forEach(scanHolderRow);
     document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
     document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
