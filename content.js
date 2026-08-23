@@ -2365,22 +2365,52 @@
   let fomoTrRunning = false;
   let fomoTrGesture = false;
   let fomoTrNeedsGesture = false;
+  let fomoTrStuck = false;
+  let fomoTrProgress = 0;
+  const FOMO_TR_STUCK_MS = 15000;
+
+  /** 浏览器分支：Edge 与 Chrome 的接口一样，但可用性和设置入口不同，提示要分开写。 */
+  function browserKind() {
+    try {
+      const brands = navigator.userAgentData?.brands || [];
+      if (brands.some((b) => /Microsoft Edge/i.test(b.brand))) return 'edge';
+    } catch {
+      // 老浏览器没有 userAgentData
+    }
+    return / Edg\//.test(navigator.userAgent) ? 'edge' : 'chrome';
+  }
 
   /** 把「译」按钮的样子和当前状态对齐（含"需要点一下下载语言包"这种中间态）。 */
   function syncFomoTrButton() {
     const btn = fomoPanelEl && fomoPanelEl.querySelector('.gdh-fomo__tr');
     if (!btn) return;
     const supported = !!fomoTrApi();
-    btn.classList.toggle('is-on', supported && settings.fomoTranslate && !fomoTrNeedsGesture);
-    btn.classList.toggle('is-off', !supported);
-    btn.classList.toggle('is-wait', supported && settings.fomoTranslate && fomoTrNeedsGesture);
-    btn.title = !supported
-      ? '当前浏览器不支持内置本地翻译（需 Chrome 138+）'
-      : fomoTrNeedsGesture && settings.fomoTranslate
-        ? '点一下开始下载中文语言包（只需一次，之后自动翻译）'
-        : settings.fomoTranslate
-          ? '关闭翻译（原文下方的译文会移除）'
-          : '在原文下方补上中文翻译（本机翻译，内容不外传）';
+    const edge = browserKind() === 'edge';
+    const downloading = fomoTrProgress > 0 && fomoTrProgress < 100;
+    btn.classList.toggle('is-on', supported && settings.fomoTranslate && !fomoTrNeedsGesture && !fomoTrStuck);
+    btn.classList.toggle('is-off', !supported || fomoTrStuck);
+    btn.classList.toggle('is-wait', supported && settings.fomoTranslate && (fomoTrNeedsGesture || downloading));
+    btn.textContent = downloading ? `${fomoTrProgress}%` : '译';
+
+    if (!supported) {
+      btn.title = edge
+        ? '当前 Edge 没有提供内置本地翻译接口（需较新版本的 Edge）'
+        : '当前浏览器不支持内置本地翻译（需 Chrome 138+）';
+    } else if (fomoTrStuck) {
+      // Edge 实测会出现「说能下、但一直不动」的情况，如实说明而不是让按钮空转
+      btn.title = edge
+        ? 'Edge 的内置翻译接口有响应，但语言包迟迟没就绪（多为本机翻译模型未启用/未下载）。'
+          + '可在 Edge 设置里检查翻译相关开关后点这里重试；也可以直接关掉翻译。'
+        : '语言包一直没下下来，点这里重试；多次不行可先关掉翻译。';
+    } else if (downloading) {
+      btn.title = `正在下载中文语言包 ${fomoTrProgress}%（只需一次）`;
+    } else if (fomoTrNeedsGesture && settings.fomoTranslate) {
+      btn.title = '点一下开始下载中文语言包（只需一次，之后自动翻译）';
+    } else if (settings.fomoTranslate) {
+      btn.title = '关闭翻译（原文下方的译文会移除）';
+    } else {
+      btn.title = '在原文下方补上中文翻译（本机翻译，内容不外传）';
+    }
   }
 
   const fomoTrApi = () => { try { return globalThis.Translator || null; } catch { return null; } };
@@ -2425,7 +2455,42 @@
       syncFomoTrButton();
       return null;
     }
-    const translator = await api.create({ sourceLanguage: lang, targetLanguage: 'zh' });
+    // Edge 实测：availability() 会说 downloadable，但 create() 可能一直挂着——
+    // 不返回、不报错、也不发任何 downloadprogress。没有超时的话「译」会永远停在待点状态。
+    // 用「有没有收到下载进度」来区分「真在下载」和「悄悄卡住」：收到进度就耐心等，
+    // 一直没进度就判定为卡住并按浏览器给出对应说明。
+    let sawProgress = false;
+    const create = api.create({
+      sourceLanguage: lang,
+      targetLanguage: 'zh',
+      monitor(m) {
+        try {
+          m.addEventListener('downloadprogress', (event) => {
+            sawProgress = true;
+            fomoTrProgress = Math.round((Number(event.loaded) || 0) * 100);
+            syncFomoTrButton();
+          });
+        } catch {
+          // 该浏览器不支持进度回调
+        }
+      },
+    });
+    const stuck = new Promise((resolve) => {
+      const tick = () => {
+        if (sawProgress) return void window.setTimeout(tick, 5000);
+        resolve('stuck');
+      };
+      window.setTimeout(tick, FOMO_TR_STUCK_MS);
+    });
+    const translator = await Promise.race([create, stuck]);
+    if (translator === 'stuck') {
+      fomoTrStuck = true;
+      fomoTrNeedsGesture = false;
+      syncFomoTrButton();
+      return null;
+    }
+    fomoTrStuck = false;
+    fomoTrProgress = 0;
     fomoTranslators.set(lang, translator);
     fomoTrNeedsGesture = false;
     syncFomoTrButton();
@@ -3020,6 +3085,14 @@
       event.preventDefault();
       event.stopPropagation();
       // 缺语言包时这一下点击就是那个"用户手势"，此时不该顺手把翻译关掉
+      if (settings.fomoTranslate && fomoTrStuck) {
+        fomoTrStuck = false;
+        fomoTrGesture = true;
+        fomoTranslators.clear();
+        syncFomoTrButton();
+        refreshFomoTranslations();
+        return;
+      }
       if (settings.fomoTranslate && fomoTrNeedsGesture) {
         fomoTrGesture = true;
         fomoTrNeedsGesture = false;

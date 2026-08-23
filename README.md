@@ -23,7 +23,7 @@
 
 > 想手动装也可以：下载 `985gmgn-helper-vX.Y.Z.zip` 解压，然后在 `chrome://extensions` 开启开发者模式 → 加载已解压的扩展程序 → 选解压出来的文件夹。这样装不带自动升级。
 
-支持 Chrome 与 Edge。翻译功能需要 Chrome 138+。
+支持 Chrome 与 Edge。翻译功能需要 Chrome 138+ 或较新版本的 Edge（两者接口一致；Edge 上若语言包迟迟不就绪，按钮会给出说明并可重试）。
 
 ---
 
