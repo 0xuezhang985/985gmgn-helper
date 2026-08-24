@@ -811,21 +811,45 @@
   const flapPct = (bps) => `${(Number(bps || 0) / 100).toFixed(Number(bps) % 100 ? 2 : 0)}%`;
   const flapShort = (addr) => (addr && !/^0x0+$/.test(addr) ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—');
 
-  /** 徽章正文：优先把「分红给哪个币」这种最有用的信息直接显示出来。 */
-  function flapBadgeText(info, mode) {
+  /**
+   * 徽章正文，格式对齐技术瓜 FlapFeeInfo：
+   *   🪙底池币 | 各去向（按占比降序）
+   * 每段是 emoji + 占比，满 100% 时只留 emoji；占比最大的那段额外带 →收款资产
+   * （分红→分红币，金库/加池→底池币，销毁不带）。
+   */
+  function flapSym(sym) {
+    const s = String(sym || '').trim();
+    return s.length > 8 ? s.slice(0, 8) : s;
+  }
+
+  function flapSegPct(bps) {
+    const n = Number(bps) || 0;
+    if (n % 100 === 0) return `${n / 100}%`;
+    return `${String((n / 100).toFixed(1)).replace(/\.0$/, '')}%`;
+  }
+
+  function flapBadgeText(info) {
     const d = info.dist;
-    if (d && d.dividendBps > 0) {
-      const sym = info.dividendSymbol || '分红';
-      return `${mode.icon}${sym} ${flapPct(d.dividendBps)}`;
-    }
-    if (d && d.lpBps > 0 && d.lpBps >= Math.max(d.deflationBps, ...d.vault.map((v) => v.bps), 0)) {
-      const sym = info.quoteSymbol ? `${info.tokenSymbol || ''}/${info.quoteSymbol}` : '加池';
-      return `${mode.icon}${sym} ${flapPct(d.lpBps)}`;
-    }
-    if (d && d.deflationBps > 0) return `${mode.icon}销毁 ${flapPct(d.deflationBps)}`;
-    const vault = d ? d.vault.reduce((a, b) => a + b.bps, 0) : 0;
-    if (vault > 0) return `${mode.icon}金库 ${flapPct(vault)}`;
-    return `${mode.icon}${flapPct(info.taxBps)}`;
+    if (!d) return `🪙${flapSym(info.quoteSymbol)}`.trim() || '❓';
+    const vaultBps = d.vault.reduce((a, b) => a + b.bps, 0);
+    const segs = [
+      { kind: 'holder', emoji: '💎', bps: d.dividendBps, pri: 0 },
+      { kind: 'gift', emoji: '🎁', bps: vaultBps, pri: 1 },
+      { kind: 'burn', emoji: '🔥', bps: d.deflationBps, pri: 3 },
+      { kind: 'lp', emoji: '💧', bps: d.lpBps, pri: 4 },
+    ].filter((x) => x.bps > 0).sort((a, b) => b.bps - a.bps || a.pri - b.pri);
+    if (!segs.length) return `🪙${flapSym(info.quoteSymbol)}`.trim() || '❓';
+
+    const top = segs[0].kind;
+    const topSym = top === 'holder'
+      ? flapSym(info.dividendSymbol)
+      : (top === 'burn' ? '' : flapSym(info.quoteSymbol));
+    const fee = segs.map((seg) => {
+      const base = `${seg.emoji}${seg.bps === 10000 ? '' : flapSegPct(seg.bps)}`;
+      return seg.kind === top && topSym ? `${base}→${topSym}` : base;
+    }).join('');
+    const pool = flapSym(info.quoteSymbol);
+    return pool ? `🪙${pool} | ${fee}` : fee;
   }
 
   function flapTooltipText(info) {
@@ -904,7 +928,7 @@
     }
     const mode = flapMode(info.dist);
     badge.className = `gdh-flap is-${mode.cls}`;
-    badge.textContent = flapBadgeText(info, mode);
+    badge.textContent = flapBadgeText(info);
     badge.title = `${mode.name}\n${flapTooltipText(info)}`;
   }
 
