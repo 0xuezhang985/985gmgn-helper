@@ -811,14 +811,36 @@
   const flapPct = (bps) => `${(Number(bps || 0) / 100).toFixed(Number(bps) % 100 ? 2 : 0)}%`;
   const flapShort = (addr) => (addr && !/^0x0+$/.test(addr) ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—');
 
+  /** 徽章正文：优先把「分红给哪个币」这种最有用的信息直接显示出来。 */
+  function flapBadgeText(info, mode) {
+    const d = info.dist;
+    if (d && d.dividendBps > 0) {
+      const sym = info.dividendSymbol || '分红';
+      return `${mode.icon}${sym} ${flapPct(d.dividendBps)}`;
+    }
+    if (d && d.lpBps > 0 && d.lpBps >= Math.max(d.deflationBps, ...d.vault.map((v) => v.bps), 0)) {
+      const sym = info.quoteSymbol ? `${info.tokenSymbol || ''}/${info.quoteSymbol}` : '加池';
+      return `${mode.icon}${sym} ${flapPct(d.lpBps)}`;
+    }
+    if (d && d.deflationBps > 0) return `${mode.icon}销毁 ${flapPct(d.deflationBps)}`;
+    const vault = d ? d.vault.reduce((a, b) => a + b.bps, 0) : 0;
+    if (vault > 0) return `${mode.icon}金库 ${flapPct(vault)}`;
+    return `${mode.icon}${flapPct(info.taxBps)}`;
+  }
+
   function flapTooltipText(info) {
     const d = info.dist;
+    const pair = info.tokenSymbol && info.quoteSymbol
+      ? `${info.tokenSymbol}/${info.quoteSymbol}` : '';
     const lines = [
       `总税率 ${flapPct(info.taxBps)}（买 ${flapPct(info.buyTaxBps)} / 卖 ${flapPct(info.sellTaxBps)}）`,
     ];
     if (d) {
       lines.push('—— 税收分配 ——');
-      if (d.dividendBps) lines.push(`💎 持币分红 ${flapPct(d.dividendBps)}　资产 ${flapShort(d.dividendToken)}`);
+      if (d.dividendBps) {
+        const sym = info.dividendSymbol ? `${info.dividendSymbol} ` : '';
+        lines.push(`💎 持币分红 ${flapPct(d.dividendBps)}　分红资产 ${sym}${flapShort(d.dividendToken)}`);
+      }
       if (d.lpBps) lines.push(`💧 加池子 ${flapPct(d.lpBps)}`);
       if (d.deflationBps) lines.push(`🔥 销毁通缩 ${flapPct(d.deflationBps)}`);
       d.vault.forEach((v, i) => {
@@ -826,17 +848,37 @@
       });
       if (d.commissionBps) lines.push(`平台抽成 ${flapPct(d.commissionBps)}`);
     }
-    lines.push(`底池 ${flapShort(info.mainPool)}`);
+    lines.push(`底池 ${pair ? pair + '　' : ''}${flapShort(info.mainPool)}`);
     lines.push('数据直读链上，未经任何第三方服务');
     return lines.join('\n');
   }
 
-  function ensureFlapBadge(host, token) {
+  /** GMGN 原生的税率小标签：文案形如 Tax 2% / Tax 2%/5%。 */
+  function findNativeTaxChip(card) {
+    return [...card.querySelectorAll('div,span')].find((el) => (
+      el.children.length === 0 && /^Tax\s*[\d.]+%(\s*\/\s*[\d.]+%)?$/i.test((el.textContent || '').trim())
+    )) || null;
+  }
+
+  function ensureFlapBadge(host, token, native) {
     const info = flapInfoCache.get(token);
     let badge = host.querySelector(':scope > .gdh-flap');
     if (!info || info.ok === false) {
-      if (info && info.ok === false) badge?.remove();
+      if (info && info.ok === false) {
+        badge?.remove();
+        // 读不到就把原生标签还回去，别让人两头落空
+        if (native) native.style.removeProperty('display');
+      }
       return;
+    }
+    // 接管原生标签的位置：把它藏起来，我们的插在它原地
+    if (native && native.isConnected) {
+      native.style.setProperty('display', 'none', 'important');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'gdh-flap';
+        native.insertAdjacentElement('afterend', badge);
+      }
     }
     if (!badge) {
       badge = document.createElement('span');
@@ -845,7 +887,7 @@
     }
     const mode = flapMode(info.dist);
     badge.className = `gdh-flap is-${mode.cls}`;
-    badge.textContent = `${mode.icon}${flapPct(info.taxBps)}`;
+    badge.textContent = flapBadgeText(info, mode);
     badge.title = `${mode.name}\n${flapTooltipText(info)}`;
   }
 
@@ -870,20 +912,26 @@
       return;
     }
     const seen = new Set();
-    const put = (host, token) => {
+    const put = (host, token, native) => {
       if (!FLAP_ADDR_RE.test(token)) return;
       const key = token.toLowerCase();
       seen.add(key);
       if (!flapInfoCache.has(key)) return void requestFlapInfo(key);
-      ensureFlapBadge(host, key);
+      ensureFlapBadge(host, key, native);
     };
 
-    // 战壕卡：挂在已有的 Dev 战绩那一行，和现有信息并排
+    // 战壕卡：优先接管 GMGN 原生的「Tax x%」——同一个位置、信息更全，
+    // 按文案定位（不依赖构建期标记）；找不到就退到 Dev 战绩那一行并排显示。
     document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
       const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
       if (!token) return;
-      const row = card.querySelector('.gdh-dev-performance')?.parentElement || card;
-      put(row, token);
+      const native = findNativeTaxChip(card);
+      if (native) {
+        if (native.dataset.gdhTaxReplaced !== '1') native.dataset.gdhTaxReplaced = '1';
+        put(native.parentElement || card, token, native);
+        return;
+      }
+      put(card.querySelector('.gdh-dev-performance')?.parentElement || card, token);
     });
 
     // 追踪推送卡：挂在币名那一行

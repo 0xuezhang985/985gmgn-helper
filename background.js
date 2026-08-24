@@ -345,6 +345,7 @@ const FLAP_SEL = {
   dividendContract: '0x6124e4e7',
   quoteToken: '0x217a4b70',
   feeConfigV3: '0x46e62d07',
+  symbol: '0x95d89b41',
 };
 const FLAP_RPCS = [
   'https://bsc-dataseed.bnbchain.org',
@@ -362,6 +363,24 @@ function flapWords(hex) {
   return out;
 }
 const flapNum = (word) => (word ? Number(BigInt('0x' + word)) : 0);
+
+/** symbol() 返回动态 string：偏移 + 长度 + 数据。 */
+function flapString(hex) {
+  const w = flapWords(hex);
+  if (w.length < 3) return '';
+  const len = Number(BigInt('0x' + w[1]));
+  if (!len || len > 64) return '';
+  const bytes = w.slice(2).join('').slice(0, len * 2);
+  let out = '';
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    const code = parseInt(bytes.slice(i, i + 2), 16);
+    if (code) out += String.fromCharCode(code);
+  }
+  return out.trim();
+}
+
+// 代币符号基本不变，单独长缓存，多个币共用同一分红资产时只读一次
+const flapSymbolCache = new Map();
 const flapBig = (word) => (word ? BigInt('0x' + word).toString() : '0');
 const flapAddr = (word) => (word ? '0x' + word.slice(24) : '');
 
@@ -430,9 +449,30 @@ async function flapTokenInfo({ token, rpc }) {
         }
       }
 
+      // 把徽章要显示的币名一次性收齐：代币自身、底池对手币（计价币）、分红资产。
+      // 符号基本不变且多个币常共用同一分红资产，按地址长缓存，命中就不再请求。
+      const quoteAddr = flapAddr(flapWords(first[5])[0]);
+      const divToken = dist?.dividendToken || '';
+      const wanted = [address, quoteAddr, divToken]
+        .filter((a) => a && !/^0x0{40}$/i.test(a));
+      const missing = [...new Set(wanted)].filter((a) => !flapSymbolCache.has(a));
+      if (missing.length) {
+        try {
+          const syms = await flapRpc(endpoint, missing.map((a) => ({ to: a, data: FLAP_SEL.symbol })));
+          missing.forEach((a, i) => flapSymbolCache.set(a, flapString(syms[i])));
+        } catch {
+          // 拿不到符号就只显示比例与地址，不影响主信息
+        }
+      }
+      const symbolOf = (a) => (a && flapSymbolCache.get(a)) || '';
+      const dividendSymbol = symbolOf(divToken);
+
       const data = {
         ok: true,
         token: address,
+        dividendSymbol,
+        tokenSymbol: symbolOf(address),
+        quoteSymbol: symbolOf(quoteAddr),
         state: flapNum(pool[0]),
         buyTaxBps: flapNum(pool[1]),
         sellTaxBps: flapNum(pool[2]),
