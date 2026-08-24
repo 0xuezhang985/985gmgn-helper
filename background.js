@@ -346,6 +346,8 @@ const FLAP_SEL = {
   quoteToken: '0x217a4b70',
   feeConfigV3: '0x46e62d07',
   symbol: '0x95d89b41',
+  totalSupply: '0x18160ddd',
+  decimals: '0x313ce567',
 };
 const FLAP_RPCS = [
   'https://bsc-dataseed.bnbchain.org',
@@ -503,7 +505,41 @@ async function flapTokenInfo({ token, rpc }) {
   return data;
 }
 
+// 代币总供应量（人类可读口径，和 fomo 的 humanAmount 对齐），用于算 fomo 持仓占比。
+// 供应量基本不变，长缓存；只支持 EVM 链（沿用 Flap 那条 RPC 通道）。
+const supplyCache = new Map();
+
+async function tokenSupply({ chain, address }) {
+  if (chain !== 'bsc' || !/^0x[a-fA-F0-9]{40}$/.test(address || '')) {
+    return { ok: false, reason: 'unsupported-chain' };
+  }
+  const key = address.toLowerCase();
+  if (supplyCache.has(key)) return { ok: true, supply: supplyCache.get(key) };
+  try {
+    const [rawSupply, rawDec] = await flapRpc(null, [
+      { to: address, data: FLAP_SEL.totalSupply },
+      { to: address, data: FLAP_SEL.decimals },
+    ]);
+    const raw = BigInt(rawSupply || '0x0');
+    const dec = Number(BigInt(rawDec || '0x12'));
+    if (!raw || !Number.isFinite(dec) || dec > 36) return { ok: false, reason: 'bad-data' };
+    const supply = Number(raw) / Math.pow(10, dec);
+    if (!Number.isFinite(supply) || supply <= 0) return { ok: false, reason: 'bad-data' };
+    supplyCache.set(key, supply);
+    return { ok: true, supply };
+  } catch (error) {
+    return { ok: false, reason: 'rpc', message: String(error?.message || '').slice(0, 80) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'token-supply') {
+    tokenSupply(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'flap-token-info') {
     flapTokenInfo(message.payload || {})
       .then(sendResponse)

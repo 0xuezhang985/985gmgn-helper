@@ -3130,6 +3130,65 @@
     return box;
   }
 
+  // ---- 浮窗顶部的 fomo 数据统计 ----
+  // 持有人数 / thesis 条数来自两个接口的总数；持仓占比 = 已加载持仓量之和 ÷ 链上总供应量。
+  // 只能看到前 N 名持仓者，所以占比标「≥」——这是下界，不是精确值。
+  let fomoStats = { key: '', holders: null, thesisCount: null, supply: 0 };
+
+  function fomoStatBlock(label, value, sub, accent) {
+    const box = document.createElement('div');
+    box.className = 'gdh-fomo__stat';
+    const l = document.createElement('div');
+    l.className = 'gdh-fomo__stat-label';
+    l.textContent = label;
+    const v = document.createElement('div');
+    v.className = `gdh-fomo__stat-value${accent ? ' is-accent' : ''}`;
+    v.textContent = value;
+    const sEl = document.createElement('div');
+    sEl.className = 'gdh-fomo__stat-sub';
+    sEl.textContent = sub;
+    box.append(l, v, sEl);
+    return box;
+  }
+
+  function renderFomoStats() {
+    if (!fomoPanelEl) return;
+    const box = fomoPanelEl.querySelector('.gdh-fomo__stats');
+    if (!box) return;
+    const h = fomoStats.holders;
+    if (!h) return void box.replaceChildren();
+
+    const loaded = h.items.length;
+    const total = Number.isFinite(h.total) && h.total > 0 ? h.total : loaded;
+    const sumUsd = h.items.reduce((a, x) => a + (Number(x?.value) || 0), 0);
+    const sumAmt = h.items.reduce((a, x) => a + (Number(x?.humanAmount) || 0), 0);
+    const pct = fomoStats.supply > 0 ? (sumAmt / fomoStats.supply) * 100 : NaN;
+
+    const thesis = Number.isFinite(fomoStats.thesisCount)
+      ? `${fomoStats.thesisCount} 条 thesis` : '—';
+    const pctText = Number.isFinite(pct)
+      ? `${loaded < total ? '≥' : ''}${pct < 0.01 ? '<0.01' : pct.toFixed(1)}%`
+      : '—';
+    const sub = `合计 ${fomoUsd(sumUsd) || '$0'} · ${loaded}/${total}`;
+
+    box.replaceChildren(
+      fomoStatBlock('Fomo 持有人数', total.toLocaleString('en-US'), thesis, false),
+      fomoStatBlock('Fomo 持仓占比', pctText, sub, true),
+    );
+  }
+
+  function loadFomoSupply(route) {
+    if (fomoStats.supply > 0) return;
+    chrome.runtime.sendMessage({ type: 'token-supply', payload: { chain: route.chain, address: route.address } })
+      .then((res) => {
+        if (res?.ok && res.supply > 0) {
+          fomoStats.supply = res.supply;
+          renderFomoStats();
+        }
+      })
+      .catch(() => {});
+  }
+
   async function loadFomoData(force) {
     const route = currentTokenRoute();
     if (!route || !fomoPanelEl) return;
@@ -3159,6 +3218,12 @@
         fomoLoadedKey = key;
         fomoErrKey = '';
         fomoLastItems = res.items || [];
+        const statKey = `${route.chain}|${route.address}`;
+        if (fomoStats.key !== statKey) fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0 };
+        if (fomoTab === 'holders') fomoStats.holders = { items: res.items || [], total: Number(res.total) };
+        if (fomoTab === 'thesis') fomoStats.thesisCount = (res.items || []).length;
+        loadFomoSupply(route);
+        renderFomoStats();
         renderFomoItems(list, fomoLastItems, fomoTab);
       } else {
         fomoErrKey = key;
@@ -3328,9 +3393,12 @@
     });
     head.append(title, tabs, tr, dbg, open, close);
 
+    const stats = document.createElement('div');
+    stats.className = 'gdh-fomo__stats';
+
     const list = document.createElement('div');
     list.className = 'gdh-fomo__list';
-    panel.append(head, list);
+    panel.append(head, stats, list);
     makeFomoDraggable(panel, head);
     return panel;
   }

@@ -1984,3 +1984,50 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* fomo 浮窗顶部的数据统计条 */
+.gdh-fomo__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: rgba(139, 147, 161, 0.16);
+  border-bottom: 1px solid rgba(139, 147, 161, 0.16);
+}
+
+.gdh-fomo__stats:empty {
+  display: none;
+}
+
+.gdh-fomo__stat {
+  padding: 8px 10px;
+  background: #14171c;
+}
+
+.gdh-fomo__stat-label {
+  color: #7fb6e8;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gdh-fomo__stat-value {
+  margin-top: 2px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.gdh-fomo__stat-value.is-accent {
+  color: #7fb6e8;
+}
+
+.gdh-fomo__stat-sub {
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
