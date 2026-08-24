@@ -860,6 +860,30 @@
     )) || null;
   }
 
+  /** 在币名那一行下面开一行专门放徽章；这一行由插件自己创建和维护。 */
+  function flapOwnRow(card, native) {
+    let existing = card.querySelector(':scope .gdh-flap-row');
+    if (existing) return existing;
+
+    // 以原生税标所在的那一行为锚；没有税标就退到卡片信息区的第一行
+    let anchor = native;
+    if (anchor) {
+      const cardWidth = card.getBoundingClientRect().width || 1;
+      for (let level = 0; level < 4 && anchor.parentElement && anchor.parentElement !== card; level += 1) {
+        anchor = anchor.parentElement;
+        if (anchor.getBoundingClientRect().width > cardWidth * 0.6) break;
+      }
+    } else {
+      anchor = card.children[1]?.firstElementChild?.firstElementChild || null;
+    }
+    if (!anchor || !anchor.parentElement) return null;
+
+    const line = document.createElement('div');
+    line.className = 'gdh-flap-row';
+    anchor.insertAdjacentElement('afterend', line);
+    return line;
+  }
+
   function ensureFlapBadge(host, token, native) {
     const info = flapInfoCache.get(token);
     let badge = host.querySelector(':scope > .gdh-flap');
@@ -871,15 +895,8 @@
       }
       return;
     }
-    // 接管原生标签的位置：把它藏起来，我们的插在它原地
-    if (native && native.isConnected) {
-      native.style.setProperty('display', 'none', 'important');
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'gdh-flap';
-        native.insertAdjacentElement('afterend', badge);
-      }
-    }
+    // 信息比原生的全，藏掉原生税标避免重复（读不到数据时上面已还原）
+    if (native && native.isConnected) native.style.setProperty('display', 'none', 'important');
     if (!badge) {
       badge = document.createElement('span');
       badge.className = 'gdh-flap';
@@ -926,12 +943,10 @@
       const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
       if (!token) return;
       const native = findNativeTaxChip(card);
-      if (native) {
-        if (native.dataset.gdhTaxReplaced !== '1') native.dataset.gdhTaxReplaced = '1';
-        put(native.parentElement || card, token, native);
-        return;
-      }
-      put(card.querySelector('.gdh-dev-performance')?.parentElement || card, token);
+      // 币名那一行本来就挤（名称 + 税标 + 成交额 + 市值），塞进去会被裁掉，
+      // 所以单独在它下面起一行放徽章。
+      const row = flapOwnRow(card, native);
+      put(row || card, token, native);
     });
 
     // 追踪推送卡：挂在币名那一行

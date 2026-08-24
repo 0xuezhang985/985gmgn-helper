@@ -1967,3 +1967,20 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-flap.is-gift    { color: #f5b83d; }   /* 🎁 金库/营销 */
 .gdh-flap.is-hybrid  { color: #b48ae0; }   /* 混合分配 */
 .gdh-flap.is-unknown { color: #8b93a1; }
+
+/* Flap 徽章自己占一行：币名那行太挤，挤进去会被裁掉 */
+.gdh-flap-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 2px 0 0;
+  min-width: 0;
+}
+
+.gdh-flap-row .gdh-flap {
+  margin-left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
