@@ -817,9 +817,14 @@
    * 每段是 emoji + 占比，满 100% 时只留 emoji；占比最大的那段额外带 →收款资产
    * （分红→分红币，金库/加池→底池币，销毁不带）。
    */
+  /** 符号规范化，与技术瓜一致：去标点、WBNB 归一为 BNB、拉丁最多 4 字、中文最多 6 字。 */
   function flapSym(sym) {
-    const s = String(sym || '').trim();
-    return s.length > 8 ? s.slice(0, 8) : s;
+    const cleaned = String(sym || '').trim().replace(/[^一-鿿A-Za-z0-9]/g, '');
+    if (!cleaned) return '';
+    if (/[一-鿿]/.test(cleaned)) return cleaned.slice(0, 6);
+    const raw = cleaned.toUpperCase();
+    if (raw === 'WBNB') return 'BNB';
+    return raw.slice(0, 4);
   }
 
   function flapSegPct(bps) {
@@ -973,12 +978,8 @@
       put(row || card, token, native);
     });
 
-    // 追踪推送卡：挂在币名那一行
-    trackerCards().forEach((card) => {
-      const token = card.dataset.gdhTrackAddr;
-      if (!token) return;
-      put(card.querySelector(TRACKER_SYMBOL_CELL) || card, token);
-    });
+    // 追踪流不放税收徽章：那里一行本来就密（钱包 + 动作 + 金额 + 币名 + 市值 + 时间），
+    // 再加一块只会更挤。要看税收去代币页或战壕卡。
 
     // 代币页：跟在页面标题后面
     const route = currentTokenRoute();
