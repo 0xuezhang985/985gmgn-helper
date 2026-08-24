@@ -332,7 +332,145 @@ async function fomoUserPnl7d({ userId }) {
   }
 }
 
+// ---- Flap 代币税收信息（全部从公开 BSC RPC 直读，不依赖任何第三方服务）----
+// 契约实测自链上已验证源码：
+//   代币 FlapTaxTokenV3 —— getPoolStateData() / taxRate() / taxProcessor()
+//                          / mainPool() / dividendContract() / quoteToken()
+//   税收处理器 TaxProcessorUniV2 —— feeConfigV3() 给出完整分配（各收款方 bps）
+const FLAP_SEL = {
+  getPoolStateData: '0x65761b95',
+  taxRate: '0x771a3a1d',
+  taxProcessor: '0xf3635019',
+  mainPool: '0xa5a302d3',
+  dividendContract: '0x6124e4e7',
+  quoteToken: '0x217a4b70',
+  feeConfigV3: '0x46e62d07',
+};
+const FLAP_RPCS = [
+  'https://bsc-dataseed.bnbchain.org',
+  'https://bsc-dataseed1.defibit.io',
+  'https://bsc-dataseed1.ninicoin.io',
+];
+const FLAP_TTL = 60000;
+const flapCache = new Map();
+
+/** 定长返回值按 32 字节切词——这些方法没有动态类型，直接按序读即可。 */
+function flapWords(hex) {
+  const body = String(hex || '').replace(/^0x/, '');
+  const out = [];
+  for (let i = 0; i + 64 <= body.length; i += 64) out.push(body.slice(i, i + 64));
+  return out;
+}
+const flapNum = (word) => (word ? Number(BigInt('0x' + word)) : 0);
+const flapBig = (word) => (word ? BigInt('0x' + word).toString() : '0');
+const flapAddr = (word) => (word ? '0x' + word.slice(24) : '');
+
+async function flapRpc(rpc, calls) {
+  const res = await fetch(rpc, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(calls.map((c, i) => ({
+      jsonrpc: '2.0', id: i + 1, method: 'eth_call',
+      params: [{ to: c.to, data: c.data }, 'latest'],
+    }))),
+  });
+  if (!res.ok) throw new Error(`http-${res.status}`);
+  const body = await res.json();
+  const list = Array.isArray(body) ? body : [body];
+  const byId = new Map(list.map((x) => [x.id, x]));
+  return calls.map((_, i) => {
+    const hit = byId.get(i + 1);
+    if (!hit || hit.error) throw new Error(hit?.error?.message || 'rpc-error');
+    return hit.result;
+  });
+}
+
+async function flapTokenInfo({ token, rpc }) {
+  const address = String(token || '').toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(address)) return { ok: false, reason: 'bad-token' };
+  const hit = flapCache.get(address);
+  if (hit && Date.now() - hit.at < FLAP_TTL) return hit.data;
+
+  const endpoints = [rpc, ...FLAP_RPCS].filter(Boolean);
+  let lastError = '';
+  for (const endpoint of endpoints) {
+    try {
+      const first = await flapRpc(endpoint, [
+        { to: address, data: FLAP_SEL.getPoolStateData },
+        { to: address, data: FLAP_SEL.taxRate },
+        { to: address, data: FLAP_SEL.taxProcessor },
+        { to: address, data: FLAP_SEL.mainPool },
+        { to: address, data: FLAP_SEL.dividendContract },
+        { to: address, data: FLAP_SEL.quoteToken },
+      ]);
+      const pool = flapWords(first[0]);
+      if (!pool.length) throw new Error('not-flap');
+      const processor = flapAddr(flapWords(first[2])[0]);
+
+      let dist = null;
+      if (/^0x[a-f0-9]{40}$/i.test(processor) && !/^0x0{40}$/i.test(processor)) {
+        try {
+          const [cfg] = await flapRpc(endpoint, [{ to: processor, data: FLAP_SEL.feeConfigV3 }]);
+          const w = flapWords(cfg);
+          if (w.length >= 15) {
+            dist = {
+              vault: [0, 1, 2, 3].map((i) => ({
+                bps: flapNum(w[i]), address: flapAddr(w[11 + i]),
+              })).filter((x) => x.bps > 0 || (x.address && !/^0x0{40}$/.test(x.address))),
+              deflationBps: flapNum(w[4]),
+              lpBps: flapNum(w[5]),
+              dividendBps: flapNum(w[6]),
+              feeRateBps: flapNum(w[7]),
+              commissionBps: flapNum(w[9]),
+              dividendToken: flapAddr(w[10]),
+            };
+          }
+        } catch {
+          // 分配读不到不影响主信息
+        }
+      }
+
+      const data = {
+        ok: true,
+        token: address,
+        state: flapNum(pool[0]),
+        buyTaxBps: flapNum(pool[1]),
+        sellTaxBps: flapNum(pool[2]),
+        taxBps: flapNum(flapWords(first[1])[0]),
+        liqThreshold: flapBig(pool[3]),
+        taxExpiry: flapNum(pool[4]),
+        processor,
+        mainPool: flapAddr(flapWords(first[3])[0]),
+        dividendContract: flapAddr(flapWords(first[4])[0]),
+        quoteToken: flapAddr(flapWords(first[5])[0]),
+        dist,
+        rpc: endpoint,
+      };
+      flapCache.set(address, { at: Date.now(), data });
+      return data;
+    } catch (error) {
+      lastError = String(error?.message || error).slice(0, 80);
+      // 合约根本没有这些方法时 eth_call 会 revert —— 这说明它不是 Flap 代币，
+      // 换几个 RPC 结果都一样，不该当成节点故障去重试
+      if (lastError === 'not-flap' || /revert|invalid opcode|execution error/i.test(lastError)) {
+        lastError = 'not-flap';
+        break;
+      }
+    }
+  }
+  const data = { ok: false, reason: lastError === 'not-flap' ? 'not-flap' : 'rpc-failed', message: lastError };
+  flapCache.set(address, { at: Date.now(), data });
+  return data;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'flap-token-info') {
+    flapTokenInfo(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'fomo-user-pnl') {
     fomoUserPnl7d(message.payload || {})
       .then(sendResponse)

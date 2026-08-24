@@ -98,6 +98,8 @@
       { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
     ],
     enableMarkedHolders: true,
+    enableFlapTax: true,
+    flapRpc: '',
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -782,6 +784,121 @@
     const blocked = isCallerBlocked(getCallerFromElement(chip));
     if (blocked) chip.dataset.gdhCallerBlocked = '1';
     else delete chip.dataset.gdhCallerBlocked;
+  }
+
+  // ---- Flap 代币税收徽章 ----
+  // 数据全部由用户浏览器直连公开 BSC RPC 读链上合约得到，不经任何第三方服务。
+  // 只处理 Flap 系代币（地址以 7777 / 8888 结尾）。
+  const FLAP_ADDR_RE = /^0x[a-fA-F0-9]{36}(?:7777|8888)$/;
+  const flapInfoCache = new Map();
+  const flapPending = new Set();
+
+  /** 按税收去向判定模式，与展示图标一一对应。 */
+  function flapMode(dist) {
+    if (!dist) return { icon: '❓', name: '未知', cls: 'unknown' };
+    const vault = dist.vault.reduce((sum, x) => sum + x.bps, 0);
+    const parts = [
+      { bps: dist.dividendBps, icon: '💎', name: '持币分红', cls: 'holder' },
+      { bps: dist.lpBps, icon: '💧', name: '加池子', cls: 'lp' },
+      { bps: dist.deflationBps, icon: '🔥', name: '销毁通缩', cls: 'burn' },
+      { bps: vault, icon: '🎁', name: '金库/营销', cls: 'gift' },
+    ].filter((x) => x.bps > 0).sort((a, b) => b.bps - a.bps);
+    if (!parts.length) return { icon: '❓', name: '无分配', cls: 'unknown' };
+    if (parts.length > 1) return { icon: parts[0].icon, name: '混合分配', cls: 'hybrid', multi: parts.length };
+    return parts[0];
+  }
+
+  const flapPct = (bps) => `${(Number(bps || 0) / 100).toFixed(Number(bps) % 100 ? 2 : 0)}%`;
+  const flapShort = (addr) => (addr && !/^0x0+$/.test(addr) ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—');
+
+  function flapTooltipText(info) {
+    const d = info.dist;
+    const lines = [
+      `总税率 ${flapPct(info.taxBps)}（买 ${flapPct(info.buyTaxBps)} / 卖 ${flapPct(info.sellTaxBps)}）`,
+    ];
+    if (d) {
+      lines.push('—— 税收分配 ——');
+      if (d.dividendBps) lines.push(`💎 持币分红 ${flapPct(d.dividendBps)}　资产 ${flapShort(d.dividendToken)}`);
+      if (d.lpBps) lines.push(`💧 加池子 ${flapPct(d.lpBps)}`);
+      if (d.deflationBps) lines.push(`🔥 销毁通缩 ${flapPct(d.deflationBps)}`);
+      d.vault.forEach((v, i) => {
+        if (v.bps) lines.push(`🎁 金库${d.vault.length > 1 ? i + 1 : ''} ${flapPct(v.bps)}　${flapShort(v.address)}`);
+      });
+      if (d.commissionBps) lines.push(`平台抽成 ${flapPct(d.commissionBps)}`);
+    }
+    lines.push(`底池 ${flapShort(info.mainPool)}`);
+    lines.push('数据直读链上，未经任何第三方服务');
+    return lines.join('\n');
+  }
+
+  function ensureFlapBadge(host, token) {
+    const info = flapInfoCache.get(token);
+    let badge = host.querySelector(':scope > .gdh-flap');
+    if (!info || info.ok === false) {
+      if (info && info.ok === false) badge?.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'gdh-flap';
+      host.appendChild(badge);
+    }
+    const mode = flapMode(info.dist);
+    badge.className = `gdh-flap is-${mode.cls}`;
+    badge.textContent = `${mode.icon}${flapPct(info.taxBps)}`;
+    badge.title = `${mode.name}\n${flapTooltipText(info)}`;
+  }
+
+  function requestFlapInfo(token) {
+    if (flapInfoCache.has(token) || flapPending.has(token)) return;
+    if (flapPending.size >= 4) return;
+    flapPending.add(token);
+    chrome.runtime.sendMessage({
+      type: 'flap-token-info',
+      payload: { token, rpc: String(settings.flapRpc || '').trim() },
+    }).then((res) => {
+      flapInfoCache.set(token, res || { ok: false });
+    }).catch(() => {}).finally(() => {
+      flapPending.delete(token);
+      scheduleScan();
+    });
+  }
+
+  function scanFlapBadges() {
+    if (settings.enableFlapTax === false) {
+      document.querySelectorAll('.gdh-flap').forEach((el) => el.remove());
+      return;
+    }
+    const seen = new Set();
+    const put = (host, token) => {
+      if (!FLAP_ADDR_RE.test(token)) return;
+      const key = token.toLowerCase();
+      seen.add(key);
+      if (!flapInfoCache.has(key)) return void requestFlapInfo(key);
+      ensureFlapBadge(host, key);
+    };
+
+    // 战壕卡：挂在已有的 Dev 战绩那一行，和现有信息并排
+    document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
+      const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
+      if (!token) return;
+      const row = card.querySelector('.gdh-dev-performance')?.parentElement || card;
+      put(row, token);
+    });
+
+    // 追踪推送卡：挂在币名那一行
+    trackerCards().forEach((card) => {
+      const token = card.dataset.gdhTrackAddr;
+      if (!token) return;
+      put(card.querySelector(TRACKER_SYMBOL_CELL) || card, token);
+    });
+
+    // 代币页：跟在页面标题后面
+    const route = currentTokenRoute();
+    if (route && FLAP_ADDR_RE.test(route.address)) {
+      const title = document.querySelector('h1, [class*="text-[20px]"], [class*="text-2xl"]');
+      if (title) put(title, route.address);
+    }
   }
 
   // ---- 标注人物持仓徽章 ----
@@ -1498,7 +1615,10 @@
     });
 
     refreshOnchainBalances();
-    scanMarkedBadges();
+    // 这两个要打网络、又要动第三方 DOM；一旦抛错不能把同一轮里后面的
+    // ☆/高亮/管理入口一起带塌，各自兜住
+    try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ }
+    try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ }
     ensureAddressPageStar();
     ensureAddWalletStarRow();
     ensureSpecialManageUI();

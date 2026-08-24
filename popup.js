@@ -17,6 +17,8 @@ const DEFAULTS = {
   holdingSurgeCooldown: 60,
   mergeFomoHolders: true,
   enableMarkedHolders: true,
+  enableFlapTax: true,
+  flapRpc: '',
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
     { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
@@ -47,6 +49,20 @@ const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
 const markedEnableInput = document.querySelector('#enable-marked-holders');
+const flapEnableInput = document.querySelector('#enable-flap-tax');
+const flapRpcInput = document.querySelector('#flap-rpc');
+
+// 自定义 RPC 不写进固定权限（那等于索取全站访问），改为填了才当场申请该域名
+async function ensureRpcPermission(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return true;
+  let origin;
+  try { origin = new URL(raw).origin + '/*'; } catch { return false; }
+  try {
+    if (await chrome.permissions.contains({ origins: [origin] })) return true;
+    return await chrome.permissions.request({ origins: [origin] });
+  } catch { return false; }
+}
 const markedListInput = document.querySelector('#marked-list');
 
 function markedToText(list) {
@@ -121,17 +137,32 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
   mergeHoldersInput.checked = stored.mergeFomoHolders !== false;
   markedEnableInput.checked = stored.enableMarkedHolders !== false;
+  flapEnableInput.checked = stored.enableFlapTax !== false;
+  flapRpcInput.value = String(stored.flapRpc || '');
   markedListInput.value = markedToText(
     Array.isArray(stored.markedHolders) ? stored.markedHolders : DEFAULTS.markedHolders);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
   setStatus(`已配置 ${count} 个重点 Dev`);
 });
 
-saveButton.addEventListener('click', () => {
+saveButton.addEventListener('click', async () => {
   const parsed = parseDevList(devListInput.value);
   if (parsed.errors.length) {
     setStatus(`第 ${parsed.errors.join('、')} 行不是完整的 BSC 钱包地址`, 'error');
     return;
+  }
+
+  // 填了自定义 RPC 就得先拿到该域名的访问权限，拿不到要说清楚，不能默默用不了
+  const rpc = flapRpcInput.value.trim();
+  if (rpc) {
+    if (!/^https:\/\//i.test(rpc)) {
+      setStatus('自定义 RPC 需要以 https:// 开头', 'error');
+      return;
+    }
+    if (!(await ensureRpcPermission(rpc))) {
+      setStatus('没有拿到该 RPC 域名的访问权限，已保留其余设置；该项请重新保存并允许', 'error');
+      flapRpcInput.value = '';
+    }
   }
 
   const next = {
@@ -144,6 +175,8 @@ saveButton.addEventListener('click', () => {
     holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
     mergeFomoHolders: mergeHoldersInput.checked,
     enableMarkedHolders: markedEnableInput.checked,
+    enableFlapTax: flapEnableInput.checked,
+    flapRpc: flapRpcInput.value.trim(),
     markedHolders: markedFromText(markedListInput.value),
   };
 

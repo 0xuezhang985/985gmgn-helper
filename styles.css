@@ -1942,3 +1942,28 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   cursor: default;
   vertical-align: middle;
 }
+
+/* Flap 代币税收徽章：带边框的小 chip，按税收去向着色 */
+.gdh-flap {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.gdh-flap.is-holder  { color: #6fd3f2; }   /* 💎 持币分红 */
+.gdh-flap.is-lp      { color: #5b9bd9; }   /* 💧 加池子 */
+.gdh-flap.is-burn    { color: #f0703c; }   /* 🔥 销毁通缩 */
+.gdh-flap.is-gift    { color: #f5b83d; }   /* 🎁 金库/营销 */
+.gdh-flap.is-hybrid  { color: #b48ae0; }   /* 混合分配 */
+.gdh-flap.is-unknown { color: #8b93a1; }
