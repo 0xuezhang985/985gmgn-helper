@@ -509,27 +509,35 @@ async function flapTokenInfo({ token, rpc }) {
 // 供应量基本不变，长缓存；只支持 EVM 链（沿用 Flap 那条 RPC 通道）。
 const supplyCache = new Map();
 
-async function tokenSupply({ chain, address }) {
-  if (chain !== 'bsc' || !/^0x[a-fA-F0-9]{40}$/.test(address || '')) {
+async function tokenSupply({ chain, address, rpc }) {
+  // 前缀也放宽大小写：校验和地址本身就是混合大小写，没必要在这里卡人
+  if (chain !== 'bsc' || !/^0x[a-fA-F0-9]{40}$/i.test(address || '')) {
     return { ok: false, reason: 'unsupported-chain' };
   }
   const key = address.toLowerCase();
   if (supplyCache.has(key)) return { ok: true, supply: supplyCache.get(key) };
-  try {
-    const [rawSupply, rawDec] = await flapRpc(null, [
-      { to: address, data: FLAP_SEL.totalSupply },
-      { to: address, data: FLAP_SEL.decimals },
-    ]);
-    const raw = BigInt(rawSupply || '0x0');
-    const dec = Number(BigInt(rawDec || '0x12'));
-    if (!raw || !Number.isFinite(dec) || dec > 36) return { ok: false, reason: 'bad-data' };
-    const supply = Number(raw) / Math.pow(10, dec);
-    if (!Number.isFinite(supply) || supply <= 0) return { ok: false, reason: 'bad-data' };
-    supplyCache.set(key, supply);
-    return { ok: true, supply };
-  } catch (error) {
-    return { ok: false, reason: 'rpc', message: String(error?.message || '').slice(0, 80) };
+  // flapRpc 只打单个节点，节点回退在调用方——这里同样要逐个试，
+  // 否则一个节点抽风整项就没了。用户自定义 RPC 优先。
+  const endpoints = [rpc, ...FLAP_RPCS].filter(Boolean);
+  let lastError = '';
+  for (const endpoint of endpoints) {
+    try {
+      const [rawSupply, rawDec] = await flapRpc(endpoint, [
+        { to: address, data: FLAP_SEL.totalSupply },
+        { to: address, data: FLAP_SEL.decimals },
+      ]);
+      const raw = BigInt(rawSupply || '0x0');
+      const dec = Number(BigInt(rawDec || '0x12'));
+      if (!raw || !Number.isFinite(dec) || dec > 36) return { ok: false, reason: 'bad-data' };
+      const supply = Number(raw) / Math.pow(10, dec);
+      if (!Number.isFinite(supply) || supply <= 0) return { ok: false, reason: 'bad-data' };
+      supplyCache.set(key, supply);
+      return { ok: true, supply };
+    } catch (error) {
+      lastError = String(error?.message || '').slice(0, 80);
+    }
   }
+  return { ok: false, reason: 'rpc', message: lastError };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

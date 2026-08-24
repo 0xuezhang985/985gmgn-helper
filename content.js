@@ -3179,7 +3179,10 @@
 
   function loadFomoSupply(route) {
     if (fomoStats.supply > 0) return;
-    chrome.runtime.sendMessage({ type: 'token-supply', payload: { chain: route.chain, address: route.address } })
+    chrome.runtime.sendMessage({
+      type: 'token-supply',
+      payload: { chain: route.chain, address: route.address, rpc: settings.flapRpc || '' },
+    })
       .then((res) => {
         if (res?.ok && res.supply > 0) {
           fomoStats.supply = res.supply;
