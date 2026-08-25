@@ -913,6 +913,12 @@
     return line;
   }
 
+  // flap 官方税收详情页；Flap 目前只在 BSC，链名它那边写作 bnb
+  function flapTaxUrl(token) {
+    if (!FLAP_ADDR_RE.test(token || '')) return '';
+    return `https://flap.sh/bnb/${token.toLowerCase()}/taxinfo?lang=zh`;
+  }
+
   function ensureFlapBadge(host, token, native) {
     const info = flapInfoCache.get(token);
     let badge = host.querySelector(':scope > .gdh-flap');
@@ -929,12 +935,31 @@
     if (!badge) {
       badge = document.createElement('span');
       badge.className = 'gdh-flap';
+      badge.setAttribute('role', 'link');
+      badge.setAttribute('tabindex', '0');
+      // 徽章常嵌在 GMGN 自己的卡片链接里，直接点会被带去代币页；
+      // 这里拦下冒泡与默认行为，自己开 flap 的税收详情页。
+      const go = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const url = flapTaxUrl(badge.dataset.gdhFlapToken || '');
+        if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      };
+      badge.addEventListener('pointerdown', (event) => event.stopPropagation());
+      badge.addEventListener('click', go);
+      badge.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') go(event);
+      });
       host.appendChild(badge);
     }
     const mode = flapMode(info.dist);
     badge.className = `gdh-flap is-${mode.cls}`;
+    badge.dataset.gdhFlapToken = token;
     badge.textContent = flapBadgeText(info);
-    badge.title = `${mode.name}\n${flapTooltipText(info)}`;
+    badge.title = `${mode.name}
+${flapTooltipText(info)}
+
+点击打开 flap 税收详情页`;
   }
 
   function requestFlapInfo(token) {

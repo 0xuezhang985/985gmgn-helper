@@ -1945,6 +1945,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 
 /* Flap 代币税收徽章：带边框的小 chip，按税收去向着色 */
 .gdh-flap {
+  cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2030,4 +2031,16 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 徽章可点：指向 flap 官方税收详情页 */
+.gdh-flap:hover {
+  filter: brightness(1.25);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gdh-flap:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 1px;
 }
