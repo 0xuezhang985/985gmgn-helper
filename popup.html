@@ -138,6 +138,29 @@
           </label>
           <label class="switch-row">
             <span>
+              <strong>fomo 推送混排进追踪流</strong>
+              <small>把 985monitor 的 fomo 买卖/观点事件按时间插进追踪推送里。屏蔽的人、每人的事件开关直接沿用你在 985monitor 网页上的配置（打开过 985monitor 页面即自动同步）</small>
+            </span>
+            <input id="enable-fomo-feed" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>fomo 推送只看当前链</strong>
+              <small>关掉则全链事件都显示（卡片按链跳对应 GMGN 页面）</small>
+            </span>
+            <input id="fomo-feed-chain-only" type="checkbox" />
+          </label>
+          <div class="color-row" style="align-items:center">
+            <span>fomo 推送事件类型</span>
+            <span style="display:flex;gap:10px;flex-wrap:wrap">
+              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-buy" type="checkbox" />买入</label>
+              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-sell" type="checkbox" />卖出</label>
+              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-swap" type="checkbox" />换仓</label>
+              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-thesis" type="checkbox" />观点</label>
+            </span>
+          </div>
+          <label class="switch-row">
+            <span>
               <strong>标注人物持仓徽章</strong>
               <small>代币旁显示 👤N —— 有几个被标注的人持有它，悬停看是谁</small>
             </span>

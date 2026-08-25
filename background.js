@@ -540,7 +540,108 @@ async function tokenSupply({ chain, address, rpc }) {
   return { ok: false, reason: 'rpc', message: lastError };
 }
 
+
+// ---- 985monitor fomo 事件源 ----
+// 985monitor 的 fomo 采集器把最近事件整体发布成一个静态 JSON（无鉴权，~1 分钟一更）。
+// 这里做唯一的取数口：控频 + ETag 条件请求（304 就不拉 800KB 全量）+ 失败指数退避。
+const FOMO_FEED_URL = 'https://www.985monitor.xyz/fomo-events.json';
+const FOMO_FEED_MIN_INTERVAL_MS = 40000;
+const FOMO_FEED_KEEP = 150;
+let fomoFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
+let fomoFeedEtag = '';
+let fomoFeedFailCount = 0;
+let fomoFeedBackoffUntil = 0;
+let fomoFeedInflight = null;
+
+const FOMO_FEED_TYPE = {
+  FOMO_BUY: 'buy',
+  FOMO_SELL: 'sell',
+  FOMO_SWAP: 'swap',
+  FOMO_THESIS: 'thesis',
+};
+
+// fomo 的链名 → GMGN 的路径段
+const FOMO_CHAIN_SLUG = { bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth', base: 'base' };
+
+function slimFomoEvent(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const type = FOMO_FEED_TYPE[String(raw.eventType || '')];
+  if (!type) return null;
+  const ts = Number(raw.ts) || Date.parse(raw.createdAt || '') || 0;
+  if (!ts) return null;
+  const chainName = String(raw.chainName || '').trim();
+  const content = raw.content && typeof raw.content === 'object' ? raw.content : {};
+  return {
+    key: String(raw.key || '').slice(0, 120),
+    type,
+    handle: String(raw.handle || '').toLowerCase().slice(0, 64),
+    name: String(raw.userName || raw.handle || '').slice(0, 48),
+    avatar: String(raw.avatar || '').slice(0, 300),
+    usd: Number(raw.usd) || 0,
+    comment: String(raw.comment || content.comment || content.text || '').slice(0, 600),
+    addr: String(raw.tokenAddress || '').slice(0, 64),
+    chain: FOMO_CHAIN_SLUG[chainName.toLowerCase()] || chainName.toLowerCase(),
+    chainName,
+    symbol: String(raw.symbol || '').slice(0, 24),
+    mc: Number(raw.marketCap) || 0,
+    ts,
+  };
+}
+
+async function fetchFomoFeed() {
+  if (fomoFeedInflight) return fomoFeedInflight;
+  const now = Date.now();
+  if (now - fomoFeedCache.fetchedAt < FOMO_FEED_MIN_INTERVAL_MS || now < fomoFeedBackoffUntil) {
+    return { ok: true, ...fomoFeedCache, stale: true };
+  }
+  fomoFeedInflight = (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 25000);
+      const headers = fomoFeedEtag ? { 'If-None-Match': fomoFeedEtag } : {};
+      let response;
+      try {
+        response = await fetch(FOMO_FEED_URL, { headers, cache: 'no-store', signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (response.status === 304) {
+        fomoFeedCache.fetchedAt = Date.now();
+        fomoFeedFailCount = 0;
+        return { ok: true, ...fomoFeedCache };
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json();
+      const events = (Array.isArray(body?.events) ? body.events : [])
+        .map(slimFomoEvent)
+        .filter(Boolean)
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, FOMO_FEED_KEEP);
+      fomoFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
+      fomoFeedEtag = response.headers.get('ETag') || '';
+      fomoFeedFailCount = 0;
+      fomoFeedBackoffUntil = 0;
+      return { ok: true, ...fomoFeedCache };
+    } catch (error) {
+      fomoFeedFailCount += 1;
+      fomoFeedBackoffUntil = Date.now() + Math.min(15 * 60000, 60000 * Math.pow(2, fomoFeedFailCount - 1));
+      if (fomoFeedCache.events.length) return { ok: true, ...fomoFeedCache, stale: true };
+      return { ok: false, reason: 'fetch-failed', message: String(error?.message || '').slice(0, 120) };
+    } finally {
+      fomoFeedInflight = null;
+    }
+  })();
+  return fomoFeedInflight;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'fomo-feed') {
+    fetchFomoFeed()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'token-supply') {
     tokenSupply(message.payload || {})
       .then(sendResponse)

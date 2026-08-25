@@ -62,6 +62,44 @@
     return;
   }
 
+
+  // 在 985monitor 上只做一件事：把网站本地的 fomo 配置（屏蔽名单/每人的事件开关/备注）
+  // 和钱包登录地址同步给插件，供 GMGN 追踪流里的 fomo 推送沿用同一套过滤规则。
+  // 这些配置存在 985monitor 页面的 localStorage（网站注明"仅本机生效"），不在服务端。
+  if (/(^|\.)985monitor\.xyz$/.test(location.hostname)) {
+    const readJson = (key, fallback) => {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(key) || fallback);
+        return parsed == null ? JSON.parse(fallback) : parsed;
+      } catch {
+        return JSON.parse(fallback);
+      }
+    };
+    let lastSent = '';
+    const syncMonitorCfg = () => {
+      let muted = readJson('xMonitorFomoMutedV1', '[]');
+      let prefs = readJson('xMonitorFomoPrefsV1', '{}');
+      if (!Array.isArray(muted)) muted = [];
+      if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) prefs = {};
+      let wallet = '';
+      try { wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || ''); } catch {}
+      const stamp = JSON.stringify([muted, prefs, wallet]);
+      if (stamp === lastSent) return;
+      lastSent = stamp;
+      try {
+        chrome.storage.local.set({ monitorFomoConfig: { muted, prefs, wallet, at: Date.now() } });
+      } catch {
+        // 扩展上下文失效
+      }
+    };
+    syncMonitorCfg();
+    window.setInterval(syncMonitorCfg, 15000);
+    window.addEventListener('focus', syncMonitorCfg);
+    // storage 事件只对别的标签页的写入触发；本页的改动靠 15 秒轮询兜住
+    window.addEventListener('storage', syncMonitorCfg);
+    return;
+  }
+
   // 战壕卡：GMGN 自己写的 testid 优先，构建期的 sentry 标记作兼容
   // （实测有用户页面上一个 data-sentry-* 都没有，只认后者会让整块功能哑掉）
   const CARD_SELECTOR =
@@ -100,6 +138,9 @@
     enableMarkedHolders: true,
     enableFlapTax: true,
     flapRpc: '',
+    enableFomoFeed: true,
+    fomoFeedChainOnly: true,
+    fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -4236,6 +4277,336 @@ ${flapTooltipText(info)}
     ensureDeveloperBookmarkButtons();
   }
 
+  // ==== 985monitor fomo 推送：混排进追踪流 ====
+  // 数据：后台轮询 985monitor 发布的 fomo 事件 JSON。过滤：沿用 985monitor 网页上的
+  // 屏蔽名单/每人事件开关（monitorFomoConfig，由 985monitor 域的分支同步过来）。
+  // 摆放：追踪流是 react-virtuoso 虚拟列表，往列表里插兄弟节点会错位——所以不插队，
+  // 搭车：把 fomo 卡塞进"时间上紧邻的那张追踪卡"的专属外壳里，virtuoso 的
+  // ResizeObserver 会把它当成该行变高，自动重排。比所有行都新的事件放列表上方的
+  // 兜底条（在滚动容器之外，不参与虚拟化）。
+  const FOMO_FEED_POLL_MS = 45000;
+  const FOMO_FEED_RENDER_CAP = 40;
+  const FOMO_FEED_PIN_CAP = 6;
+  const FOMO_FEED_TAGS = {
+    buy: { label: '买入', cls: 'is-buy' },
+    sell: { label: '卖出', cls: 'is-sell' },
+    swap: { label: '换仓', cls: 'is-swap' },
+    thesis: { label: '观点', cls: 'is-thesis' },
+  };
+  let fomoFeedEvents = [];
+  const fomoFeedCards = new Map();
+  const fomoFeedSeen = new Set();
+  let fomoFeedPinEl = null;
+  let fomoFeedLastPollAt = 0;
+  let monitorFomoCfg = { muted: new Set(), prefs: {}, wallet: '', at: 0 };
+
+  function loadMonitorFomoCfg(raw) {
+    const muted = new Set(
+      (Array.isArray(raw?.muted) ? raw.muted : []).map((h) => String(h || '').toLowerCase()).filter(Boolean),
+    );
+    const prefs = raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {};
+    monitorFomoCfg = { muted, prefs, wallet: String(raw?.wallet || ''), at: Number(raw?.at) || 0 };
+  }
+
+  function currentChainSlug() {
+    const match = location.pathname.match(/^\/(sol|bsc|eth|base|tron|blast)(\/|$)/);
+    if (match) return match[1];
+    const q = new URLSearchParams(location.search).get('chain');
+    return q ? String(q).toLowerCase() : '';
+  }
+
+  function fomoFeedEventAllowed(ev) {
+    const types = settings.fomoFeedTypes || DEFAULTS.fomoFeedTypes;
+    if (types[ev.type] === false) return false;
+    if (monitorFomoCfg.muted.has(ev.handle)) return false;
+    const pref = monitorFomoCfg.prefs[ev.handle];
+    if (pref?.types && pref.types[ev.type] === false) return false;
+    // 追踪里屏蔽的币，fomo 推送同样不出现
+    if (ev.addr && isTokenBlocked(ev.addr)) return false;
+    return true;
+  }
+
+  function visibleFomoFeedEvents() {
+    const chain = settings.fomoFeedChainOnly !== false ? currentChainSlug() : '';
+    const out = [];
+    for (const ev of fomoFeedEvents) {
+      if (!ev?.key || !ev.ts) continue;
+      if (!fomoFeedEventAllowed(ev)) continue;
+      if (chain && ev.chain && ev.chain !== chain) continue;
+      out.push(ev);
+      if (out.length >= FOMO_FEED_RENDER_CAP) break;
+    }
+    return out;
+  }
+
+  function pollFomoFeed() {
+    if (!settings.enabled || settings.enableFomoFeed === false) return;
+    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
+    fomoFeedLastPollAt = Date.now();
+    try {
+      chrome.runtime.sendMessage({ type: 'fomo-feed' }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) return;
+        fomoFeedEvents = Array.isArray(resp.events) ? resp.events : [];
+        scheduleScan();
+      });
+    } catch {
+      // 扩展上下文失效
+    }
+  }
+
+  function fomoFeedRelTime(ts) {
+    const diff = Math.max(0, Date.now() - ts);
+    if (diff < 60000) return `${Math.max(1, Math.floor(diff / 1000))}s`;
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+    return `${Math.floor(diff / 86400000)}d`;
+  }
+
+  function buildFomoFeedCard(ev) {
+    const tag = FOMO_FEED_TAGS[ev.type] || { label: 'fomo', cls: '' };
+    const card = document.createElement('div');
+    card.className = `gdh-fomofeed ${tag.cls}`;
+    card.dataset.gdhFomoKey = ev.key;
+
+    const row = document.createElement('div');
+    row.className = 'gdh-fomofeed__row';
+
+    const av = document.createElement('span');
+    av.className = 'gdh-fomofeed__av';
+    if (ev.avatar) {
+      const img = document.createElement('img');
+      img.src = ev.avatar;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.onerror = function () { this.remove(); };
+      av.appendChild(img);
+    } else {
+      av.textContent = (ev.name || ev.handle || '?').slice(0, 1).toUpperCase();
+    }
+
+    const name = document.createElement('span');
+    name.className = 'gdh-fomofeed__name';
+    name.textContent = ev.name || ev.handle || '?';
+    name.title = `@${ev.handle} · 打开 fomo 主页`;
+    const openProfile = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (ev.handle) window.open(`https://fomo.family/profile/${encodeURIComponent(ev.handle)}`, '_blank', 'noopener,noreferrer');
+    };
+    av.addEventListener('click', openProfile);
+    name.addEventListener('click', openProfile);
+
+    const tagEl = document.createElement('span');
+    tagEl.className = 'gdh-fomofeed__tag';
+    tagEl.textContent = tag.label;
+
+    row.append(av, name, tagEl);
+
+    if (ev.usd > 0) {
+      const usd = document.createElement('span');
+      usd.className = 'gdh-fomofeed__usd';
+      usd.textContent = fomoUsd(ev.usd);
+      row.appendChild(usd);
+    }
+
+    if (ev.symbol) {
+      const sym = document.createElement('span');
+      sym.className = 'gdh-fomofeed__sym';
+      sym.textContent = ev.symbol;
+      row.appendChild(sym);
+    }
+
+    if (ev.mc > 0) {
+      const mc = document.createElement('span');
+      mc.className = 'gdh-fomofeed__mc';
+      mc.textContent = `MC ${fomoUsd(ev.mc)}`;
+      row.appendChild(mc);
+    }
+
+    const src = document.createElement('span');
+    src.className = 'gdh-fomofeed__src';
+    src.textContent = 'fomo';
+    const time = document.createElement('span');
+    time.className = 'gdh-fomofeed__time';
+    time.textContent = fomoFeedRelTime(ev.ts);
+    row.append(src, time);
+    card.appendChild(row);
+
+    if (ev.type === 'thesis' && ev.comment) {
+      const text = document.createElement('div');
+      text.className = 'gdh-fomofeed__thesis';
+      text.textContent = ev.comment;
+      card.appendChild(text);
+    }
+
+    if (ev.addr && ev.chain) {
+      card.title = `${ev.symbol || ev.addr} · 点击打开 GMGN 代币页`;
+      card.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        location.href = `/${ev.chain}/token/${ev.addr}`;
+      });
+    }
+    card.addEventListener('pointerdown', (event) => event.stopPropagation());
+
+    if (!fomoFeedSeen.has(ev.key)) {
+      fomoFeedSeen.add(ev.key);
+      card.classList.add('is-new');
+    }
+    return card;
+  }
+
+  function fomoFeedCardFor(ev) {
+    let el = fomoFeedCards.get(ev.key);
+    if (!el || !(el instanceof HTMLElement)) {
+      el = buildFomoFeedCard(ev);
+      fomoFeedCards.set(ev.key, el);
+    }
+    // 相对时间只在文案变化时写，避免和 MutationObserver 互相触发
+    const timeEl = el.querySelector('.gdh-fomofeed__time');
+    const next = fomoFeedRelTime(ev.ts);
+    if (timeEl && timeEl.textContent !== next) timeEl.textContent = next;
+    return el;
+  }
+
+  /** virtuoso 的滚动容器（从追踪卡向上找 overflow 可滚的那层）。兜底条要放它外面。 */
+  function fomoFeedScrollerOf(card) {
+    let el = card?.parentElement;
+    for (let level = 0; level < 12 && el instanceof HTMLElement; level += 1) {
+      const style = getComputedStyle(el);
+      if (/(auto|scroll|overlay)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 4) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  /** 追踪流头部（index 0）是否已挂载。滚下去时不放兜底条，免得旧事件顶在最上面。 */
+  function fomoFeedHeadMounted(cards) {
+    let min = Infinity;
+    for (const card of cards) {
+      const wrap = card.closest('[data-index], [data-item-index]');
+      if (!wrap) continue;
+      const idx = Number(wrap.getAttribute('data-index') ?? wrap.getAttribute('data-item-index'));
+      if (Number.isFinite(idx)) min = Math.min(min, idx);
+    }
+    return min === Infinity ? true : min === 0;
+  }
+
+  function ensureFomoFeedPin(scroller) {
+    if (fomoFeedPinEl?.isConnected && fomoFeedPinEl.nextElementSibling === scroller) return fomoFeedPinEl;
+    fomoFeedPinEl?.remove();
+    const pin = document.createElement('div');
+    pin.className = 'gdh-fomofeed-pin';
+    const head = document.createElement('div');
+    head.className = 'gdh-fomofeed-pin__head';
+    head.textContent = 'fomo 推送';
+    pin.appendChild(head);
+    scroller.parentElement?.insertBefore(pin, scroller);
+    fomoFeedPinEl = pin;
+    return pin;
+  }
+
+  function teardownFomoFeed() {
+    for (const el of fomoFeedCards.values()) el.remove();
+    fomoFeedCards.clear();
+    fomoFeedPinEl?.remove();
+    fomoFeedPinEl = null;
+  }
+
+  function scanFomoFeed() {
+    if (!settings.enabled || settings.enableFomoFeed === false) {
+      teardownFomoFeed();
+      return;
+    }
+    // 追踪流在页面上才拉取；到点自动补一轮（setInterval 之外的即时首拉）
+    if (Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
+
+    const events = visibleFomoFeedEvents();
+    const cards = trackerCards().filter((c) => c.isConnected);
+    if (!events.length || !cards.length) {
+      teardownFomoFeed();
+      return;
+    }
+
+    const withTs = cards
+      .map((el) => ({ el, ts: Number(el.getAttribute('data-gdh-track-ts')) || 0 }))
+      .filter((item) => item.ts > 0)
+      .sort((a, b) => b.ts - a.ts);
+    const headMounted = fomoFeedHeadMounted(cards);
+    const oldest = withTs.length ? withTs[withTs.length - 1] : null;
+
+    // key -> {ev, anchor}；anchor=null 表示进兜底条；没进 map 的这轮不显示
+    const placements = new Map();
+    let pinCount = 0;
+    for (const ev of events) {
+      if (!withTs.length) {
+        // page-bridge 没拿到任何行时间（构建差异/改版）——全部降级进兜底条
+        if (pinCount < FOMO_FEED_PIN_CAP) { placements.set(ev.key, { ev, anchor: null }); pinCount += 1; }
+        continue;
+      }
+      let anchor = null;
+      for (const item of withTs) {
+        if (item.ts >= ev.ts) anchor = item;
+        else break;
+      }
+      if (!anchor) {
+        // 比所有已挂载的行都新 → 头部在视口内才进兜底条，滚下去了就先不显示
+        if (headMounted && pinCount < FOMO_FEED_PIN_CAP) { placements.set(ev.key, { ev, anchor: null }); pinCount += 1; }
+        continue;
+      }
+      // 锚到了最老的已挂载行：无法确认它下面还有没有更老的未挂载行，先不摆
+      if (anchor === oldest && withTs.length > 1) continue;
+      // 专属外壳检查：锚卡的父层里只能有它这一张追踪卡，否则那是列表容器（插进去=插队）
+      const parent = anchor.el.parentElement;
+      if (!parent || parent.querySelectorAll(TRACKER_SYMBOL_CELL).length > 1) continue;
+      placements.set(ev.key, { ev, anchor: anchor.el });
+    }
+
+    // 兜底条（先落位；落不了位的从 placements 摘掉，下面的清理才不会误留）
+    const pinItems = [...placements.values()].filter((it) => it.anchor === null).map((it) => it.ev);
+    if (pinItems.length) {
+      const scroller = fomoFeedScrollerOf(cards[0]);
+      if (scroller) {
+        const pin = ensureFomoFeedPin(scroller);
+        let prev = pin.firstElementChild; // 标题
+        for (const ev of pinItems) {
+          const el = fomoFeedCardFor(ev);
+          if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
+          prev = el;
+        }
+      } else {
+        for (const ev of pinItems) placements.delete(ev.key);
+      }
+    } else if (fomoFeedPinEl) {
+      fomoFeedPinEl.remove();
+      fomoFeedPinEl = null;
+    }
+
+    // 移除不再显示的
+    for (const [key, el] of fomoFeedCards) {
+      if (!placements.has(key)) {
+        el.remove();
+        fomoFeedCards.delete(key);
+      }
+    }
+
+    // 锚定插入：同一锚下按时间新→旧依次排在锚卡后面
+    const byAnchor = new Map();
+    for (const it of placements.values()) {
+      if (!it.anchor) continue;
+      if (!byAnchor.has(it.anchor)) byAnchor.set(it.anchor, []);
+      byAnchor.get(it.anchor).push(it.ev);
+    }
+    for (const [anchorEl, list] of byAnchor) {
+      let prev = anchorEl;
+      for (const ev of list) {
+        const el = fomoFeedCardFor(ev);
+        if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
+        prev = el;
+      }
+    }
+  }
+
   function scanVisibleCards() {
     document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState);
     scanCalloutBlacklist();
@@ -4246,6 +4617,7 @@ ${flapTooltipText(info)}
     scanRemindToasts();
     scanHoldingSurge();
     scanFomoPanel();
+    scanFomoFeed();
   }
 
   function scheduleScan() {
@@ -4396,6 +4768,10 @@ ${flapTooltipText(info)}
     scheduleScan();
   });
 
+  chrome.storage.local.get({ monitorFomoConfig: null }, (stored) => {
+    if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
+  });
+
   chrome.storage.local.get({ [MANI_SEEN_STORE_KEY]: [] }, (stored) => {
     mergeManiSeenKeys(stored[MANI_SEEN_STORE_KEY]);
     maniSeenLoaded = true;
@@ -4413,6 +4789,11 @@ ${flapTooltipText(info)}
       // 令牌不是设置项，别塞进 settings；它一到位就把浮窗接上，省得用户回来手动点重试
       if (key === 'fomoToken') {
         fomoTokenArrived = !!change.newValue?.token;
+        continue;
+      }
+      // 985monitor 的 fomo 配置不是设置项；到了就立刻按新名单重摆
+      if (key === 'monitorFomoConfig') {
+        loadMonitorFomoCfg(change.newValue);
         continue;
       }
       settings[key] = change.newValue;

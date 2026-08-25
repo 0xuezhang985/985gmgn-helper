@@ -19,6 +19,9 @@ const DEFAULTS = {
   enableMarkedHolders: true,
   enableFlapTax: true,
   flapRpc: '',
+  enableFomoFeed: true,
+  fomoFeedChainOnly: true,
+  fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
     { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
@@ -51,6 +54,14 @@ const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
 const markedEnableInput = document.querySelector('#enable-marked-holders');
 const flapEnableInput = document.querySelector('#enable-flap-tax');
 const flapRpcInput = document.querySelector('#flap-rpc');
+const fomoFeedEnableInput = document.querySelector('#enable-fomo-feed');
+const fomoFeedChainOnlyInput = document.querySelector('#fomo-feed-chain-only');
+const fomoFeedTypeInputs = {
+  buy: document.querySelector('#fomo-feed-buy'),
+  sell: document.querySelector('#fomo-feed-sell'),
+  swap: document.querySelector('#fomo-feed-swap'),
+  thesis: document.querySelector('#fomo-feed-thesis'),
+};
 
 // 自定义 RPC 不写进固定权限（那等于索取全站访问），改为填了才当场申请该域名
 async function ensureRpcPermission(url) {
@@ -139,6 +150,13 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   markedEnableInput.checked = stored.enableMarkedHolders !== false;
   flapEnableInput.checked = stored.enableFlapTax !== false;
   flapRpcInput.value = String(stored.flapRpc || '');
+  fomoFeedEnableInput.checked = stored.enableFomoFeed !== false;
+  fomoFeedChainOnlyInput.checked = stored.fomoFeedChainOnly !== false;
+  const storedFomoTypes = stored.fomoFeedTypes && typeof stored.fomoFeedTypes === 'object'
+    ? stored.fomoFeedTypes : DEFAULTS.fomoFeedTypes;
+  for (const [key, input] of Object.entries(fomoFeedTypeInputs)) {
+    input.checked = storedFomoTypes[key] !== false;
+  }
   markedListInput.value = markedToText(
     Array.isArray(stored.markedHolders) ? stored.markedHolders : DEFAULTS.markedHolders);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
@@ -177,6 +195,11 @@ saveButton.addEventListener('click', async () => {
     enableMarkedHolders: markedEnableInput.checked,
     enableFlapTax: flapEnableInput.checked,
     flapRpc: flapRpcInput.value.trim(),
+    enableFomoFeed: fomoFeedEnableInput.checked,
+    fomoFeedChainOnly: fomoFeedChainOnlyInput.checked,
+    fomoFeedTypes: Object.fromEntries(
+      Object.entries(fomoFeedTypeInputs).map(([key, input]) => [key, input.checked]),
+    ),
     markedHolders: markedFromText(markedListInput.value),
   };
 

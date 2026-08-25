@@ -364,6 +364,14 @@
               // <a href="/address/0x..."> 了，只靠 DOM 取地址会整段失效。
               maker: String(hit.maker || '').slice(0, 64),
               nick: String(hit.nick_name || hit.maker_info?.name || '').slice(0, 32),
+              // 事件时间。链上记录里是秒（前端拿它 +86400 秒当过期线），这里统一成毫秒；
+              // 数值不在合理区间就当没有，锚定逻辑会整体降级，不会拿脏数据乱摆。
+              ts: (() => {
+                const n = Number(hit.timestamp);
+                if (n > 1.4e9 && n < 4.1e9) return Math.round(n * 1000);
+                if (n > 1.4e12 && n < 4.1e12) return Math.round(n);
+                return 0;
+              })(),
             };
           }
         }
@@ -383,6 +391,8 @@
       else element.removeAttribute('data-gdh-track-maker');
       if (data.nick) setAttribute(element, 'data-gdh-track-nick', data.nick);
       else element.removeAttribute('data-gdh-track-nick');
+      if (data.ts) setAttribute(element, 'data-gdh-track-ts', String(data.ts));
+      else element.removeAttribute('data-gdh-track-ts');
       return;
     }
     // 兜底：卡片本身是 next/link 渲染的 <a>，href 里可能带代币地址
