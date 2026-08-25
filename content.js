@@ -952,6 +952,26 @@
     });
   }
 
+  /**
+   * 搜索结果所在的容器。用搜索框的 placeholder 作锚（GMGN 自己写的文案，
+   * 比构建期标记稳），往上找到含代币链接的那一层；找不到就返回空，
+   * 绝不退化成全站扫描——那会把徽章撒到持仓、喊单等一堆无关的地方。
+   */
+  function searchScopes() {
+    const inputs = document.querySelectorAll(
+      'input[placeholder*="合约地址"], input[placeholder*="代码"], input[placeholder*="Contract"], input[placeholder*="Search"]',
+    );
+    const scopes = new Set();
+    inputs.forEach((input) => {
+      let el = input.parentElement;
+      for (let level = 0; level < 8 && el instanceof HTMLElement; level += 1) {
+        if (el.querySelector('a[href*="/token/0x"]')) return void scopes.add(el);
+        el = el.parentElement;
+      }
+    });
+    return [...scopes];
+  }
+
   function scanFlapBadges() {
     if (settings.enableFlapTax === false) {
       document.querySelectorAll('.gdh-flap').forEach((el) => el.remove());
@@ -980,6 +1000,17 @@
 
     // 追踪流不放税收徽章：那里一行本来就密（钱包 + 动作 + 金额 + 币名 + 市值 + 时间），
     // 再加一块只会更挤。要看税收去代币页或战壕卡。
+
+    // 搜索弹层：以搜索框为锚圈定范围，再给里面的代币链接挂徽章。
+    // 不全站扫 a[href*="/token/"]——那会扩散到持仓、喊单等一堆别处。
+    searchScopes().forEach((scope) => {
+      scope.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
+        const token = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
+        if (!token) return;
+        const native = findNativeTaxChip(link);
+        put(flapOwnRow(link, native) || link, token, native);
+      });
+    });
 
     // 代币页：跟在页面标题后面
     const route = currentTokenRoute();
