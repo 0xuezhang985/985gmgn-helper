@@ -501,4 +501,26 @@
 
   scheduleScan();
   window.setInterval(scheduleScan, 1200);
+
+  // ---- 站内无刷新跳转（fomo 混排卡用）----
+  // content script 在隔离世界摸不到 Next 的路由；这里代为调用 window.next.router.push，
+  // 让点击 fomo 卡和点 GMGN 原生卡一样走客户端路由（不整页重载）。
+  // URL 经 documentElement 的 attribute 传递（CustomEvent 的 detail 过不了世界边界），
+  // 并用白名单限定只能跳代币页。
+  const GDH_NAV_RE = /^\/(sol|bsc|eth|base|tron|blast)\/token\/[a-zA-Z0-9]{20,64}$/;
+  document.addEventListener('gdh-navigate', () => {
+    const url = document.documentElement.getAttribute('data-gdh-nav') || '';
+    document.documentElement.removeAttribute('data-gdh-nav');
+    if (!GDH_NAV_RE.test(url)) return;
+    try {
+      const router = window.next && window.next.router;
+      if (router && typeof router.push === 'function') {
+        Promise.resolve(router.push(url)).catch(() => window.location.assign(url));
+        return;
+      }
+    } catch {
+      // 摸不到路由就整页跳
+    }
+    window.location.assign(url);
+  });
 })();

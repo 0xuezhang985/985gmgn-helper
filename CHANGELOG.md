@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.37.2 - 2026-08-25
+
+- **fomo 混排卡点击改走 GMGN 站内路由**：和点原生代币卡一致，当前页无刷新切换（page-bridge 代调 `window.next.router.push`，实测 Next 16 Pages Router 可用），不再整页重载。bridge 不可用时自动回退普通跳转。
+- 修复兜底判定时序：`dispatchEvent` 是同步的、路由在派发内就已改掉 pathname，基准若在派发后取会导致"刚跳完又被整页重载一遍"；基准改在派发前取，且已在目标代币页时不重复跳。
+
 ## 0.37.1 - 2026-08-25
 
 - **修复 fomo 推送混排在现网追踪流上重叠**。实测（用户 DOM 诊断）GMGN 追踪流不是动态量高的 virtuoso，而是固定行高公式布局：行包装 `position:absolute; top=index×64.5px; height:64.5px`，行推不动——0.37.0 的"塞进行壳借 ResizeObserver 重排"在这种布局下物理不成立，卡片被后一行盖住。

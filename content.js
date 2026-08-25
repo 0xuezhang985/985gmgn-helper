@@ -4362,6 +4362,25 @@ ${flapTooltipText(info)}
     return `${Math.floor(diff / 86400000)}d`;
   }
 
+  /** 站内跳转：请 MAIN world 的 page-bridge 走 Next 客户端路由（和点原生卡一致，
+   *  不整页重载）；bridge 没装上/没响应时回退成普通跳转。 */
+  function gdhSpaNavigate(url) {
+    if (location.pathname === url) return; // 已在目标页
+    // dispatchEvent 是同步的：bridge 在派发内就会调 router.push 改掉 pathname，
+    // 所以"跳没跳成"的基准必须在派发之前取，否则兜底会把刚跳完的页面再整页重载一遍
+    const before = location.pathname;
+    try {
+      document.documentElement.setAttribute('data-gdh-nav', url);
+      document.dispatchEvent(new Event('gdh-navigate'));
+    } catch {
+      location.href = url;
+      return;
+    }
+    window.setTimeout(() => {
+      if (location.pathname === before) location.href = url;
+    }, 450);
+  }
+
   function buildFomoFeedCard(ev) {
     const tag = FOMO_FEED_TAGS[ev.type] || { label: 'fomo', cls: '' };
     const card = document.createElement('div');
@@ -4444,7 +4463,7 @@ ${flapTooltipText(info)}
       card.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        location.href = `/${ev.chain}/token/${ev.addr}`;
+        gdhSpaNavigate(`/${ev.chain}/token/${ev.addr}`);
       });
     }
     card.addEventListener('pointerdown', (event) => event.stopPropagation());
