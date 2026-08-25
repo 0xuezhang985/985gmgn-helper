@@ -507,7 +507,7 @@
   // 让点击 fomo 卡和点 GMGN 原生卡一样走客户端路由（不整页重载）。
   // URL 经 documentElement 的 attribute 传递（CustomEvent 的 detail 过不了世界边界），
   // 并用白名单限定只能跳代币页。
-  const GDH_NAV_RE = /^\/(sol|bsc|eth|base|tron|blast)\/token\/[a-zA-Z0-9]{20,64}$/;
+  const GDH_NAV_RE = /^\/(sol|bsc|eth|base|tron|blast|monad|megaeth|hyperevm|xlayer|robinhood|arc|stable|arbitrum)\/token\/[a-zA-Z0-9]{20,64}$/;
   document.addEventListener('gdh-navigate', () => {
     const url = document.documentElement.getAttribute('data-gdh-nav') || '';
     document.documentElement.removeAttribute('data-gdh-nav');

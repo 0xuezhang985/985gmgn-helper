@@ -2490,8 +2490,8 @@ ${flapTooltipText(info)}
   }
 
   // ---- fomo 浮窗：在 GMGN 代币页看该代币在 fomo 的观点/交易 ----
-  const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149 };
-  const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol' };
+  const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143 };
+  const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol', robinhood: 'robinhood', monad: 'monad' };
   const FOMO_REFRESH_MS = 30000;
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
@@ -4309,7 +4309,7 @@ ${flapTooltipText(info)}
   }
 
   function currentChainSlug() {
-    const match = location.pathname.match(/^\/(sol|bsc|eth|base|tron|blast)(\/|$)/);
+    const match = location.pathname.match(/^\/(sol|bsc|eth|base|tron|blast|monad|megaeth|hyperevm|xlayer|robinhood|arc|stable|arbitrum)(\/|$)/);
     if (match) return match[1];
     const q = new URLSearchParams(location.search).get('chain');
     return q ? String(q).toLowerCase() : '';
@@ -4387,8 +4387,10 @@ ${flapTooltipText(info)}
     card.className = `gdh-fomofeed ${tag.cls}`;
     card.dataset.gdhFomoKey = ev.key;
 
-    const row = document.createElement('div');
-    row.className = 'gdh-fomofeed__row';
+    // 结构对齐 GMGN 原生追踪卡的两行：
+    // 行1 = 头像 名字 动作 [fomo] ……时间；行2 = 金额 币logo 币名/观点 ……MC
+    const r1 = document.createElement('div');
+    r1.className = 'gdh-fomofeed__r1';
 
     const av = document.createElement('span');
     av.className = 'gdh-fomofeed__av';
@@ -4419,44 +4421,61 @@ ${flapTooltipText(info)}
     tagEl.className = 'gdh-fomofeed__tag';
     tagEl.textContent = tag.label;
 
-    row.append(av, name, tagEl);
+    const src = document.createElement('span');
+    src.className = 'gdh-fomofeed__src';
+    src.textContent = 'fomo';
+
+    const time = document.createElement('span');
+    time.className = 'gdh-fomofeed__time';
+    time.textContent = fomoFeedRelTime(ev.ts);
+
+    r1.append(av, name, tagEl, src, time);
+    card.appendChild(r1);
+
+    const r2 = document.createElement('div');
+    r2.className = 'gdh-fomofeed__r2';
 
     if (ev.usd > 0) {
       const usd = document.createElement('span');
       usd.className = 'gdh-fomofeed__usd';
       usd.textContent = fomoUsd(ev.usd);
-      row.appendChild(usd);
+      r2.appendChild(usd);
+    }
+
+    if (ev.img) {
+      const logo = document.createElement('span');
+      logo.className = 'gdh-fomofeed__logo';
+      const img = document.createElement('img');
+      img.src = ev.img;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.onerror = function () { this.parentElement?.remove(); };
+      logo.appendChild(img);
+      r2.appendChild(logo);
     }
 
     if (ev.symbol) {
       const sym = document.createElement('span');
       sym.className = 'gdh-fomofeed__sym';
       sym.textContent = ev.symbol;
-      row.appendChild(sym);
+      r2.appendChild(sym);
+    }
+
+    if (ev.type === 'thesis' && ev.comment) {
+      const text = document.createElement('span');
+      text.className = 'gdh-fomofeed__thesis';
+      text.textContent = ev.comment;
+      text.title = ev.comment;
+      r2.appendChild(text);
     }
 
     if (ev.mc > 0) {
       const mc = document.createElement('span');
       mc.className = 'gdh-fomofeed__mc';
-      mc.textContent = `MC ${fomoUsd(ev.mc)}`;
-      row.appendChild(mc);
+      mc.textContent = `MC:${fomoUsd(ev.mc)}`;
+      r2.appendChild(mc);
     }
-
-    const src = document.createElement('span');
-    src.className = 'gdh-fomofeed__src';
-    src.textContent = 'fomo';
-    const time = document.createElement('span');
-    time.className = 'gdh-fomofeed__time';
-    time.textContent = fomoFeedRelTime(ev.ts);
-    row.append(src, time);
-    card.appendChild(row);
-
-    if (ev.type === 'thesis' && ev.comment) {
-      const text = document.createElement('div');
-      text.className = 'gdh-fomofeed__thesis';
-      text.textContent = ev.comment;
-      card.appendChild(text);
-    }
+    card.appendChild(r2);
 
     if (ev.addr && ev.chain) {
       card.title = `${ev.symbol || ev.addr} · 点击打开 GMGN 代币页`;

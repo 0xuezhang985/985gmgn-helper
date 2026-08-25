@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.0 - 2026-08-26
+
+- **fomo 混排卡换皮成 GMGN 原生卡样式**：两行结构（行1 头像/名字/动作/时间，行2 金额/币 logo/币名/MC:$xx）、同高 64.5px、透明底、去彩边彩底；来源仅以 [fomo] 小标区分。动作词按方向着色（买入绿/卖出红/换仓黄/观点紫），观点正文单行显示、悬停看全文。事件带上代币 logo。
+- **fomo 浮窗支持 Robinhood 链**：`/robinhood/token/…` 页出现 fomo 入口与持仓者/观点面板（fomo 数据源 networkId 4663，实测 193 条事件在源）；顺带支持 monad（143）。fomo 不覆盖的链（hyperevm 等）仍不出入口。
+- 混排卡点击/当前链识别扩到 GMGN 全链枚举（robinhood/monad/megaeth/hyperevm/xlayer/arc/stable/arbitrum），robinhood 链的混排卡现在也走站内无刷新跳转。
+
 ## 0.37.2 - 2026-08-25
 
 - **fomo 混排卡点击改走 GMGN 站内路由**：和点原生代币卡一致，当前页无刷新切换（page-bridge 代调 `window.next.router.push`，实测 Next 16 Pages Router 可用），不再整页重载。bridge 不可用时自动回退普通跳转。

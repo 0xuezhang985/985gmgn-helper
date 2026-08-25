@@ -561,7 +561,7 @@ const FOMO_FEED_TYPE = {
 };
 
 // fomo 的链名 → GMGN 的路径段
-const FOMO_CHAIN_SLUG = { bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth', base: 'base' };
+const FOMO_CHAIN_SLUG = { bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth', base: 'base', robinhood: 'robinhood', 'chain 143': 'monad' };
 
 function slimFomoEvent(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -583,6 +583,7 @@ function slimFomoEvent(raw) {
     chain: FOMO_CHAIN_SLUG[chainName.toLowerCase()] || chainName.toLowerCase(),
     chainName,
     symbol: String(raw.symbol || '').slice(0, 24),
+    img: String(raw.tokenImage || '').slice(0, 300),
     mc: Number(raw.marketCap) || 0,
     ts,
   };

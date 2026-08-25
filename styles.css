@@ -2046,59 +2046,67 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 /* ==== 985monitor fomo 推送卡（混排进追踪流） ==== */
+/* 呈现对齐 GMGN 原生追踪卡：两行、同高（64.5px）、透明底、无彩边，
+   仅以 [fomo] 小标区分来源；动作词按方向着色（对齐原生 建仓绿/清仓红 的用法） */
 .gdh-fomofeed {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 2px 8px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  border-left: 3px solid #8a93a6;
-  background: rgba(138, 147, 166, 0.08);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #e8ecf3;
+  justify-content: center;
+  gap: 4px;
+  height: 64.5px;
+  padding: 6px 12px;
   box-sizing: border-box;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 18px;
+  color: #e8ecf3;
 }
-.gdh-fomofeed:hover { filter: brightness(1.15); }
-.gdh-fomofeed.is-buy { border-left-color: #22c55e; background: rgba(34, 197, 94, 0.07); }
-.gdh-fomofeed.is-sell { border-left-color: #f87171; background: rgba(248, 113, 113, 0.07); }
-.gdh-fomofeed.is-swap { border-left-color: #eab308; background: rgba(234, 179, 8, 0.07); }
-.gdh-fomofeed.is-thesis { border-left-color: #c084fc; background: rgba(192, 132, 252, 0.09); }
-.gdh-fomofeed__row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.gdh-fomofeed:hover { background: rgba(255, 255, 255, 0.04); }
+.gdh-fomofeed__r1,
+.gdh-fomofeed__r2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .gdh-fomofeed__av {
-  width: 18px; height: 18px; border-radius: 50%; overflow: hidden; flex: none;
+  width: 16px; height: 16px; border-radius: 50%; overflow: hidden; flex: none;
   background: #2a2f3a; display: inline-flex; align-items: center; justify-content: center;
   font-size: 10px; color: #aab2c0;
 }
 .gdh-fomofeed__av img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gdh-fomofeed__name {
-  font-weight: 600; color: #fff; max-width: 96px;
+  font-weight: 600; color: #f5f5f5; max-width: 110px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none;
 }
 .gdh-fomofeed__name:hover { text-decoration: underline; }
-.gdh-fomofeed__tag { font-size: 10px; padding: 0 5px; border-radius: 4px; line-height: 16px; flex: none; }
-.gdh-fomofeed.is-buy .gdh-fomofeed__tag { color: #22c55e; background: rgba(34, 197, 94, 0.14); }
-.gdh-fomofeed.is-sell .gdh-fomofeed__tag { color: #f87171; background: rgba(248, 113, 113, 0.14); }
-.gdh-fomofeed.is-swap .gdh-fomofeed__tag { color: #eab308; background: rgba(234, 179, 8, 0.14); }
-.gdh-fomofeed.is-thesis .gdh-fomofeed__tag { color: #c084fc; background: rgba(192, 132, 252, 0.14); }
+.gdh-fomofeed__tag { font-size: 12px; font-weight: 500; flex: none; }
+.gdh-fomofeed.is-buy .gdh-fomofeed__tag { color: #22c55e; }
+.gdh-fomofeed.is-sell .gdh-fomofeed__tag { color: #f87171; }
+.gdh-fomofeed.is-swap .gdh-fomofeed__tag { color: #eab308; }
+.gdh-fomofeed.is-thesis .gdh-fomofeed__tag { color: #c084fc; }
+.gdh-fomofeed__src {
+  flex: none;
+  font-size: 9px; line-height: 12px; color: #6b7280;
+  border: 1px solid #374151; border-radius: 3px; padding: 0 3px;
+}
+.gdh-fomofeed__time { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed__usd { font-weight: 600; flex: none; }
+.gdh-fomofeed.is-buy .gdh-fomofeed__usd { color: #22c55e; }
+.gdh-fomofeed.is-sell .gdh-fomofeed__usd { color: #f87171; }
+.gdh-fomofeed.is-swap .gdh-fomofeed__usd { color: #eab308; }
+.gdh-fomofeed__logo {
+  width: 16px; height: 16px; border-radius: 50%; overflow: hidden; flex: none; background: #2a2f3a;
+}
+.gdh-fomofeed__logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gdh-fomofeed__sym {
-  color: #cbd3e0; max-width: 88px;
+  color: #e8ecf3; max-width: 100px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.gdh-fomofeed__mc { color: #8a93a6; flex: none; }
-.gdh-fomofeed__src {
-  margin-left: auto; flex: none;
-  font-size: 9px; color: #6b7280; border: 1px solid #374151; border-radius: 3px; padding: 0 3px;
-}
-.gdh-fomofeed__time { flex: none; color: #6b7280; font-size: 11px; min-width: 26px; text-align: right; }
 .gdh-fomofeed__thesis {
-  color: #cbd5e1;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  word-break: break-word;
+  flex: 1; min-width: 0;
+  color: #cbd5e1; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.gdh-fomofeed__mc { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed.is-new { animation: gdh-fomofeed-flash 1.2s ease-out 1; }
 @keyframes gdh-fomofeed-flash {
   0% { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.10); }
@@ -2115,7 +2123,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   padding: 2px 0 4px;
   box-sizing: border-box;
 }
-.gdh-fomofeed-pin .gdh-fomofeed { margin: 2px 6px; }
+.gdh-fomofeed-pin .gdh-fomofeed { margin: 0 4px; }
 .gdh-fomofeed-pin__head { font-size: 10px; color: #8a93a6; padding: 3px 12px 1px; }
 
 /* 固定行高模式（GMGN 现网追踪流）：卡片绝对定位塞进位移腾出的缝里 */
