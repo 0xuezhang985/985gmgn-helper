@@ -4493,7 +4493,15 @@ ${flapTooltipText(info)}
   }
 
   function ensureFomoFeedPin(scroller) {
-    if (fomoFeedPinEl?.isConnected && fomoFeedPinEl.nextElementSibling === scroller) return fomoFeedPinEl;
+    // 滚动容器外面可能还套着高度为 0 的壳（实测 GMGN 的 .virtual-list-container 高 0，
+    // overflow visible）——兜底条插进 0 高壳里会叠在列表上。向上跳过这些壳，
+    // 插到真正占布局的那层里、壳的前面。
+    let host = scroller;
+    for (let level = 0; level < 6 && host.parentElement instanceof HTMLElement; level += 1) {
+      if (host.parentElement.getBoundingClientRect().height >= 10) break;
+      host = host.parentElement;
+    }
+    if (fomoFeedPinEl?.isConnected && fomoFeedPinEl.nextElementSibling === host) return fomoFeedPinEl;
     fomoFeedPinEl?.remove();
     const pin = document.createElement('div');
     pin.className = 'gdh-fomofeed-pin';
@@ -4501,9 +4509,32 @@ ${flapTooltipText(info)}
     head.className = 'gdh-fomofeed-pin__head';
     head.textContent = 'fomo 推送';
     pin.appendChild(head);
-    scroller.parentElement?.insertBefore(pin, scroller);
+    host.parentElement?.insertBefore(pin, host);
     fomoFeedPinEl = pin;
     return pin;
+  }
+
+  // 固定行高模式下同屏最多混排几张：位移只发生在挂载窗口内，插太多会把
+  // 「scrollTop ÷ 行高 → 该挂载哪些行」的映射拉出 overscan 冗余，底部会露白
+  const FOMO_FEED_INLINE_CAP = 6;
+  const fomoFeedShifted = new Set();
+
+  function clearFomoFeedShifts() {
+    for (const el of fomoFeedShifted) {
+      if (el.isConnected) el.style.transform = '';
+    }
+    fomoFeedShifted.clear();
+  }
+
+  /** 追踪行的绝对定位包装（GMGN 实测：data-index 层 absolute + inline top/height 公式布局）。 */
+  function fomoFeedFixedRow(cardEl) {
+    const wrap = cardEl.parentElement;
+    if (!(wrap instanceof HTMLElement)) return null;
+    if ((wrap.style.position || '') !== 'absolute') return null;
+    const top = Number.parseFloat(wrap.style.top);
+    const h = Number.parseFloat(wrap.style.height) || wrap.offsetHeight;
+    if (!Number.isFinite(top) || !(h > 0)) return null;
+    return { wrap, top, h };
   }
 
   function teardownFomoFeed() {
@@ -4511,6 +4542,7 @@ ${flapTooltipText(info)}
     fomoFeedCards.clear();
     fomoFeedPinEl?.remove();
     fomoFeedPinEl = null;
+    clearFomoFeedShifts();
   }
 
   function scanFomoFeed() {
@@ -4534,10 +4566,14 @@ ${flapTooltipText(info)}
       .sort((a, b) => b.ts - a.ts);
     const headMounted = fomoFeedHeadMounted(cards);
     const oldest = withTs.length ? withTs[withTs.length - 1] : null;
+    // GMGN 现网追踪流是固定行高公式布局（行推不动），走位移插卡；
+    // 万一改版回流式布局，仍走原来的行内插入
+    const fixedMode = withTs.length > 0 && !!fomoFeedFixedRow(withTs[0].el);
 
     // key -> {ev, anchor}；anchor=null 表示进兜底条；没进 map 的这轮不显示
     const placements = new Map();
     let pinCount = 0;
+    let inlineCount = 0;
     for (const ev of events) {
       if (!withTs.length) {
         // page-bridge 没拿到任何行时间（构建差异/改版）——全部降级进兜底条
@@ -4556,7 +4592,15 @@ ${flapTooltipText(info)}
       }
       // 锚到了最老的已挂载行：无法确认它下面还有没有更老的未挂载行，先不摆
       if (anchor === oldest && withTs.length > 1) continue;
-      // 专属外壳检查：锚卡的父层里只能有它这一张追踪卡，否则那是列表容器（插进去=插队）
+      if (fixedMode) {
+        if (inlineCount >= FOMO_FEED_INLINE_CAP) continue;
+        if (!fomoFeedFixedRow(anchor.el)) continue;
+        placements.set(ev.key, { ev, anchor: anchor.el });
+        inlineCount += 1;
+        continue;
+      }
+      // 流式布局：专属外壳检查——锚卡的父层里只能有它这一张追踪卡，
+      // 否则那是列表容器（插进去=插队）
       const parent = anchor.el.parentElement;
       if (!parent || parent.querySelectorAll(TRACKER_SYMBOL_CELL).length > 1) continue;
       placements.set(ev.key, { ev, anchor: anchor.el });
@@ -4571,6 +4615,8 @@ ${flapTooltipText(info)}
         let prev = pin.firstElementChild; // 标题
         for (const ev of pinItems) {
           const el = fomoFeedCardFor(ev);
+          el.classList.remove('is-abs');
+          if (el.style.top) el.style.top = '';
           if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
           prev = el;
         }
@@ -4590,19 +4636,71 @@ ${flapTooltipText(info)}
       }
     }
 
-    // 锚定插入：同一锚下按时间新→旧依次排在锚卡后面
+    // 锚定分组：同一锚下按时间新→旧
     const byAnchor = new Map();
     for (const it of placements.values()) {
       if (!it.anchor) continue;
       if (!byAnchor.has(it.anchor)) byAnchor.set(it.anchor, []);
       byAnchor.get(it.anchor).push(it.ev);
     }
+
+    if (fixedMode) {
+      layoutFomoFeedFixed(cards, byAnchor);
+      return;
+    }
+    clearFomoFeedShifts();
     for (const [anchorEl, list] of byAnchor) {
       let prev = anchorEl;
       for (const ev of list) {
         const el = fomoFeedCardFor(ev);
         if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
         prev = el;
+      }
+    }
+  }
+
+  /**
+   * 固定行高模式的摆法。GMGN 追踪流的行包装是 position:absolute + top=index×行高
+   * 的公式布局（React 只写 top/height，从不写 transform）——行高改不了、行也推不动。
+   * 所以不动行的 top：给锚行之后的每个挂载行加 translateY 让位，fomo 卡绝对定位
+   * 塞进腾出的缝里。React 滚动/插新行时重写 top 不会碰 transform，两套定位互不
+   * 覆盖；锚行被卸载时卡和位移一起回收，视口之外的列表零影响。
+   */
+  function layoutFomoFeedFixed(cards, byAnchor) {
+    const rows = [];
+    for (const card of cards) {
+      const info = fomoFeedFixedRow(card);
+      if (info) rows.push({ card, wrap: info.wrap, top: info.top, h: info.h });
+    }
+    if (!rows.length) { clearFomoFeedShifts(); return; }
+    rows.sort((a, b) => a.top - b.top);
+    const spacer = rows[0].wrap.parentElement;
+    if (!(spacer instanceof HTMLElement)) { clearFomoFeedShifts(); return; }
+
+    const stillShifted = new Set();
+    let cum = 0;
+    for (const row of rows) {
+      const shift = cum ? `translateY(${cum}px)` : '';
+      if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
+      if (cum) { fomoFeedShifted.add(row.wrap); stillShifted.add(row.wrap); }
+      const group = byAnchor.get(row.card);
+      if (!group) continue;
+      let inner = 0;
+      for (const ev of group) {
+        const el = fomoFeedCardFor(ev);
+        el.classList.add('is-abs');
+        if (el.parentElement !== spacer) spacer.appendChild(el);
+        const top = `${row.top + row.h + cum + inner}px`;
+        if (el.style.top !== top) el.style.top = top;
+        inner += el.offsetHeight + 2;
+      }
+      cum += inner;
+    }
+    // 不再需要位移的行（锚卸载/事件走掉）把 transform 清掉
+    for (const el of [...fomoFeedShifted]) {
+      if (!stillShifted.has(el)) {
+        if (el.isConnected) el.style.transform = '';
+        fomoFeedShifted.delete(el);
       }
     }
   }
