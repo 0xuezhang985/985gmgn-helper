@@ -4323,6 +4323,25 @@ ${flapTooltipText(info)}
   const FOMO_FEED_POLL_MS = 45000;
   const FOMO_FEED_RENDER_CAP = 40;
   const FOMO_FEED_PIN_CAP = 6;
+  // GMGN Fusion 模式的链条色。默认表扒自 _app chunk（R={[lg.Sol]:"#7b44f2",...}）；
+  // 用户在 GMGN 里自定义过的链色存 localStorage follow_toast_chain_color_v1，优先用它，
+  // 和原生竖条完全一致。
+  const FOMO_FEED_CHAIN_COLORS = {
+    sol: '#7b44f2', bsc: '#eab204', base: '#3073ff', eth: '#4d84f7', robinhood: '#9fc700',
+    stable: '#007b4f', arc: '#5c8de5', xlayer: '#4a4a4a', hyperevm: '#55c6ab',
+    megaeth: '#2a2a2a', monad: '#6a52f1',
+  };
+  function fomoFeedChainColor(chain) {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem('follow_toast_chain_color_v1') || '{}');
+      const custom = raw?.[chain]?.color;
+      if (typeof custom === 'string' && custom) return custom;
+    } catch {
+      // 键不存在/格式变了就用默认表
+    }
+    return FOMO_FEED_CHAIN_COLORS[chain] || '#8a93a6';
+  }
+
   const FOMO_FEED_TAGS = {
     buy: { label: '买入', cls: 'is-buy' },
     sell: { label: '卖出', cls: 'is-sell' },
@@ -4423,6 +4442,14 @@ ${flapTooltipText(info)}
     const card = document.createElement('div');
     card.className = `gdh-fomofeed ${tag.cls}`;
     card.dataset.gdhFomoKey = ev.key;
+
+    // 链条色竖条：对齐原生（5px、绝对定位盖在左缘）
+    if (ev.chain) {
+      const stripe = document.createElement('span');
+      stripe.className = 'gdh-fomofeed__stripe';
+      stripe.style.backgroundColor = fomoFeedChainColor(ev.chain);
+      card.appendChild(stripe);
+    }
 
     // 结构对齐 GMGN 原生追踪卡的两行：
     // 行1 = 头像 名字 动作 [fomo] ……时间；行2 = 金额 币logo 币名/观点 ……MC

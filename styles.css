@@ -2135,3 +2135,12 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   margin: 0;
   z-index: 2;
 }
+
+/* 链条色竖条（对齐 GMGN Fusion：5px 盖在卡片左缘，不占内容位） */
+.gdh-fomofeed { position: relative; }
+.gdh-fomofeed__stripe {
+  pointer-events: none;
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+}

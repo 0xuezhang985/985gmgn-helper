@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.1 - 2026-08-26
+
+- **fomo 卡加链条色竖条**，对齐 GMGN Fusion 模式的原生呈现（5px、盖在卡片左缘）：BSC 黄 `#eab204`、Robinhood 绿 `#9fc700`、Solana 紫 `#7b44f2` 等，默认色表扒自 GMGN 前端；你在 GMGN 里自定义过的链色（`follow_toast_chain_color_v1`）优先跟随。
+
 ## 0.39.0 - 2026-08-26
 
 - **观点卡完整显示 + 本地翻译**：混排里的 fomo 观点正文不再单行截断，完整多行显示（观点卡放开 64.5px 定高，位移布局自动适配）；译文走与 fomo 浮窗同一条浏览器本地翻译链路（Chrome/Edge 内置 Translator，含 Edge 卡死检测），原文不动、译文补在下面，随「观点翻译」开关增删。
