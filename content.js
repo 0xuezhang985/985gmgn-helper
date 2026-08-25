@@ -49,13 +49,49 @@
       if (!token) return;
       const stamp = `${token}|${refresh}`;
       if (stamp === lastSent) return;
-      lastSent = stamp;
+      const pageExp = jwtExpMs(token);
       try {
-        chrome.storage.local.set({ fomoToken: { token, refresh, at: Date.now(), exp: jwtExpMs(token) } });
+        chrome.storage.local.get('fomoToken', (stored) => {
+          const cur = stored?.fomoToken;
+          // 插件可能刚用 refresh_token 续出了更晚过期的新令牌；网页里的旧令牌不准
+          // 把它盖回去——旧 refresh 已被 privy 轮换作废，盖回去等于"总是要重新登录"。
+          if (cur?.token && cur.token !== token && cur.exp && pageExp && cur.exp >= pageExp) return;
+          lastSent = stamp;
+          try {
+            chrome.storage.local.set({ fomoToken: { token, refresh, at: Date.now(), exp: pageExp } });
+          } catch {
+            // 扩展上下文失效
+          }
+        });
       } catch {
         // 扩展上下文失效
       }
     };
+    // 后台续期成功后会把新令牌写回本页 localStorage，让网页和插件共用同一条
+    // privy 轮换链，避免网页拿旧 refresh 去续触发复用检测、连坐作废整个会话。
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg?.type !== 'gdh-privy-writeback' || !msg.token) return;
+        try {
+          const keys = Object.keys(window.localStorage);
+          const tokenKey = keys.find((k) => /^privy:(.+:)?token$/.test(k)) || 'privy:token';
+          const refreshKey = keys.find((k) => /^privy:(.+:)?refresh_token$/.test(k)) || 'privy:refresh_token';
+          const writeKeep = (key, value) => {
+            const raw = window.localStorage.getItem(key);
+            // privy 按 JSON 字符串存（带引号），沿用原格式
+            const asJson = raw == null || /^"/.test(raw);
+            window.localStorage.setItem(key, asJson ? JSON.stringify(value) : value);
+          };
+          writeKeep(tokenKey, msg.token);
+          if (msg.refresh) writeKeep(refreshKey, msg.refresh);
+          lastSent = `${msg.token}|${msg.refresh || ''}`;
+        } catch {
+          // localStorage 不可写
+        }
+      });
+    } catch {
+      // 扩展上下文失效
+    }
     syncFomoToken();
     window.setInterval(syncFomoToken, 20000);
     window.addEventListener('focus', syncFomoToken);
@@ -4462,14 +4498,6 @@ ${flapTooltipText(info)}
       r2.appendChild(sym);
     }
 
-    if (ev.type === 'thesis' && ev.comment) {
-      const text = document.createElement('span');
-      text.className = 'gdh-fomofeed__thesis';
-      text.textContent = ev.comment;
-      text.title = ev.comment;
-      r2.appendChild(text);
-    }
-
     if (ev.mc > 0) {
       const mc = document.createElement('span');
       mc.className = 'gdh-fomofeed__mc';
@@ -4477,6 +4505,16 @@ ${flapTooltipText(info)}
       r2.appendChild(mc);
     }
     card.appendChild(r2);
+
+    if (ev.type === 'thesis' && ev.comment) {
+      // 观点正文完整显示（卡片放开定高），译文走面板同一条本地翻译链路，
+      // 原文不动、译文补一行在下面
+      const text = document.createElement('div');
+      text.className = 'gdh-fomofeed__thesis';
+      text.textContent = ev.comment;
+      card.appendChild(text);
+      queueFomoTranslate(text, ev.comment);
+    }
 
     if (ev.addr && ev.chain) {
       card.title = `${ev.symbol || ev.addr} · 点击打开 GMGN 代币页`;
@@ -4931,6 +4969,12 @@ ${flapTooltipText(info)}
       // 985monitor 的 fomo 配置不是设置项；到了就立刻按新名单重摆
       if (key === 'monitorFomoConfig') {
         loadMonitorFomoCfg(change.newValue);
+        continue;
+      }
+      // 翻译开关切换：混排卡整体重建，译文才会随开关出现/移除
+      if (key === 'fomoTranslate') {
+        settings[key] = change.newValue;
+        teardownFomoFeed();
         continue;
       }
       settings[key] = change.newValue;

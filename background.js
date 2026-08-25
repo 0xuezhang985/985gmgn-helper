@@ -168,6 +168,19 @@ async function fomoRefreshSession() {
       renewed: true,
     };
     await chrome.storage.local.set({ fomoToken: next });
+    // 新令牌写回开着的 fomo.family 页，网页和插件共用同一条 privy 轮换链
+    try {
+      const tabs = await chrome.tabs.query({ url: ['https://fomo.family/*', 'https://*.fomo.family/*'] });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(
+          tab.id,
+          { type: 'gdh-privy-writeback', token: next.token, refresh: next.refresh },
+          () => void chrome.runtime.lastError,
+        );
+      }
+    } catch {
+      // 没有 tabs 权限或没有开着的页面：跳过，等下次同步
+    }
     return next;
   })().catch(() => null);
   try {

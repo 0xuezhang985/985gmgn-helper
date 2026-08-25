@@ -2101,11 +2101,12 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   color: #e8ecf3; max-width: 100px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.gdh-fomofeed.is-thesis { height: auto; min-height: 64.5px; }
 .gdh-fomofeed__thesis {
-  flex: 1; min-width: 0;
-  color: #cbd5e1; font-size: 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #cbd5e1; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
 }
+.gdh-fomofeed .gdh-fomo__zh { margin: 2px 0 0; }
 .gdh-fomofeed__mc { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed.is-new { animation: gdh-fomofeed-flash 1.2s ease-out 1; }
 @keyframes gdh-fomofeed-flash {
