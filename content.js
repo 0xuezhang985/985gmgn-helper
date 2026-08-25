@@ -4320,7 +4320,7 @@ ${flapTooltipText(info)}
   // 搭车：把 fomo 卡塞进"时间上紧邻的那张追踪卡"的专属外壳里，virtuoso 的
   // ResizeObserver 会把它当成该行变高，自动重排。比所有行都新的事件放列表上方的
   // 兜底条（在滚动容器之外，不参与虚拟化）。
-  const FOMO_FEED_POLL_MS = 45000;
+  const FOMO_FEED_POLL_MS = 18000;
   const FOMO_FEED_RENDER_CAP = 40;
   const FOMO_FEED_PIN_CAP = 6;
   // GMGN Fusion 模式的链条色。默认表扒自 _app chunk（R={[lg.Sol]:"#7b44f2",...}）；

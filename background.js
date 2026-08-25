@@ -558,7 +558,7 @@ async function tokenSupply({ chain, address, rpc }) {
 // 985monitor 的 fomo 采集器把最近事件整体发布成一个静态 JSON（无鉴权，~1 分钟一更）。
 // 这里做唯一的取数口：控频 + ETag 条件请求（304 就不拉 800KB 全量）+ 失败指数退避。
 const FOMO_FEED_URL = 'https://www.985monitor.xyz/fomo-events.json';
-const FOMO_FEED_MIN_INTERVAL_MS = 40000;
+const FOMO_FEED_MIN_INTERVAL_MS = 15000;
 const FOMO_FEED_KEEP = 150;
 let fomoFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
 let fomoFeedEtag = '';
