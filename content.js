@@ -139,7 +139,7 @@
     enableFlapTax: true,
     flapRpc: '',
     enableFomoFeed: true,
-    fomoFeedChainOnly: true,
+    fomoFeedChainOnly: false,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
@@ -4327,7 +4327,8 @@ ${flapTooltipText(info)}
   }
 
   function visibleFomoFeedEvents() {
-    const chain = settings.fomoFeedChainOnly !== false ? currentChainSlug() : '';
+    // 追踪侧栏本身是全链混合的，默认不按页面链过滤（实测某时段 88 条事件仅 3 条在当前链）
+    const chain = settings.fomoFeedChainOnly === true ? currentChainSlug() : '';
     const out = [];
     for (const ev of fomoFeedEvents) {
       if (!ev?.key || !ev.ts) continue;

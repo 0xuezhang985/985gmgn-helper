@@ -20,7 +20,7 @@ const DEFAULTS = {
   enableFlapTax: true,
   flapRpc: '',
   enableFomoFeed: true,
-  fomoFeedChainOnly: true,
+  fomoFeedChainOnly: false,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
@@ -151,7 +151,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   flapEnableInput.checked = stored.enableFlapTax !== false;
   flapRpcInput.value = String(stored.flapRpc || '');
   fomoFeedEnableInput.checked = stored.enableFomoFeed !== false;
-  fomoFeedChainOnlyInput.checked = stored.fomoFeedChainOnly !== false;
+  fomoFeedChainOnlyInput.checked = stored.fomoFeedChainOnly === true;
   const storedFomoTypes = stored.fomoFeedTypes && typeof stored.fomoFeedTypes === 'object'
     ? stored.fomoFeedTypes : DEFAULTS.fomoFeedTypes;
   for (const [key, input] of Object.entries(fomoFeedTypeInputs)) {
