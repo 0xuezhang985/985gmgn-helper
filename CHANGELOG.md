@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.1 - 2026-08-26
+
+- **修复「标注人物持仓徽章」失效**（👤N 徽章一直不出现）。根因实测：GMGN 的 `wallet_holdings` 接口现在被 Cloudflare 盯防，不带其前端那串客户端参数（device_id/client_id/app_ver…）直接 403 拦截页，且原实现 `credentials:'omit'` 把登录态也剥了（接口需登录，未登录 401）。修复：从本页已发过的请求里原样抄一份参数（resource timing），带登录态请求；未登录或参数未就绪时静默跳过本轮。
+
 ## 0.40.0 - 2026-08-26
 
 - **fomo 推送接入 985monitor SSE 实时通道，延迟降到秒级**。检查确认服务端链路已就绪（采集器 publish 即 `_sse_push` 广播、`event: fomo` 帧实测可达）；插件后台以 fetch 流订阅 `/api/events-stream`（MV3 无 EventSource），只消费 fomo 帧：瘦身入缓存（按 key 去重）→ 即时通知 GMGN 标签页 → 前台立即取缓存重摆（命中控频内 stale 分支，零额外 HTTP）。

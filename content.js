@@ -1141,6 +1141,23 @@ ${flapTooltipText(info)}
     return m && m[1] in FOMO_NETWORK_ID ? m[1] : '';
   }
 
+  // GMGN 的 API 被 Cloudflare 盯着：不带它前端那串客户端参数（device_id/client_id/
+  // app_ver…）就是 403 拦截页。参数不自己编——从本页已经发过的请求里原样抄一份
+  // （resource timing 里有完整 URL），一次抄到后缓存本会话。
+  let markedApiQuery = '';
+  function gmgnApiQuery() {
+    if (markedApiQuery) return markedApiQuery;
+    try {
+      const src = performance.getEntriesByType('resource')
+        .map((entry) => entry.name)
+        .find((u) => u.includes('gmgn.ai/') && u.includes('device_id='));
+      if (src) markedApiQuery = src.split('?')[1] || '';
+    } catch {
+      // resource timing 不可用
+    }
+    return markedApiQuery;
+  }
+
   async function loadMarkedHoldings() {
     const chain = currentChain();
     if (!chain) return;
@@ -1149,6 +1166,8 @@ ${flapTooltipText(info)}
     if (!people.length) return void (markedMap = new Map());
     if (markedCache.chain === chain && Date.now() - markedCache.at < MARKED_TTL) return;
     if (markedLoading) return;
+    const apiQuery = gmgnApiQuery();
+    if (!apiQuery) return; // 页面还没发过带参请求，等下一轮再抄
     markedLoading = true;
     const next = new Map();
     try {
@@ -1156,8 +1175,9 @@ ${flapTooltipText(info)}
         try {
           // 契约取自 GMGN 自己的取数代码：eth 链地址要小写
           const addr = chain === 'eth' ? person.address.toLowerCase() : person.address;
-          const res = await fetch(`https://gmgn.ai/api/v1/wallet_holdings/${chain}/${addr}?limit=50`, {
-            credentials: 'omit',
+          // credentials 带上：接口要登录态（未登录 401 → 本轮静默无数据）
+          const res = await fetch(`https://gmgn.ai/api/v1/wallet_holdings/${chain}/${addr}?limit=50&${apiQuery}`, {
+            credentials: 'include',
           });
           const body = await res.json().catch(() => null);
           const holdings = body?.data?.holdings || body?.holdings || [];
