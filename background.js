@@ -389,6 +389,14 @@ const FLAP_RPCS = [
   'https://bsc-dataseed1.defibit.io',
   'https://bsc-dataseed1.ninicoin.io',
 ];
+
+// 各链公共 RPC（端点逐个实测过能读 totalSupply/decimals）。
+// 供应量只用于算 fomo 持仓占比，读失败就不显示占比，不影响其它。
+const SUPPLY_RPCS = {
+  bsc: [...FLAP_RPCS, 'https://bsc-rpc.publicnode.com'],
+  eth: ['https://ethereum-rpc.publicnode.com'],
+  base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'],
+};
 const FLAP_TTL = 60000;
 const flapCache = new Map();
 
@@ -546,14 +554,16 @@ const supplyCache = new Map();
 
 async function tokenSupply({ chain, address, rpc }) {
   // 前缀也放宽大小写：校验和地址本身就是混合大小写，没必要在这里卡人
-  if (chain !== 'bsc' || !/^0x[a-fA-F0-9]{40}$/i.test(address || '')) {
+  const chainRpcs = SUPPLY_RPCS[String(chain || '').toLowerCase()];
+  if (!chainRpcs || !/^0x[a-fA-F0-9]{40}$/i.test(address || '')) {
     return { ok: false, reason: 'unsupported-chain' };
   }
-  const key = address.toLowerCase();
+  // 缓存按链隔离：不同链上可能有同名地址
+  const key = `${chain}:${address.toLowerCase()}`;
   if (supplyCache.has(key)) return { ok: true, supply: supplyCache.get(key) };
   // flapRpc 只打单个节点，节点回退在调用方——这里同样要逐个试，
-  // 否则一个节点抽风整项就没了。用户自定义 RPC 优先。
-  const endpoints = [rpc, ...FLAP_RPCS].filter(Boolean);
+  // 否则一个节点抽风整项就没了。用户自定义 RPC 只对 BSC 生效。
+  const endpoints = [chain === 'bsc' ? rpc : '', ...chainRpcs].filter(Boolean);
   let lastError = '';
   for (const endpoint of endpoints) {
     try {
