@@ -1127,8 +1127,8 @@ ${flapTooltipText(info)}
   // 而是查这几个被标注的钱包各自持有哪些币（人数个请求，缓存复用），
   // 再给命中的代币卡片打上 👤N。
   const MARKED_TTL = 120000;
-  let markedMap = new Map();      // 代币地址 -> [人名]
-  let markedCache = { chain: '', at: 0 };
+  let markedMap = new Map();      // 当前链的 代币地址 -> [人名]
+  const markedByChain = new Map(); // chain -> { map, at }（按链各自缓存，来回切链不重拉）
   let markedLoading = false;
 
   function getMarkedHolders() {
@@ -1164,14 +1164,22 @@ ${flapTooltipText(info)}
     if (settings.enableMarkedHolders === false) return void (markedMap = new Map());
     const people = getMarkedHolders();
     if (!people.length) return void (markedMap = new Map());
-    if (markedCache.chain === chain && Date.now() - markedCache.at < MARKED_TTL) return;
+    const cached = markedByChain.get(chain);
+    if (cached && Date.now() - cached.at < MARKED_TTL) {
+      if (markedMap !== cached.map) markedMap = cached.map;
+      return;
+    }
     if (markedLoading) return;
     const apiQuery = gmgnApiQuery();
     if (!apiQuery) return; // 页面还没发过带参请求，等下一轮再抄
     markedLoading = true;
     const next = new Map();
     try {
+      let first = true;
       for (const person of people) {
+        // 名单可以自己加人；人与人之间垫最小间隔，名单再大也不会突发打接口
+        if (!first) await new Promise((resolve) => setTimeout(resolve, 250));
+        first = false;
         try {
           // 契约取自 GMGN 自己的取数代码：eth 链地址要小写
           const addr = chain === 'eth' ? person.address.toLowerCase() : person.address;
@@ -1193,7 +1201,7 @@ ${flapTooltipText(info)}
         }
       }
       markedMap = next;
-      markedCache = { chain, at: Date.now() };
+      markedByChain.set(chain, { map: next, at: Date.now() });
     } finally {
       markedLoading = false;
     }
