@@ -1101,10 +1101,22 @@ ${flapTooltipText(info)}
     document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
       const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
       if (!token) return;
-      const native = findNativeTaxChip(card);
-      // 币名那一行本来就挤（名称 + 税标 + 成交额 + 市值），塞进去会被裁掉，
-      // 所以单独在它下面起一行放徽章。
-      const row = flapOwnRow(card, native);
+      // findNativeTaxChip 要正则遍历整卡后代,几百张战壕卡每秒跑一遍是大头。
+      // 徽章行已建好(且卡片没被虚拟列表复用成别的币)就不用再找原生税标。
+      let row = card.dataset.gdhFlapKey === token ? card.querySelector(':scope .gdh-flap-row') : null;
+      let native = null;
+      if (!row) {
+        card.dataset.gdhFlapKey = token;
+        native = findNativeTaxChip(card);
+        // 找到的原生税标打个标记,后续轮次直接找回——链上 info 是异步到的,
+        // 藏原生标签发生在 info 就绪之后,那时不能丢了它的引用。
+        if (native) native.setAttribute('data-gdh-flap-native', '1');
+        // 币名那一行本来就挤（名称 + 税标 + 成交额 + 市值），塞进去会被裁掉，
+        // 所以单独在它下面起一行放徽章。
+        row = flapOwnRow(card, native);
+      } else {
+        native = card.querySelector('[data-gdh-flap-native]');
+      }
       put(row || card, token, native);
     });
 
@@ -1303,15 +1315,14 @@ ${flapTooltipText(info)}
 
     // 追踪推送卡：只挂在币名那一格里。GMGN 改版后若该格 testid 变了、找不到，
     // 宁可不显示也不 fallback 到整张卡片——那样徽章会乱位、盖住币名。
-    // 表格模式挂到「名称」列（较宽，不挤）；卡片模式仍跟在币名后面。
-    // 两种模式都找不到落点就不显示，绝不 fallback 到整行——那会盖住币名。
-    const tableMode = isTrackerTableMode();
+    // 两种布局都挂在「币种」列末尾（实测表格模式该列 131px、flex + gap，
+    // 徽章跟在币名/时长后完整可见不裁切）。0.44.0 曾挂到名称列——那一格不是
+    // flex，徽章被换行到下一行把整行撑乱，已回退。
+    // 找不到落点就不显示，绝不 fallback 到整行——那会盖住币名。
     trackerCards().forEach((card) => {
       const addr = card.dataset.gdhTrackAddr;
       if (!addr) return;
-      const host = tableMode
-        ? card.querySelector(TRACKER_MAKER_CELL)
-        : card.querySelector(TRACKER_SYMBOL_CELL);
+      const host = card.querySelector(TRACKER_SYMBOL_CELL);
       if (host) ensureMarkedBadge(host, addr);
       else { card.querySelector(':scope .gdh-marked')?.remove(); }
     });
@@ -4531,7 +4542,7 @@ ${flapTooltipText(info)}
 
   function fomoFeedRelTime(ts) {
     const diff = Math.max(0, Date.now() - ts);
-    if (diff < 60000) return `${Math.max(1, Math.floor(diff / 1000))}s`;
+    if (diff < 60000) return `${Math.max(5, Math.ceil(diff / 5000) * 5)}s`;
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
     return `${Math.floor(diff / 86400000)}d`;
@@ -5034,7 +5045,17 @@ ${flapTooltipText(info)}
     }
   }
 
+  let lastFullScanAt = 0;
+  let scanCostEma = 0;
+
   function scanVisibleCards() {
+    // 单轮耗时的指数均值决定全量间隔:页面越重扫得越省。徽章/卡片最多晚 2~3 秒
+    // 出现,换整页不卡。间隔内的 mutation 扫描请求同样吞掉(rAF 通道也走这里)。
+    const gap = scanCostEma > 50 ? 3000 : scanCostEma > 25 ? 2000 : 900;
+    const now = Date.now();
+    if (now - lastFullScanAt < gap) return;
+    lastFullScanAt = now;
+    const t0 = performance.now();
     document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState);
     scanCalloutBlacklist();
     scanManifestoToasts();
@@ -5045,6 +5066,10 @@ ${flapTooltipText(info)}
     scanHoldingSurge();
     scanFomoPanel();
     scanFomoFeed();
+    const cost = performance.now() - t0;
+    scanCostEma = scanCostEma ? scanCostEma * 0.7 + cost * 0.3 : cost;
+    // 诊断口:documentElement 上可读单轮耗时/均值(不在 observer 的 attributeFilter 里,不会自触发)
+    try { document.documentElement.setAttribute('data-gdh-perf', `${Math.round(cost)}|${Math.round(scanCostEma)}`); } catch { /* 忽略 */ }
   }
 
   // 滚动中虚拟列表每帧回收/重建行，MutationObserver 会被打成一片。
@@ -5197,7 +5222,17 @@ ${flapTooltipText(info)}
   document.addEventListener('pointermove', positionTooltip, true);
   document.addEventListener('scroll', scheduleScrollScan, true);
 
-  const observer = new MutationObserver(scheduleScan);
+  // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
+  // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-fomofeed-pin, .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      const target = record.target instanceof Element ? record.target : record.target?.parentElement;
+      if (target && target.closest(GDH_SELF_SELECTOR)) continue;
+      scheduleScan();
+      return;
+    }
+  });
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
