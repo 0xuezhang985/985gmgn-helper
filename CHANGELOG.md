@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.4 - 2026-08-27
+
+- **fomo 持仓占比补齐 Solana 与 Robinhood**（0.44.3 只补了 ETH/Base）。之前卡在"必须用各链 RPC 读 totalSupply"的思路上，而 Solana/Robinhood 的公共 RPC 都要付费或带 key。实际上 GMGN 自己的代币接口所有链通用且直接返回 `total_supply`（已是人类可读单位）——实测 Solana CATE 9.64 亿、Robinhood HOOD10 10 亿。
+  - 现在取供应量优先走 GMGN 接口（全链覆盖），EVM 链保留直读链上作兜底（接口异常时仍能出数）。
+  - 至此 BSC / ETH / Base / Solana / Robinhood 的持仓占比都能正常显示。
+
 ## 0.44.3 - 2026-08-27
 
 - **fomo 持仓占比支持 ETH 与 Base**（修"有些链的币不显示持仓占比"）。占比要用代币总供应量换算，而取供应量的实现写死了 `chain !== 'bsc'` 就直接返回 unsupported-chain——只有 BSC 能算出占比，其它链一律空白。现在按链走各自的公共 RPC（端点逐个实测过能读 totalSupply/decimals），供应量缓存也改为按链隔离。

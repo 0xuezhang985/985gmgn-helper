@@ -3439,7 +3439,8 @@ ${flapTooltipText(info)}
     if (fomoStats.supply > 0) return;
     chrome.runtime.sendMessage({
       type: 'token-supply',
-      payload: { chain: route.chain, address: route.address, rpc: settings.flapRpc || '' },
+      // apiQuery：页面自身请求的客户端参数，后台拿它去打 GMGN 接口（全链取供应量）
+      payload: { chain: route.chain, address: route.address, rpc: settings.flapRpc || '', apiQuery: gmgnApiQuery() },
     })
       .then((res) => {
         if (res?.ok && res.supply > 0) {

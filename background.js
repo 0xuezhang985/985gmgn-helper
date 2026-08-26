@@ -552,15 +552,52 @@ async function flapTokenInfo({ token, rpc }) {
 // 供应量基本不变，长缓存；只支持 EVM 链（沿用 Flap 那条 RPC 通道）。
 const supplyCache = new Map();
 
-async function tokenSupply({ chain, address, rpc }) {
+// GMGN 自己的代币信息接口:所有链通用(sol/robinhood/evm 都返回 total_supply,
+// 已是人类可读单位、不用再按 decimals 换算)。实测 Solana CATE 9.64 亿、
+// Robinhood HOOD10 10 亿。参数与登录态对齐页面自身请求,否则被 Cloudflare 挡。
+async function gmgnTokenSupply(chain, address, apiQuery) {
+  if (!apiQuery) return 0;
+  try {
+    const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chain, addresses: [address] }),
+    });
+    if (!res.ok) return 0;
+    const body = await res.json().catch(() => null);
+    const item = body?.data?.[0];
+    const raw = item?.total_supply ?? item?.max_supply ?? item?.circulating_supply;
+    const supply = Number(raw);
+    return Number.isFinite(supply) && supply > 0 ? supply : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function tokenSupply({ chain, address, rpc, apiQuery }) {
   // 前缀也放宽大小写：校验和地址本身就是混合大小写，没必要在这里卡人
-  const chainRpcs = SUPPLY_RPCS[String(chain || '').toLowerCase()];
-  if (!chainRpcs || !/^0x[a-fA-F0-9]{40}$/i.test(address || '')) {
+  const chainKey = String(chain || '').toLowerCase();
+  const chainRpcs = SUPPLY_RPCS[chainKey];
+  // 地址格式:EVM 是 0x40 位,Solana 是 base58 32~44 位
+  const looksEvm = /^0x[a-fA-F0-9]{40}$/i.test(address || '');
+  const looksSol = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address || '');
+  if (!chainKey || (!looksEvm && !looksSol)) {
     return { ok: false, reason: 'unsupported-chain' };
   }
   // 缓存按链隔离：不同链上可能有同名地址
-  const key = `${chain}:${address.toLowerCase()}`;
+  const key = `${chainKey}:${address.toLowerCase()}`;
   if (supplyCache.has(key)) return { ok: true, supply: supplyCache.get(key) };
+
+  // 先问 GMGN 接口：所有链通用（Solana / Robinhood 只有这条路走得通）
+  const viaGmgn = await gmgnTokenSupply(chain, address, apiQuery);
+  if (viaGmgn > 0) {
+    supplyCache.set(key, viaGmgn);
+    return { ok: true, supply: viaGmgn };
+  }
+
+  // 兜底：EVM 链直读链上（GMGN 接口挂了/没带上页面参数时仍能出数）
+  if (!chainRpcs || !looksEvm) return { ok: false, reason: 'unsupported-chain' };
   // flapRpc 只打单个节点，节点回退在调用方——这里同样要逐个试，
   // 否则一个节点抽风整项就没了。用户自定义 RPC 只对 BSC 生效。
   const endpoints = [chain === 'bsc' ? rpc : '', ...chainRpcs].filter(Boolean);
