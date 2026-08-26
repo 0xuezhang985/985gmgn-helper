@@ -168,7 +168,10 @@
     mergeFomoHolders: true,
     markedHolders: [
       { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
-      { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
+      { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰大号1' },
+      { address: '0xbd28edf53231cd121a963b4b119d3cc4cb3a368a', name: '阿峰大号2' },
+      { address: '0x92deb73329794a517f1a8be4925446300f159400', name: '阿峰小号1' },
+      { address: '0xb9c970411d72584649c2a41c9d5996df582fcc06', name: '阿峰小号2' },
       { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
     ],
     enableMarkedHolders: true,
@@ -5038,6 +5041,21 @@ ${flapTooltipText(info)}
     if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
   });
 
+  // 名单默认扩到 6 人（阿峰拆四个号）。保存过设置的老用户 storage 里是旧 3 人
+  // 名单，会盖住新默认——做一次性合并：缺的默认地址补进去；旧默认名"阿峰"跟着
+  // 改名（用户自己改过的备注不动）。markedListMigratedV2 标记防重跑。
+  chrome.storage.local.get({ markedHolders: null, markedListMigratedV2: false }, (stored) => {
+    if (stored.markedListMigratedV2 || !Array.isArray(stored.markedHolders)) return;
+    const list = stored.markedHolders.slice();
+    const have = new Set(list.map((x) => String(x?.address || '').toLowerCase()));
+    for (const def of DEFAULTS.markedHolders) {
+      if (!have.has(def.address.toLowerCase())) list.push({ ...def });
+    }
+    const afeng = list.find((x) => String(x?.address || '').toLowerCase() === '0xbf004bff64725914ee36d03b87d6965b0ced4903');
+    if (afeng && afeng.name === '阿峰') afeng.name = '阿峰大号1';
+    chrome.storage.local.set({ markedHolders: list, markedListMigratedV2: true });
+  });
+
   chrome.storage.local.get({ [MANI_SEEN_STORE_KEY]: [] }, (stored) => {
     mergeManiSeenKeys(stored[MANI_SEEN_STORE_KEY]);
     maniSeenLoaded = true;
@@ -5062,6 +5080,7 @@ ${flapTooltipText(info)}
         loadMonitorFomoCfg(change.newValue);
         continue;
       }
+      if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       // 翻译开关切换：混排卡整体重建，译文才会随开关出现/移除
       if (key === 'fomoTranslate') {
         settings[key] = change.newValue;

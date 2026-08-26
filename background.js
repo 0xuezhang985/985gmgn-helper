@@ -766,6 +766,37 @@ let markedFeedFailCount = 0;
 let markedFeedBackoffUntil = 0;
 let markedFeedInflight = null;
 
+// 用户在插件设置里自己加的标注人物，上报进服务器全量采集名单（服务器幂等去重、
+// 30 人上限）。上报成功后下一轮采集（≤3 分钟）就有他的完整持仓；期间插件端的
+// 页面直拉兜底照常工作，无缝切换。SW 生命周期内每地址只报一次。
+const MARKED_REPORT_URL = 'https://www.985monitor.xyz/api/marked-watch';
+const markedReported = new Set();
+
+async function reportCustomMarked(doc) {
+  try {
+    const { markedHolders } = await chrome.storage.local.get('markedHolders');
+    if (!Array.isArray(markedHolders)) return;
+    const serverSet = new Set((doc?.people || []).map((p) => String(p?.address || '').toLowerCase()));
+    for (const person of markedHolders) {
+      const addr = String(person?.address || '').toLowerCase();
+      if (!/^0x[a-f0-9]{40}$/.test(addr) || serverSet.has(addr) || markedReported.has(addr)) continue;
+      markedReported.add(addr);
+      try {
+        await fetch(MARKED_REPORT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-gdh-token': 'gdh-marked-watch-2026' },
+          body: JSON.stringify({ address: addr, name: String(person?.name || '').slice(0, 24) }),
+        });
+      } catch {
+        markedReported.delete(addr); // 网络失败下次再报
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  } catch {
+    // storage 不可用
+  }
+}
+
 async function fetchMarkedFeed() {
   if (markedFeedInflight) return markedFeedInflight;
   const now = Date.now();
@@ -788,6 +819,7 @@ async function fetchMarkedFeed() {
       markedFeedEtag = response.headers.get('ETag') || '';
       markedFeedFailCount = 0;
       markedFeedBackoffUntil = 0;
+      reportCustomMarked(doc); // 后台跑，不阻塞返回
       return { ok: true, ...doc };
     } catch (error) {
       markedFeedFailCount += 1;

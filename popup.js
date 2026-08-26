@@ -24,7 +24,10 @@ const DEFAULTS = {
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
-    { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰' },
+    { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰大号1' },
+    { address: '0xbd28edf53231cd121a963b4b119d3cc4cb3a368a', name: '阿峰大号2' },
+    { address: '0x92deb73329794a517f1a8be4925446300f159400', name: '阿峰小号1' },
+    { address: '0xb9c970411d72584649c2a41c9d5996df582fcc06', name: '阿峰小号2' },
     { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
   ],
   hideLightningTrade: true,
