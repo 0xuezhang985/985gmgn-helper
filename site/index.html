@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>better gmgn — 给 GMGN 加一层交易辅助</title>
+<meta name="description" content="better gmgn：Chrome 扩展。fomo 买卖事件秒级混排进 GMGN 追踪流、标注人物完整持仓徽章、重点 Dev 高亮、持仓异动大卡片提醒。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:oklch(16% .012 80);
+  --bg-raise:oklch(20% .014 80);
+  --ink:oklch(88% .02 85);
+  --ink-dim:oklch(66% .018 82);
+  --ink-faint:oklch(46% .014 80);
+  --gold:oklch(80% .14 85);
+  --gold-deep:oklch(68% .13 80);
+  --gold-wash:oklch(80% .14 85 / .09);
+  --line:oklch(30% .02 82);
+  --green:oklch(72% .17 152);
+  --red:oklch(66% .19 25);
+  --purple:oklch(66% .16 300);
+  --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  --sans:-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+::selection{background:var(--gold);color:oklch(18% .03 80)}
+a{color:var(--gold);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+.wrap{max-width:1060px;margin:0 auto;padding:0 clamp(20px,4vw,48px)}
+
+/* ── hero ─────────────────────────── */
+header{padding:clamp(64px,12vh,140px) 0 clamp(48px,8vh,96px);border-bottom:1px solid var(--line)}
+.kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--gold-deep);margin-bottom:20px}
+h1{font-size:clamp(52px,9vw,108px);font-weight:900;letter-spacing:-.035em;line-height:1.02;color:var(--gold)}
+.tagline{font-size:clamp(18px,2.4vw,23px);color:var(--ink);max-width:33em;margin:28px 0 8px;font-weight:400}
+.tagline b{color:var(--gold);font-weight:700}
+.sub{color:var(--ink-dim);max-width:42em;margin-bottom:40px}
+.dl{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:15px 30px;border-radius:10px;font-size:16.5px;font-weight:700;transition:transform .18s cubic-bezier(.22,1,.36,1),background .18s}
+.btn:hover{text-decoration:none;transform:translateY(-2px)}
+.btn-gold{background:var(--gold);color:oklch(20% .04 80)}
+.btn-gold:hover{background:oklch(85% .14 85)}
+.btn-ghost{border:1px solid var(--line);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--gold-deep);color:var(--gold)}
+.ver{font-family:var(--mono);font-size:13px;color:var(--ink-faint)}
+.ver b{color:var(--ink-dim);font-weight:400}
+.env{margin-top:18px;font-size:13.5px;color:var(--ink-faint)}
+
+/* ── 章节骨架 ─────────────────────── */
+section{padding:clamp(56px,9vh,110px) 0;border-bottom:1px solid var(--line)}
+.sec-head{display:flex;align-items:baseline;gap:18px;margin-bottom:14px}
+.sec-no{font-family:var(--mono);font-size:15px;color:var(--gold-deep)}
+h2{font-size:clamp(28px,4vw,40px);font-weight:900;letter-spacing:-.02em}
+.sec-lede{color:var(--ink-dim);max-width:46em;margin-bottom:44px}
+
+/* ── 功能组:文字 + 界面重绘 ───────── */
+.feat{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:clamp(28px,5vw,64px);align-items:start;padding:36px 0}
+.feat + .feat{border-top:1px dashed var(--line)}
+.feat.flip{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
+.feat.flip .demo{order:-1}
+.feat h3{font-size:22px;font-weight:900;margin-bottom:6px}
+.feat h3 em{font-style:normal;color:var(--gold)}
+.feat .how{font-size:13.5px;color:var(--ink-faint);margin-top:14px}
+.feat ul{list-style:none;margin-top:14px}
+.feat li{padding:7px 0 7px 26px;position:relative;color:var(--ink-dim)}
+.feat li::before{content:'▸';position:absolute;left:2px;color:var(--gold-deep)}
+.feat li b{color:var(--ink);font-weight:700}
+
+/* 界面重绘公共 */
+.demo{background:oklch(13% .01 80);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:12.5px;line-height:1.5;overflow:hidden}
+.demo-cap{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:.08em;margin-bottom:10px}
+.g-row{position:relative;display:flex;flex-direction:column;gap:3px;padding:9px 12px 9px 16px;border-bottom:1px solid oklch(24% .012 80)}
+.g-row .stripe{position:absolute;left:0;top:0;bottom:0;width:5px}
+.g-line{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.g-av{width:15px;height:15px;border-radius:50%;flex:none;background:oklch(34% .03 80);display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:var(--ink-dim)}
+.g-name{font-weight:700;color:var(--ink)}
+.g-act-buy{color:var(--green);font-size:12px}
+.g-act-sell{color:var(--red);font-size:12px}
+.g-time{margin-left:auto;color:var(--ink-faint);font-family:var(--mono);font-size:11px}
+.g-mc{margin-left:auto;color:var(--ink-faint);font-size:11.5px}
+.g-sym{color:oklch(80% .01 80)}
+.g-usd-b{color:var(--green);font-weight:700}
+.g-usd-s{color:var(--red);font-weight:700}
+.g-fomo{font-size:9px;line-height:13px;color:var(--ink-faint);border:1px solid oklch(34% .015 80);border-radius:3px;padding:0 4px;flex:none}
+.g-badge{background:var(--gold-wash);color:var(--gold);border-radius:4px;padding:0 5px;font-size:11px;flex:none}
+.g-tip{margin:8px 4px 2px;background:oklch(22% .016 82);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--ink-dim);width:fit-content}
+.g-zh{margin-top:4px;padding:3px 8px;border-radius:4px;background:oklch(60% .09 250 / .12);color:var(--ink-dim);font-size:11.5px;width:fit-content}
+.g-star{color:var(--gold)}
+.g-pnl-fire{font-size:10px}
+.demo .hl{background:var(--gold-wash)}
+
+/* ── 安装步骤 ─────────────────────── */
+.steps{counter-reset:step;max-width:660px}
+.step{display:grid;grid-template-columns:56px 1fr;gap:20px;padding:22px 0}
+.step + .step{border-top:1px dashed var(--line)}
+.step::before{counter-increment:step;content:counter(step,decimal-leading-zero);font-family:var(--mono);font-size:30px;font-weight:700;color:var(--gold);line-height:1.1}
+.step h4{font-size:17px;font-weight:700;margin-bottom:4px}
+.step p{color:var(--ink-dim);font-size:15px}
+.step kbd{font-family:var(--mono);font-size:12.5px;background:var(--bg-raise);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 7px;color:var(--ink)}
+.step .path{font-family:var(--mono);font-size:13px;color:var(--gold-deep)}
+.alt{margin-top:40px;padding:20px 24px;border:1px dashed var(--line);border-radius:12px;max-width:660px;color:var(--ink-dim);font-size:14.5px}
+.alt b{color:var(--ink)}
+
+/* ── FAQ ─────────────────────────── */
+details{border-top:1px solid var(--line);max-width:760px}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;padding:18px 0;font-weight:700;font-size:16.5px;list-style:none;display:flex;justify-content:space-between;gap:16px}
+summary::after{content:'+';font-family:var(--mono);color:var(--gold-deep);font-size:20px;transition:transform .2s cubic-bezier(.22,1,.36,1)}
+details[open] summary::after{transform:rotate(45deg)}
+summary::-webkit-details-marker{display:none}
+details .a{padding:0 0 20px;color:var(--ink-dim);max-width:60ch}
+details .a code{font-family:var(--mono);font-size:13px;color:var(--gold-deep)}
+
+/* ── 隐私清单 ─────────────────────── */
+.priv{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2px;max-width:860px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.priv div{background:var(--bg);padding:20px 22px}
+.priv b{display:block;font-size:15px;margin-bottom:4px}
+.priv span{color:var(--ink-faint);font-size:13.5px;line-height:1.6;display:block}
+
+footer{padding:56px 0 72px;color:var(--ink-faint);font-size:14px;display:flex;gap:28px;flex-wrap:wrap;align-items:baseline}
+footer .sp{flex:1}
+
+/* 入场 */
+.rv{opacity:0;transform:translateY(14px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+.rv.in{opacity:1;transform:none}
+@media (max-width:760px){
+  .feat,.feat.flip{grid-template-columns:1fr}
+  .feat.flip .demo{order:0}
+  .step{grid-template-columns:44px 1fr;gap:12px}
+}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="kicker">CHROME / EDGE 扩展 · 985monitor 出品</div>
+  <h1>better gmgn</h1>
+  <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
+  <p class="sub">不替代 GMGN，是长在 GMGN 上的一层。所有名单、配置、登录令牌只存你浏览器本地。</p>
+  <div class="dl">
+    <a class="btn btn-gold" id="dl-exe" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">下载安装器 (.exe)</a>
+    <a class="btn btn-ghost" id="dl-zip" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">zip 手动安装</a>
+    <span class="ver" id="ver">最新版本 <b>加载中…</b></span>
+  </div>
+  <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
+</header>
+
+<section class="wrap" id="features">
+  <div class="sec-head rv"><span class="sec-no">01</span><h2>它做什么</h2></div>
+  <p class="sec-lede rv">每个功能都对应真实实现，下面的界面示意是插件实际呈现的忠实重绘。</p>
+
+  <div class="feat rv">
+    <div>
+      <h3>fomo 买卖，<em>秒级</em>混进追踪流</h3>
+      <ul>
+        <li><b>按真实时间戳</b>插在你钱包追踪推送之间，和原生卡同样式同高，只用一个 <b>[fomo]</b> 小标区分来源</li>
+        <li>走 985monitor 的 SSE 实时通道，事件发生到上屏<b>秒级</b></li>
+        <li>观点卡完整显示正文，非中文<b>自动补本机译文</b>（原文保留）</li>
+        <li>左缘链条色与 GMGN Fusion 一致：BSC 黄、Solana 紫、Robinhood 绿，你自定义过的链色自动跟随</li>
+        <li>点卡片站内无刷新跳代币页；屏蔽的人、关掉的事件类型，直接沿用你在 985monitor 网页上的配置</li>
+      </ul>
+      <p class="how">摆放不碰 GMGN 的虚拟列表布局：行位移 + 绝对定位塞缝，任何情况不打乱原列表。</p>
+    </div>
+    <div class="demo" aria-hidden="true">
+      <div class="demo-cap">追踪流 · 混排实景</div>
+      <div class="g-row"><span class="stripe" style="background:#eab204"></span>
+        <div class="g-line"><span class="g-av"></span><span class="g-name">学长刮刀</span><span class="g-act-buy">✨建仓</span><span class="g-star">★</span><span class="g-time">1m</span></div>
+        <div class="g-line"><span style="color:var(--green)">0.068</span><span class="g-av"></span><span class="g-sym">CLIPPY</span><span class="g-mc">MC:$42.7K</span></div>
+      </div>
+      <div class="g-row hl"><span class="stripe" style="background:#9fc700"></span>
+        <div class="g-line"><span class="g-av"></span><span class="g-name">frank</span><span class="g-act-sell">卖出</span><span class="g-fomo">fomo</span><span class="g-time">1m</span></div>
+        <div class="g-line"><span class="g-usd-s">$1.8K</span><span class="g-av"></span><span class="g-sym">ROBIN</span><span class="g-mc">MC:$257.1K</span></div>
+      </div>
+      <div class="g-row" style="border-bottom:none"><span class="stripe" style="background:#eab204"></span>
+        <div class="g-line"><span class="g-av"></span><span class="g-name">牛来吃百倍</span><span class="g-act-sell">清仓 -64%</span><span class="g-time">2m</span></div>
+        <div class="g-line"><span style="color:var(--red)">0.224</span><span class="g-av"></span><span class="g-sym">PAPERCLIPS</span><span class="g-mc">MC:$20.1K</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat flip rv">
+    <div>
+      <h3>标注人物<em>完整持仓</em>徽章</h3>
+      <ul>
+        <li>战壕、搜索、追踪里的每个币旁标 <b>👤N</b>：几个被标注的人正持有它，悬停看人名和金额</li>
+        <li>持仓由 985 服务器用 <b>GMGN 官方 API 全量采集</b>（每人几百条，不止前 50），3 分钟一轮，插件零请求负担</li>
+        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人也会自动进服务器采集</b></li>
+        <li>$30 以下灰尘仓不算持有，不会满屏误标</li>
+      </ul>
+    </div>
+    <div class="demo" aria-hidden="true">
+      <div class="demo-cap">搜索结果 · 悬停徽章</div>
+      <div class="g-row" style="border-bottom:none">
+        <div class="g-line"><span class="g-av"></span><span class="g-sym" style="font-weight:700;color:var(--ink)">memestock</span><span class="g-badge">👤3</span><span class="g-mc">MC:$1.2M</span></div>
+        <div class="g-tip">持有这个币的标注人物：奶牛($28.1K)、阿峰大号1($3.4K)、枯坐($890)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat rv">
+    <div>
+      <h3>fomo 浮窗：<em>谁在持有，他最近行不行</em></h3>
+      <ul>
+        <li>GMGN 代币页右下角 <b>fomo</b> 按钮：该币在 fomo 上的持仓者、盈亏、平均入场、观点、成交流水</li>
+        <li>每个人带 <b>7 天盈亏标记</b>（🔥顶级 / 🟢盈利 / 🔴亏损 / 💀重亏），金额和收益率取低档，大户小赚不算高手</li>
+        <li>标出他按持仓量在<b>链上持有者表排第几</b>；榜上的人带 🏆 名次与 🧠聪明钱 / ⭐KOL 标</li>
+        <li>英文观点自动翻中文，原文保留；顶部 fomo 持有人数与持仓占比统计</li>
+        <li>登录一次 fomo.family，之后令牌<b>自动续期永续</b>，不用再管</li>
+      </ul>
+    </div>
+    <div class="demo" aria-hidden="true">
+      <div class="demo-cap">fomo 浮窗 · 持仓者</div>
+      <div class="g-row">
+        <div class="g-line"><span class="g-av"></span><span class="g-name">SnekCalls</span><span class="g-pnl-fire">🔥+$20.4K</span><span class="g-time">14.4时</span></div>
+        <div class="g-line"><span style="color:var(--ink)">$98</span><span style="color:var(--red);font-size:11.5px">-$82 (-45.5%)</span><span class="g-mc">链上#7</span></div>
+      </div>
+      <div class="g-row" style="border-bottom:none">
+        <div class="g-line"><span class="g-av"></span><span class="g-name">iamnotlosing</span><span style="font-size:10px">🟢+$13.5K</span><span class="g-time">4.1时</span></div>
+        <div class="g-line" style="white-space:normal;color:var(--ink-dim);font-size:12px">this one has legs, adding on dips</div>
+        <div class="g-zh">这个还有空间，逢低加仓</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat flip rv">
+    <div>
+      <h3>追踪流<em>降噪</em>与重点盯防</h3>
+      <ul>
+        <li><b>特别关注</b>：追踪卡和钱包列表上点 ☆，该钱包的推送高亮显示，每个钱包可单独设色，可置顶 10 秒</li>
+        <li><b>屏蔽某个币</b>：币名旁长按 🚫 一秒，这个币的全部推送从追踪里消失，随时恢复</li>
+        <li><b>重点 Dev 高亮</b>：自己维护 Dev 名单，这些 Dev 发的币在战壕里带醒目边框；每张战壕卡常显 Dev 战绩（迁移数 / 发币数 / 峰值市值）</li>
+        <li><b>喊单黑名单</b>：一键屏蔽喊单人；新宣言画面正中大卡片弹出</li>
+        <li><b>持仓暴涨提醒</b>：持仓币短时急涨弹 🚀 大卡片，阈值与冷却可配；价格提醒也接管为大卡片，涨绿跌红</li>
+        <li><b>Flap 税收徽章</b>：Flap 币显示税率与分红去向（🪙BNB | 💎→GMEB），数据浏览器直读链上，点徽章跳官方税收详情页</li>
+      </ul>
+    </div>
+    <div class="demo" aria-hidden="true">
+      <div class="demo-cap">战壕卡 · Dev 战绩 + Flap 徽章</div>
+      <div class="g-row" style="border-bottom:none">
+        <div class="g-line"><span class="g-av"></span><span class="g-sym" style="font-weight:700;color:var(--ink)">HODL</span><span class="g-badge">🪙GMEB | 💎→GMEB</span><span class="g-mc">MC $34.6K</span></div>
+        <div class="g-line"><span style="font-family:var(--mono);font-size:11px;color:var(--gold)">迁3发7·43%·峰$2.1M</span><span class="g-mc">V $8.1K</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" id="install">
+  <div class="sec-head rv"><span class="sec-no">02</span><h2>安装</h2></div>
+  <p class="sec-lede rv">推荐用安装器：装完带自动升级，插件发现新版会在图标上亮绿色 UP 角标，点一下完成升级（升级前自动备份，失败回滚）。</p>
+  <div class="steps rv">
+    <div class="step"><div><h4>下载并运行安装器</h4><p>点上面的金色按钮下载 <span class="path" id="exe-name">985gmgn-helper-setup.exe</span>，双击运行，点「安装 / 修复」。安装器不常驻后台。</p></div></div>
+    <div class="step"><div><h4>打开浏览器扩展页</h4><p>安装器会自动打开扩展程序页并把插件路径复制到剪贴板。打开右上角<b>「开发者模式」</b>开关。</p></div></div>
+    <div class="step"><div><h4>加载已解压的扩展程序</h4><p>点左上角「加载已解压的扩展程序」，在文件夹选择框按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴路径并回车。</p></div></div>
+    <div class="step"><div><h4>选中 Extension 文件夹</h4><p>点「选择文件夹」完成。图标出现在工具栏即安装成功。</p></div></div>
+  </div>
+  <div class="alt rv"><b>不想跑 exe？</b>下载 zip 解压，<code style="font-family:var(--mono);font-size:13px">chrome://extensions</code> 开启开发者模式，加载已解压的扩展程序，选解压出来的文件夹。这样装不带自动升级，更新要手动重复一遍。</div>
+</section>
+
+<section class="wrap" id="setup">
+  <div class="sec-head rv"><span class="sec-no">03</span><h2>初次配置</h2></div>
+  <p class="sec-lede rv">三个网页各打开一次，插件把它们串起来。之后就不用管了。</p>
+  <div class="steps rv">
+    <div class="step"><div><h4>登录 gmgn.ai</h4><p>你平时怎么用就怎么用。战壕高亮、追踪流增强、混排立即生效。</p></div></div>
+    <div class="step"><div><h4>登录一次 fomo.family</h4><p>fomo 浮窗和混排需要你自己的 fomo 登录态。登录后插件自动接管令牌并<b>永续续期</b>（含页面加载抢跑同步，不会再反复要求重登）。没账号也不影响其它功能。</p></div></div>
+    <div class="step"><div><h4>打开一次 985monitor</h4><p>你在 <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a> 网页上的 fomo 屏蔽名单、每个人的事件开关，自动同步给插件的混排过滤。之后每次改动都会跟过来。</p></div></div>
+  </div>
+  <p class="rv" style="margin-top:28px;color:var(--ink-faint);font-size:14px">所有开关在插件图标的配置页里：混排事件类型、只看当前链、标注名单、提醒阈值与冷却、各功能独立开关。</p>
+</section>
+
+<section class="wrap" id="privacy">
+  <div class="sec-head rv"><span class="sec-no">04</span><h2>数据边界</h2></div>
+  <p class="sec-lede rv">装扩展前该问的问题，直接回答。</p>
+  <div class="priv rv">
+    <div><b>配置存哪</b><span>名单、开关、登录令牌全部在浏览器本地 chrome.storage，不上传任何服务器。</span></div>
+    <div><b>fomo 令牌</b><span>只从 fomo.family 页面读取，只发给 fomo 官方 API 与 privy 官方续期接口。</span></div>
+    <div><b>行情数据</b><span>走 GMGN 公开接口与 985monitor 公开数据，不带你的登录凭据。</span></div>
+    <div><b>翻译</b><span>浏览器内置本地模型，内容不出你的电脑。</span></div>
+    <div><b>开源</b><span>代码全部公开：<a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub 仓库</a>，逐版本 CHANGELOG 与 <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私说明</a>。</span></div>
+    <div><b>唯一上行</b><span>你自己在名单里添加标注人物时，该地址会进入 985 服务器的持仓采集名单（这正是功能本身）。</span></div>
+  </div>
+</section>
+
+<section class="wrap" id="faq">
+  <div class="sec-head rv"><span class="sec-no">05</span><h2>常见问题</h2></div>
+  <div class="rv">
+    <details><summary>装好了但页面上什么都没出现</summary><div class="a">先刷新 GMGN 页面。仍没有就到 <code>chrome://extensions</code> 确认插件已启用，点一下刷新按钮 ⟳ 再回来。</div></details>
+    <details><summary>fomo 浮窗提示登录态过期</summary><div class="a">按浮窗里的引导去 fomo.family 登录一次即可。v0.42.1 起令牌自动续期含抢跑同步，正常不会再频繁过期；若仍反复出现，去 GitHub 提 issue 或群里说一声。</div></details>
+    <details><summary>混排里怎么没有 fomo 卡片</summary><div class="a">混排只在追踪流所在页面工作，且需要 985monitor 数据源可达。检查插件配置页里「fomo 推送混排」总开关；刚打开页面等几秒，事件是按真实时间锚定的，比当前可见推送更老的事件会随滚动补位。</div></details>
+    <details><summary>👤 徽章不显示</summary><div class="a">确认浏览器已登录 GMGN。持仓数据 2~3 分钟一轮更新；$30 以下的灰尘仓不计为持有。</div></details>
+    <details><summary>升级会丢配置吗</summary><div class="a">不会。扩展 ID 固定，名单与配置都在原地；安装器升级前自动备份，失败回滚，保留最近 3 份备份。</div></details>
+    <details><summary>和 985monitor 是什么关系</summary><div class="a">同一个作者的两件东西：985monitor 是网页端多源监控台，插件把其中 fomo 数据流和你的配置接进 GMGN 页面内。插件可独立使用，配置同步是可选增强。</div></details>
+  </div>
+</section>
+
+<footer class="wrap">
+  <span>better gmgn · 985monitor 出品</span>
+  <span class="sp"></span>
+  <a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/CHANGELOG.md" target="_blank" rel="noopener">更新日志</a>
+  <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+  // 最新版本与直链:GitHub API 拿最新 release 资产;失败保持 releases/latest 兜底
+  fetch('https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/latest')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((rel) => {
+      if (!rel || !Array.isArray(rel.assets)) return;
+      const exe = rel.assets.find((a) => /setup-v[\d.]+\.exe$/.test(a.name));
+      const zip = rel.assets.find((a) => /helper-v[\d.]+\.zip$/.test(a.name));
+      if (exe) {
+        document.getElementById('dl-exe').href = exe.browser_download_url;
+        document.getElementById('exe-name').textContent = exe.name;
+      }
+      if (zip) document.getElementById('dl-zip').href = zip.browser_download_url;
+      const tag = String(rel.tag_name || '').replace(/^v/, '');
+      if (tag) document.getElementById('ver').innerHTML = '最新版本 <b>v' + tag + '</b>';
+    })
+    .catch(() => {});
+
+  // 入场:交错淡入
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) { entry.target.classList.add('in'); io.unobserve(entry.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px' });
+  document.querySelectorAll('.rv').forEach((el, i) => {
+    el.style.transitionDelay = Math.min(i % 4 * 60, 180) + 'ms';
+    io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>
