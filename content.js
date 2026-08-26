@@ -1166,8 +1166,13 @@ ${flapTooltipText(info)}
   }
 
   function currentChain() {
+    // 代币页是 /bsc/token/0x...，但追踪流页是 /follow?chain=bsc——只认路径段的话
+    // 追踪流上取不到链，标注持仓不加载、👤 徽章永远不出现。两种都认。
     const m = location.pathname.match(/^\/([a-z0-9]+)\//);
-    return m && m[1] in FOMO_NETWORK_ID ? m[1] : '';
+    if (m && m[1] in FOMO_NETWORK_ID) return m[1];
+    const q = new URLSearchParams(location.search).get('chain');
+    const chain = String(q || '').toLowerCase();
+    return chain in FOMO_NETWORK_ID ? chain : '';
   }
 
   // GMGN 的 API 被 Cloudflare 盯着：不带它前端那串客户端参数（device_id/client_id/
@@ -1298,17 +1303,25 @@ ${flapTooltipText(info)}
 
     // 追踪推送卡：只挂在币名那一格里。GMGN 改版后若该格 testid 变了、找不到，
     // 宁可不显示也不 fallback 到整张卡片——那样徽章会乱位、盖住币名。
+    // 表格模式挂到「名称」列（较宽，不挤）；卡片模式仍跟在币名后面。
+    // 两种模式都找不到落点就不显示，绝不 fallback 到整行——那会盖住币名。
+    const tableMode = isTrackerTableMode();
     trackerCards().forEach((card) => {
       const addr = card.dataset.gdhTrackAddr;
       if (!addr) return;
-      const row = card.querySelector(TRACKER_SYMBOL_CELL);
-      if (row) ensureMarkedBadge(row, addr);
+      const host = tableMode
+        ? card.querySelector(TRACKER_MAKER_CELL)
+        : card.querySelector(TRACKER_SYMBOL_CELL);
+      if (host) ensureMarkedBadge(host, addr);
       else { card.querySelector(':scope .gdh-marked')?.remove(); }
     });
 
-    // 搜索结果等其它地方：凡是指向代币页的链接都算一行，不依赖组件名
+    // 搜索结果等其它地方：凡是指向代币页的链接都算一行，不依赖组件名。
+    // 追踪流的行本身也是 <a href="/token/...">，必须排除——否则会在行上重复挂一个
+    // 徽章、盖住币名（表格模式下尤其明显，那里没有 TrackerListItem 标记可认）。
     document.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
       if (link.closest(TRACKER_ITEM_SELECTOR)) return;
+      if (link.querySelector(TRACKER_SYMBOL_CELL) || link.querySelector(TRACKER_MAKER_CELL)) return;
       const m = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/);
       if (!m) return;
       ensureMarkedBadge(link, m[1]);
@@ -1534,6 +1547,12 @@ ${flapTooltipText(info)}
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
   const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
   const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
+  // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
+  // 表格模式下币种列只有 120px 且 overflow-hidden，徽章塞进去会盖住币名。
+  const TRACKER_TABLE_HEADER = '[data-testid="follow-tracking-table-header"]';
+  function isTrackerTableMode() {
+    return !!document.querySelector(TRACKER_TABLE_HEADER);
+  }
 
   /**
    * 找出页面上的追踪推送卡。
@@ -4731,13 +4750,20 @@ ${flapTooltipText(info)}
 
   /** 追踪行的绝对定位包装（GMGN 实测：data-index 层 absolute + inline top/height 公式布局）。 */
   function fomoFeedFixedRow(cardEl) {
-    const wrap = cardEl.parentElement;
-    if (!(wrap instanceof HTMLElement)) return null;
-    if ((wrap.style.position || '') !== 'absolute') return null;
-    const top = Number.parseFloat(wrap.style.top);
-    const h = Number.parseFloat(wrap.style.height) || wrap.offsetHeight;
-    if (!Number.isFinite(top) || !(h > 0)) return null;
-    return { wrap, top, h };
+    // 卡片模式:追踪卡的父层就是虚拟化外壳(行高 64.5)。
+    // 表格模式:卡在 内容DIV → <a> → 外壳(行高 44)，隔了两层。所以向上找几层，
+    // 不能只看 parentElement——找不到会误判成流式布局，退化去插兄弟节点造成重叠。
+    let wrap = cardEl.parentElement;
+    for (let level = 0; level < 4 && wrap instanceof HTMLElement; level += 1) {
+      if ((wrap.style.position || '') === 'absolute') {
+        const top = Number.parseFloat(wrap.style.top);
+        const h = Number.parseFloat(wrap.style.height) || wrap.offsetHeight;
+        if (Number.isFinite(top) && h > 0) return { wrap, top, h };
+        return null;
+      }
+      wrap = wrap.parentElement;
+    }
+    return null;
   }
 
   function teardownFomoFeed() {
