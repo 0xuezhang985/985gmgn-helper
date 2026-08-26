@@ -1122,11 +1122,32 @@ ${flapTooltipText(info)}
       });
     });
 
-    // 代币页：跟在页面标题后面
+    // 代币页：标题那一行是横向 flex（名称+价格+市值），塞进去会被 ellipsis 裁掉。
+    // 越过横向 flex 行、插到它外面，让徽章独立成一整行（纵向流的下一行）。
     const route = currentTokenRoute();
     if (route && FLAP_ADDR_RE.test(route.address)) {
       const title = document.querySelector('h1, [class*="text-[20px]"], [class*="text-2xl"]');
-      if (title) put(title, route.address);
+      if (title) {
+        let row = document.querySelector('.gdh-flap-row--detail');
+        if (!row) {
+          // 从标题往上越过横向排列的 flex 容器，落到最外层横向行
+          let anchor = title;
+          let el = title.parentElement;
+          for (let level = 0; level < 4 && el instanceof HTMLElement; level += 1) {
+            const cs = getComputedStyle(el);
+            if (cs.display.includes('flex') && !cs.flexDirection.includes('column')) {
+              anchor = el;
+              el = el.parentElement;
+            } else break;
+          }
+          if (anchor.parentElement) {
+            row = document.createElement('div');
+            row.className = 'gdh-flap-row gdh-flap-row--detail';
+            anchor.insertAdjacentElement('afterend', row);
+          }
+        }
+        put(row || title, route.address);
+      }
     }
   }
 

@@ -2144,3 +2144,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   left: 0; top: 0; bottom: 0;
   width: 5px;
 }
+
+/* 代币详情页的徽章独立行：整宽可换行，长分配串不再被标题行裁掉 */
+.gdh-flap-row--detail { width: 100%; flex-basis: 100%; min-width: 0; margin-top: 3px; }
+.gdh-flap-row--detail .gdh-flap { white-space: normal; line-height: 1.5; margin-left: 0; }
