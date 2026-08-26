@@ -144,7 +144,7 @@
   // 战壕卡：GMGN 自己写的 testid 优先，构建期的 sentry 标记作兼容
   // （实测有用户页面上一个 data-sentry-* 都没有，只认后者会让整块功能哑掉）
   const CARD_SELECTOR =
-    '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
+    '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href*="/token/0x"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   const DEFAULTS = {
@@ -158,6 +158,7 @@
     enableSpecialWallet: true,
     enableRemindAlert: true,
     enableFomoPanel: true,
+    fomoPanelFolded: false,
     fomoPanelPos: null,
     fomoTranslate: true,
     fomoPanelOpen: false,
@@ -979,7 +980,10 @@
     let existing = card.querySelector(':scope .gdh-flap-row');
     if (existing) return existing;
 
-    // 以原生税标所在的那一行为锚；没有税标就退到卡片信息区的第一行
+    // 徽章行紧跟币名行（0.33.1 起的定位，塞进币名行会被 ellipsis 裁掉）。
+    // 多出这一行会顶到下面 GMGN 的定高指标行（Dev 战绩挂在那儿，
+    // `h-[24px] overflow-hidden`），所以给卡片打上标记，由 CSS 放开
+    // 卡片与指标行的高度限制——不是互相挤，而是把卡片撑高、都完整显示。
     let anchor = native;
     if (anchor) {
       const cardWidth = card.getBoundingClientRect().width || 1;
@@ -992,6 +996,7 @@
     }
     if (!anchor || !anchor.parentElement) return null;
 
+    card.dataset.gdhFlapRoom = '1';
     const line = document.createElement('div');
     line.className = 'gdh-flap-row';
     anchor.insertAdjacentElement('afterend', line);
@@ -2039,6 +2044,40 @@ ${flapTooltipText(info)}
     }
   }
 
+  /**
+   * 跨链关注钱包：直接打 GMGN 自己的 follow 接口（它带 chain 字段，
+   * 本来就支持给别的链加），省掉"先切链再粘地址"。
+   * 参数与登录态对齐页面自身请求，否则被 Cloudflare 挡。
+   */
+  async function followWalletOnChain(chain, address, name) {
+    const apiQuery = gmgnApiQuery();
+    if (!apiQuery) return { ok: false, reason: '页面参数未就绪，稍后再试' };
+    try {
+      const res = await fetch(`https://gmgn.ai/api/v1/follow/follow_wallet?${apiQuery}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain, address, name: name || '' }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+      if (body && body.code !== undefined && body.code !== 0) {
+        return { ok: false, reason: String(body.msg || body.message || `code ${body.code}`).slice(0, 40) };
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: String(error?.message || '网络错误').slice(0, 40) };
+    }
+  }
+
+  /** 按地址格式判断它属于哪条链：EVM(0x40hex) / Solana(base58 32~44)。认不出返回空。 */
+  function detectAddressChain(value) {
+    const v = String(value || '').trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(v)) return 'evm';
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v)) return 'sol';
+    return '';
+  }
+
   function ensureAddWalletStarRow() {
     const ctx = findAddWalletDialog();
     if (!ctx) return;
@@ -2124,6 +2163,58 @@ ${flapTooltipText(info)}
     box.addEventListener('change', syncEnabled);
     syncEnabled();
     renderDots();
+
+    // 跨链添加：GMGN 的添加钱包只往当前链加，粘 Solana 地址到 EVM 页面会失败。
+    // 这里按地址格式认出目标链，不匹配就给一条提示 + 一键切到那条链的钱包页。
+    const hint = document.createElement('div');
+    hint.className = 'gdh-addw-cross';
+    row.appendChild(hint);
+
+    const syncCrossChain = () => {
+      const value = String(ctx.addrInput.value || '').trim();
+      const target = detectAddressChain(value);
+      const current = currentChain() || currentChainSlug();
+      // 只有 EVM ↔ Solana 这种真正不兼容的组合才提示。
+      // EVM 地址在任意 EVM 链页面(bsc/eth/base/robinhood…)都通用，不该报。
+      const currentIsSol = current === 'sol';
+      const mismatch = target === 'sol' ? !currentIsSol : currentIsSol;
+      if (!value || !target || !current || !mismatch) {
+        hint.replaceChildren();
+        hint.classList.remove('is-on');
+        return;
+      }
+      hint.classList.add('is-on');
+      const targetChain = target === 'sol' ? 'sol' : 'bsc';
+      const label = target === 'sol' ? 'Solana' : 'EVM';
+      const tip = document.createElement('span');
+      tip.textContent = `${label} 地址（当前 ${current.toUpperCase()} 页）`;
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'gdh-addw-cross__go';
+      go.textContent = `直接加到 ${targetChain.toUpperCase()}`;
+      go.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        go.disabled = true;
+        go.textContent = '添加中…';
+        const name = String(ctx.nameInput?.value || '').trim();
+        const res = await followWalletOnChain(targetChain, value, name);
+        if (res.ok) {
+          go.textContent = '已添加 ✓';
+          // 顺带按弹窗里的设置登记特别关注，和同链添加行为一致
+          if (box.checked) addSpecialWallet(value, name, chosen, pinBox.checked);
+          window.setTimeout(() => { syncCrossChain(); }, 1500);
+        } else {
+          go.disabled = false;
+          go.textContent = '重试';
+          tip.textContent = `添加失败：${res.reason || '未知错误'}`;
+        }
+      });
+      hint.replaceChildren(tip, go);
+    };
+    ctx.addrInput.addEventListener('input', syncCrossChain);
+    ctx.addrInput.addEventListener('paste', () => setTimeout(syncCrossChain, 0));
+    syncCrossChain();
 
     // 提交时把地址+备注登记为特别关注（捕获阶段先于 GMGN 关闭弹窗）。
     ctx.submit.addEventListener('click', () => {
@@ -2460,7 +2551,7 @@ ${flapTooltipText(info)}
     item.addEventListener('click', () => {
       dismiss();
       if (card.isConnected) card.click();
-      else if (href) window.location.assign(href);
+      else if (href) gdhSpaNavigate(href);
     });
     strip.prepend(item);
     window.setTimeout(dismiss, SPECIAL_PIN_MS);
@@ -2644,7 +2735,8 @@ ${flapTooltipText(info)}
     card.addEventListener('mouseleave', arm);
     card.addEventListener('click', () => {
       dismiss();
-      if (info.href) window.location.assign(info.href);
+      // 站内无刷新跳转，和点追踪流里的 fomo 卡一致
+      if (info.href) gdhSpaNavigate(info.href);
     });
     arm();
     container.appendChild(card);
@@ -3642,6 +3734,19 @@ ${flapTooltipText(info)}
       refreshFomoTranslations();
     });
 
+    // 折叠：只留「持有人数 / 持仓占比」两块统计，列表和标签栏收起。
+    // 与右上角的 × 不同——× 是整个面板收走，这个是留一条概览。
+    const fold = document.createElement('button');
+    fold.type = 'button';
+    fold.className = 'gdh-fomo__fold';
+    fold.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      settings.fomoPanelFolded = !settings.fomoPanelFolded;
+      chrome.storage.local.set({ fomoPanelFolded: settings.fomoPanelFolded });
+      applyFomoFold();
+    });
+
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'gdh-fomo__close';
@@ -3653,7 +3758,7 @@ ${flapTooltipText(info)}
       setFomoOpen(false);
       scheduleScan();
     });
-    head.append(title, tabs, tr, dbg, open, close);
+    head.append(title, tabs, tr, dbg, open, fold, close);
 
     const stats = document.createElement('div');
     stats.className = 'gdh-fomo__stats';
@@ -3662,7 +3767,21 @@ ${flapTooltipText(info)}
     list.className = 'gdh-fomo__list';
     panel.append(head, stats, list);
     makeFomoDraggable(panel, head);
+    applyFomoFold(panel);
     return panel;
+  }
+
+  /** 折叠态：面板只显示两块统计，其余收起。按钮图标与提示同步。 */
+  function applyFomoFold(target) {
+    const panel = target || fomoPanelEl;
+    if (!panel) return;
+    const folded = settings.fomoPanelFolded === true;
+    panel.classList.toggle('is-folded', folded);
+    const btn = panel.querySelector('.gdh-fomo__fold');
+    if (btn) {
+      btn.textContent = folded ? '▣' : '▤';
+      btn.title = folded ? '展开完整面板' : '折叠：只看持有人数与持仓占比';
+    }
   }
 
   function ensureFomoLauncher() {
@@ -4167,7 +4286,7 @@ ${flapTooltipText(info)}
       dismiss();
       // 原 chip 还在就代理点击（走 GMGN 自己的 SPA 路由），否则整页跳转。
       if (chip.isConnected) chip.click();
-      else window.location.assign(href);
+      else gdhSpaNavigate(href);
     });
     arm();
     container.appendChild(toast);
@@ -4269,7 +4388,7 @@ ${flapTooltipText(info)}
           ? document.querySelector(`${MANIFESTO_SELECTOR}[data-gdh-mani-ulid="${item.ulid}"]`)
           : null;
         if (chip instanceof HTMLElement && chip.isConnected) chip.click();
-        else window.location.assign(`/bsc/token/${token}`);
+        else gdhSpaNavigate(`/bsc/token/${token}`);
       });
       list.appendChild(row);
     }

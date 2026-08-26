@@ -2130,8 +2130,10 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 /* 固定行高模式（GMGN 现网追踪流）：卡片绝对定位塞进位移腾出的缝里 */
 .gdh-fomofeed.is-abs {
   position: absolute;
-  left: 4px;
-  width: calc(100% - 8px);
+  /* 与 GMGN 原生行同左缘同宽：竖条(left:0)才能和原生的彩色竖条对齐。
+     之前留了 4px 内缩，视觉上整条卡片连同竖条都比原生行右移了一截。 */
+  left: 0;
+  width: 100%;
   margin: 0;
   z-index: 2;
 }
@@ -2184,3 +2186,58 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomofeed.is-swap .gdh-fomofeed__tamt { color: #eab308; }
 .gdh-fomofeed__tmc { flex: 1; min-width: 0; justify-content: flex-end; padding-right: 10px; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed.is-table .gdh-fomofeed__thesis { padding: 0 10px 8px 6px; }
+
+/* 带 Flap 徽章行的战壕卡：放开高度限制，让币名行、徽章行、Dev 战绩行都完整显示，
+   而不是互相挤。GMGN 原生把卡片和指标行写死了高度（h-[64px] / h-[24px] +
+   overflow:hidden），多出一行就会把 Dev 战绩顶出可视区。 */
+[data-gdh-flap-room="1"] {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+[data-gdh-flap-room="1"] [class*="h-[24px]"] {
+  height: auto !important;
+  min-height: 24px !important;
+  overflow: visible !important;
+}
+
+/* fomo 面板折叠：只保留两块统计（持有人数 / 持仓占比） */
+.gdh-fomo__fold {
+  border: none;
+  background: transparent;
+  color: #8a93a6;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.gdh-fomo__fold:hover { color: #f5b83d; background: rgba(245, 184, 61, 0.12); }
+.gdh-fomo-panel.is-folded { height: auto !important; min-height: 0 !important; resize: none; }
+.gdh-fomo-panel.is-folded .gdh-fomo__list,
+.gdh-fomo-panel.is-folded .gdh-fomo__tabs { display: none !important; }
+.gdh-fomo-panel.is-folded .gdh-fomo__stats { margin-bottom: 0; }
+
+/* 添加钱包：跨链提示（粘了别的链的地址时出现） */
+.gdh-addw-cross { display: none; }
+.gdh-addw-cross.is-on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(245, 184, 61, 0.12);
+  color: #f5b83d;
+  font-size: 12px;
+}
+.gdh-addw-cross__go {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.gdh-addw-cross__go:hover { background: rgba(245, 184, 61, 0.2); }

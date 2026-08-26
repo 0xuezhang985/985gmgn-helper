@@ -7,7 +7,7 @@
   // 战壕卡：GMGN 自己写的 testid 优先，构建期的 sentry 标记作兼容
   // （实测有用户页面上一个 data-sentry-* 都没有，只认后者会让整块功能哑掉）
   const CARD_SELECTOR =
-    '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
+    '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href*="/token/0x"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
   // 持仓面板行：data-sentry-component 是构建期标记，实测有用户页面完全没有它
@@ -35,8 +35,10 @@
     const direct = card.getAttribute('data-gmgn-fee-mode-card');
     if (normalizeAddress(direct)) return direct.toLowerCase();
 
+    // 链段不能写死 bsc：在 /robinhood/token/、/base/token/ 等页面上，
+    // 写死会取不到地址 → 整张战壕卡被跳过 → Dev 战绩、创建者数据全不渲染。
     const match = (card.getAttribute('href') || '').match(
-      /\/bsc\/token\/(0x[a-fA-F0-9]{40})/,
+      /\/[a-z0-9]+\/token\/(0x[a-fA-F0-9]{40})/i,
     );
     return match ? match[1].toLowerCase() : '';
   }
