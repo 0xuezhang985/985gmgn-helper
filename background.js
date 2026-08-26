@@ -90,17 +90,19 @@ chrome.runtime.onStartup.addListener(() => {
 
 // fomo 登录态保活：privy access 令牌约 1 小时过期。原来只在用到 fomo 接口时
 // 被动续期——几天不开 fomo 面板，refresh 链会闲置到过期，又得回去重新登录。
-// 这里改成主动：每 30 分钟查一次，快过期（<40 分钟）就用 refresh 续上；
-// 续期成功会照旧写回开着的 fomo.family 页，两边共用同一条轮换链。
+// 这里改成主动：每 10 分钟查一次，只在快过期（剩余 <12 分钟）时才续——
+// 每次续期都会轮换 refresh（旧的作废），续得越勤、和网页 localStorage 失同步的
+// 分叉窗口越多，所以把轮换压到每小时恰好一次。写回照旧 + fomo-early.js 在页面
+// 加载最早时刻抢先同步，双保险。
 const FOMO_KEEPALIVE_ALARM = '985gmgn-fomo-keepalive';
-chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 30 });
+chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 10 });
 
 async function fomoKeepAlive() {
   try {
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
     if (!fomoToken?.refresh) return; // 从未登录/会话已被 privy 作废，无从保活
     const exp = Number(fomoToken.exp) || 0;
-    if (exp && exp - Date.now() > 40 * 60000) return; // 还很新鲜，不动
+    if (exp && exp - Date.now() > 12 * 60000) return; // 还很新鲜，不动
     await fomoRefreshSession();
   } catch {
     // 网络抖动等，下一轮再试

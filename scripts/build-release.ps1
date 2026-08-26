@@ -19,6 +19,7 @@ $files = @(
   'background.js',
   'page-bridge.js',
   'content.js',
+  'fomo-early.js',
   'styles.css',
   'popup.html',
   'popup.css',

@@ -53,6 +53,11 @@
       try {
         chrome.storage.local.get('fomoToken', (stored) => {
           const cur = stored?.fomoToken;
+          // 和插件存的完全一致（fomo-early 抢跑写回后的常态）就不用再写一遍
+          if (cur?.token === token && (cur.refresh || '') === (refresh || '')) {
+            lastSent = stamp;
+            return;
+          }
           // 插件可能刚用 refresh_token 续出了更晚过期的新令牌；网页里的旧令牌不准
           // 把它盖回去——旧 refresh 已被 privy 轮换作废，盖回去等于"总是要重新登录"。
           if (cur?.token && cur.token !== token && cur.exp && pageExp && cur.exp >= pageExp) return;
