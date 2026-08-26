@@ -734,7 +734,61 @@ async function connectFomoSse() {
   fomoSseBackoff = Math.min(120000, fomoSseBackoff * 2);
 }
 
+
+// ---- 标注人物完整持仓（985monitor 服务器发布，GMGN 官方 API 采集）----
+// 服务器每 3 分钟翻页拉全名单完整持仓；插件只读这份共享产物，
+// 不再各自打 GMGN 的接口（旧的前 50 条上限也随之消失）。
+const MARKED_FEED_URL = 'https://www.985monitor.xyz/marked-holdings.json';
+const MARKED_FEED_MIN_INTERVAL_MS = 120000;
+let markedFeedCache = { doc: null, fetchedAt: 0 };
+let markedFeedEtag = '';
+let markedFeedFailCount = 0;
+let markedFeedBackoffUntil = 0;
+let markedFeedInflight = null;
+
+async function fetchMarkedFeed() {
+  if (markedFeedInflight) return markedFeedInflight;
+  const now = Date.now();
+  if ((now - markedFeedCache.fetchedAt < MARKED_FEED_MIN_INTERVAL_MS || now < markedFeedBackoffUntil)) {
+    return markedFeedCache.doc ? { ok: true, ...markedFeedCache.doc, stale: true } : { ok: false, reason: 'not-ready' };
+  }
+  markedFeedInflight = (async () => {
+    try {
+      const headers = markedFeedEtag ? { 'If-None-Match': markedFeedEtag } : {};
+      const response = await fetch(MARKED_FEED_URL, { headers, cache: 'no-store' });
+      if (response.status === 304) {
+        markedFeedCache.fetchedAt = Date.now();
+        markedFeedFailCount = 0;
+        return { ok: true, ...markedFeedCache.doc };
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const doc = await response.json();
+      if (!doc || !Array.isArray(doc.holdings)) throw new Error('bad-body');
+      markedFeedCache = { doc, fetchedAt: Date.now() };
+      markedFeedEtag = response.headers.get('ETag') || '';
+      markedFeedFailCount = 0;
+      markedFeedBackoffUntil = 0;
+      return { ok: true, ...doc };
+    } catch (error) {
+      markedFeedFailCount += 1;
+      markedFeedBackoffUntil = Date.now() + Math.min(15 * 60000, 60000 * Math.pow(2, markedFeedFailCount - 1));
+      if (markedFeedCache.doc) return { ok: true, ...markedFeedCache.doc, stale: true };
+      return { ok: false, reason: 'fetch-failed', message: String(error?.message || '').slice(0, 120) };
+    } finally {
+      markedFeedInflight = null;
+    }
+  })();
+  return markedFeedInflight;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'marked-holdings') {
+    fetchMarkedFeed()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'fomo-feed') {
     connectFomoSse(); // SW 被唤醒时顺手把实时流接回来（已连着则立即返回）
     fetchFomoFeed()

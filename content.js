@@ -1170,13 +1170,49 @@ ${flapTooltipText(info)}
       return;
     }
     if (markedLoading) return;
-    const apiQuery = gmgnApiQuery();
-    if (!apiQuery) return; // 页面还没发过带参请求，等下一轮再抄
     markedLoading = true;
     const next = new Map();
+    const MARKED_MIN_USD = 30; // 灰尘/空投仓不算"持有"，不然满屏误标
+    const put = (token, label) => {
+      const key = String(token).toLowerCase();
+      if (!next.has(key)) next.set(key, []);
+      const list = next.get(key);
+      if (!list.includes(label)) list.push(label);
+    };
+    // ① 优先吃 985 服务器发布的完整持仓（GMGN 官方 API 采集、3 分钟一轮、
+    //    翻页拉全——旧的"每人前 50 条"上限没了）。名字以本地备注为准。
+    const covered = new Set();
+    try {
+      const server = await new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ type: 'marked-holdings' }, (resp) => {
+            resolve(chrome.runtime.lastError ? null : resp);
+          });
+        } catch {
+          resolve(null);
+        }
+      });
+      if (server?.ok && Array.isArray(server.holdings)) {
+        const nameOf = new Map(people.map((p2) => [p2.address.toLowerCase(), p2.name]));
+        for (const h of server.holdings) {
+          if (h?.chain !== chain) continue;
+          const person = String(h.a || '').toLowerCase();
+          if (!nameOf.has(person)) continue;
+          covered.add(person);
+          if (!(Number(h.u) >= MARKED_MIN_USD)) continue;
+          put(h.t, `${nameOf.get(person)}(${fomoUsd(h.u)})`);
+        }
+      }
+    } catch {
+      // 服务器数据拿不到就全走直拉
+    }
+    // ② 名单里服务器没覆盖的人（用户自己加的）——退回 GMGN 直拉（前 50 条口径）
+    const rest = people.filter((p2) => !covered.has(p2.address.toLowerCase()));
+    const apiQuery = rest.length ? gmgnApiQuery() : '';
     try {
       let first = true;
-      for (const person of people) {
+      for (const person of rest) {
+        if (apiQuery === '') break; // 页面还没发过带参请求，下一轮再补这部分
         // 名单可以自己加人；人与人之间垫最小间隔，名单再大也不会突发打接口
         if (!first) await new Promise((resolve) => setTimeout(resolve, 250));
         first = false;
@@ -1192,9 +1228,9 @@ ${flapTooltipText(info)}
           for (const h of holdings) {
             const token = String(h?.token?.address || h?.address || '').toLowerCase();
             if (!token) continue;
-            if (!next.has(token)) next.set(token, []);
-            const list = next.get(token);
-            if (!list.includes(person.name)) list.push(person.name);
+            const usd = Number(h?.usd_value);
+            if (Number.isFinite(usd) && usd < MARKED_MIN_USD) continue;
+            put(token, Number.isFinite(usd) ? `${person.name}(${fomoUsd(usd)})` : person.name);
           }
         } catch {
           // 单个人失败不影响其他人
