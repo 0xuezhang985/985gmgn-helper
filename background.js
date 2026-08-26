@@ -88,8 +88,28 @@ chrome.runtime.onStartup.addListener(() => {
   checkForUpdate();
 });
 
+// fomo 登录态保活：privy access 令牌约 1 小时过期。原来只在用到 fomo 接口时
+// 被动续期——几天不开 fomo 面板，refresh 链会闲置到过期，又得回去重新登录。
+// 这里改成主动：每 30 分钟查一次，快过期（<40 分钟）就用 refresh 续上；
+// 续期成功会照旧写回开着的 fomo.family 页，两边共用同一条轮换链。
+const FOMO_KEEPALIVE_ALARM = '985gmgn-fomo-keepalive';
+chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 30 });
+
+async function fomoKeepAlive() {
+  try {
+    const { fomoToken } = await chrome.storage.local.get('fomoToken');
+    if (!fomoToken?.refresh) return; // 从未登录/会话已被 privy 作废，无从保活
+    const exp = Number(fomoToken.exp) || 0;
+    if (exp && exp - Date.now() > 40 * 60000) return; // 还很新鲜，不动
+    await fomoRefreshSession();
+  } catch {
+    // 网络抖动等，下一轮再试
+  }
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) checkForUpdate();
+  if (alarm.name === FOMO_KEEPALIVE_ALARM) fomoKeepAlive();
 });
 
 // ---- fomo 代币数据（在后台取，避开页面 CORS/CSP；令牌由 fomo.family 上的脚本捕获）----
