@@ -13,6 +13,11 @@
   // 持仓面板行：data-sentry-component 是构建期标记，实测有用户页面完全没有它
   // （追踪流/钱包/徽章都因此栽过）。这里同时用「行内含代币页链接」反查兜底。
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
+  // 兜底只在持仓面板内找：全站扫 a[href*="/token/"] 会把战壕卡、搜索结果
+  // 也当成持仓行收进暴涨提醒清单，弹出"自己根本没有的币"。
+  // 锚点取自真实页面实测：持仓行的 data-sentry-source-file 是
+  // PositionTableColumns{Sol,Evm,...}.tsx，外层是 <table> + virtuoso 滚动容器。
+  const HOLDING_PANEL_SELECTOR = '[data-sentry-source-file^="PositionTable"], [data-sentry-source-file="Holding.tsx"]';
   const HOLDING_ROW_FALLBACK = 'a[href*="/token/"]';
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
   // 代币页「持有者」表格的行（实测自线上 DOM，不是紧凑列表的 HolderItemView）
@@ -294,7 +299,12 @@
     if (!fiberKey) return null;
     const pick = (value, depth) => {
       if (!value || typeof value !== 'object' || depth > 4) return null;
-      if (value.address && value.symbol && value.chain) return value;
+      // 光有 {chain,address,symbol} 不够——战壕卡/搜索结果的代币对象也长这样,
+      // 曾把满屏别人的币当成"我的持仓"报暴涨。必须再带一个"我的余额"类字段。
+      if (value.address && value.symbol && value.chain
+        && (value.balance !== undefined || value.usd_value !== undefined
+          || value.amount !== undefined || value.holding !== undefined
+          || value.unrealized_profit !== undefined)) return value;
       let keys;
       try { keys = Object.keys(value); } catch { return null; }
       for (const key of keys.slice(0, 50)) {
@@ -462,18 +472,34 @@
     }
   }
 
+  // 虚拟列表滚动时每帧回收/重建行，mutation 风暴会让 fiber 深遍历（每卡 16 层
+  // ×50 键×4 层递归）每帧全量跑——这是整页发粘的大头。rAF 合帧，滚动中降频。
+  // 声明必须在 scanCards 之前：它在函数体里赋值，声明放后面会命中 TDZ，
+  // 导致 scanCards 每次都从第一行崩掉（持仓行/追踪卡标记全部失效）。
+  let scanRafId = 0;
+  let lastScanAt = 0;
+  let scrollingUntil = 0;
+
   function scanCards() {
     scanScheduled = false;
+    scanRafId = 0;
     const holdingRows = new Set(document.querySelectorAll(HOLDING_ROW_SELECTOR));
     // 兜底：持仓面板里指向代币页的链接，往上找到能读出 {chain,address,symbol} 的那层。
     // fiber 读不到就不标记，不会误伤别处（战壕/搜索的链接读不出这三件套）。
-    document.querySelectorAll(HOLDING_ROW_FALLBACK).forEach((link) => {
-      if (link.closest(HOLDING_ROW_SELECTOR)) return;
-      let el = link;
-      for (let level = 0; level < 4 && el instanceof HTMLElement; level += 1) {
-        if (readHoldingToken(el)) { holdingRows.add(el); return; }
-        el = el.parentElement;
-      }
+    // 锚元素本身可能就是行（PositionTable* 打在行上），向上取到表格/滚动容器再扫
+    const panels = new Set();
+    document.querySelectorAll(HOLDING_PANEL_SELECTOR).forEach((anchor) => {
+      panels.add(anchor.closest('table, [data-testid="virtuoso-scroller"]') || anchor);
+    });
+    panels.forEach((panel) => {
+      panel.querySelectorAll(HOLDING_ROW_FALLBACK).forEach((link) => {
+        if (link.closest(HOLDING_ROW_SELECTOR)) return;
+        let el = link;
+        for (let level = 0; level < 4 && el instanceof HTMLElement; level += 1) {
+          if (readHoldingToken(el)) { holdingRows.add(el); return; }
+          el = el.parentElement;
+        }
+      });
     });
     holdingRows.forEach(scanHoldingRow);
     // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
@@ -499,11 +525,26 @@
     });
   }
 
+  function runScheduledScan() {
+    scanRafId = 0;
+    const now = Date.now();
+    if (now < scrollingUntil && now - lastScanAt < 150) {
+      scanScheduled = false;
+      scheduleScan();
+      return;
+    }
+    lastScanAt = now;
+    scanCards();
+  }
+
   function scheduleScan() {
     if (scanScheduled) return;
     scanScheduled = true;
-    window.setTimeout(scanCards, 0);
+    if (scanRafId) return;
+    scanRafId = window.requestAnimationFrame(runScheduledScan);
   }
+
+  document.addEventListener('scroll', () => { scrollingUntil = Date.now() + 200; }, true);
 
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.documentElement, {

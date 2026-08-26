@@ -3778,16 +3778,34 @@ ${flapTooltipText(info)}
     let changed = false;
     // page-bridge 会给持仓行打 data-gdh-hold-*，这里直接按属性找，
     // 不再依赖构建期的 sentry 标记（那个在部分用户页面上根本不存在）。
-    document.querySelectorAll('[data-gdh-hold-addr]').forEach((row) => {
+    const rows = [...document.querySelectorAll('[data-gdh-hold-addr]')];
+    const seenChains = new Set();
+    const seenKeys = new Set();
+    rows.forEach((row) => {
       const chain = row.getAttribute('data-gdh-hold-chain') || '';
       const address = row.getAttribute('data-gdh-hold-addr') || '';
       if (!chain || !address) return;
       const symbol = row.getAttribute('data-gdh-hold-symbol') || '';
       const key = `${chain}:${address}`;
+      seenChains.add(chain);
+      seenKeys.add(key);
       const prev = holdingWatchMap.get(key);
       if (!prev || prev.symbol !== symbol) changed = true;
       holdingWatchMap.set(key, { chain, address, symbol, at: Date.now() });
     });
+
+    // 对账：面板本轮渲染了某条链的持仓，那这条链上没出现的币就是已经卖掉的——
+    // 从清单里删掉。否则清单只增不减，清仓后的币一涨还会弹"你没有的持仓"提醒。
+    // 只对本轮真实看到过行的链做对账，面板没打开/没渲染时绝不误删。
+    if (seenChains.size) {
+      for (const [key, item] of [...holdingWatchMap]) {
+        if (!seenChains.has(item.chain)) continue;
+        if (seenKeys.has(key)) continue;
+        holdingWatchMap.delete(key);
+        holdingAlertedAt.delete(key);
+        changed = true;
+      }
+    }
     if (changed) scheduleHoldingSave();
   }
 
@@ -3837,10 +3855,13 @@ ${flapTooltipText(info)}
             if (pct < threshold) return;
             const address = String(token.address || p.address || '');
             const key = `${chain}:${address}`;
+            // 二次确认：一轮查价是异步的，期间清单可能已因对账移除该币（清仓）。
+            // 没在清单里就不弹——这是"提醒了自己没有的持仓"的最后一道闸。
+            const meta = holdingWatchMap.get(key);
+            if (!meta) return;
             const last = holdingAlertedAt.get(key) || 0;
             if (Date.now() - last < holdingCooldownMs()) return;
             holdingAlertedAt.set(key, Date.now());
-            const meta = holdingWatchMap.get(key);
             showRemindCard({
               href: `/${chain}/token/${address}`,
               dir: 'up',
@@ -5056,20 +5077,30 @@ ${flapTooltipText(info)}
     if (now - lastFullScanAt < gap) return;
     lastFullScanAt = now;
     const t0 = performance.now();
-    document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState);
-    scanCalloutBlacklist();
-    scanManifestoToasts();
-    ensureManifestoTab();
-    scanSpecialWallets();
-    scanFrontrunLightning();
-    scanRemindToasts();
-    scanHoldingSurge();
-    scanFomoPanel();
-    scanFomoFeed();
+    const parts = [];
+    const timed = (name, fn) => {
+      const s0 = performance.now();
+      fn();
+      const ms = performance.now() - s0;
+      if (ms >= 1) parts.push([name, ms]);
+    };
+    timed('trench', () => document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState));
+    timed('callout', scanCalloutBlacklist);
+    timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
+    timed('special', scanSpecialWallets);
+    timed('lightning', scanFrontrunLightning);
+    timed('remind', scanRemindToasts);
+    timed('surge', scanHoldingSurge);
+    timed('fomoPanel', scanFomoPanel);
+    timed('fomoFeed', scanFomoFeed);
     const cost = performance.now() - t0;
     scanCostEma = scanCostEma ? scanCostEma * 0.7 + cost * 0.3 : cost;
-    // 诊断口:documentElement 上可读单轮耗时/均值(不在 observer 的 attributeFilter 里,不会自触发)
-    try { document.documentElement.setAttribute('data-gdh-perf', `${Math.round(cost)}|${Math.round(scanCostEma)}`); } catch { /* 忽略 */ }
+    // 诊断口:总耗时|均值|top3 子任务。Console 里一句
+    //   document.documentElement.getAttribute('data-gdh-perf')
+    // 就能看到是谁在占资源。(该属性不在 observer 白名单里,不会自触发扫描)
+    const top = parts.sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([n, ms]) => `${n}:${Math.round(ms)}`).join(',');
+    try { document.documentElement.setAttribute('data-gdh-perf', `${Math.round(cost)}|${Math.round(scanCostEma)}|${top}`); } catch { /* 忽略 */ }
   }
 
   // 滚动中虚拟列表每帧回收/重建行，MutationObserver 会被打成一片。
@@ -5266,6 +5297,16 @@ ${flapTooltipText(info)}
     if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
   });
 
+  // 0.43~0.44.1 的持仓兜底识别过宽,把战壕/搜索里别人的币也攒进了暴涨监控清单
+  // （报"自己没有的持仓"）。识别已收紧，存量脏清单一次性清空——开一次持仓面板
+  // 就会按新规则重新攒起来。
+  chrome.storage.local.get({ holdingWatchPurgedV1: false }, (stored) => {
+    if (stored.holdingWatchPurgedV1) return;
+    settings.holdingWatchList = [];
+    holdingWatchMap = new Map();
+    chrome.storage.local.set({ holdingWatchList: [], holdingWatchPurgedV1: true });
+  });
+
   // 名单默认扩到 6 人（阿峰拆四个号）。保存过设置的老用户 storage 里是旧 3 人
   // 名单，会盖住新默认——做一次性合并：缺的默认地址补进去；旧默认名"阿峰"跟着
   // 改名（用户自己改过的备注不动）。markedListMigratedV2 标记防重跑。
@@ -5306,6 +5347,7 @@ ${flapTooltipText(info)}
         continue;
       }
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
+      if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
       // 翻译开关切换：混排卡整体重建，译文才会随开关出现/移除
       if (key === 'fomoTranslate') {
         settings[key] = change.newValue;
