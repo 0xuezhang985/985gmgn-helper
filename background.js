@@ -95,14 +95,27 @@ chrome.runtime.onStartup.addListener(() => {
 // 分叉窗口越多，所以把轮换压到每小时恰好一次。写回照旧 + fomo-early.js 在页面
 // 加载最早时刻抢先同步，双保险。
 const FOMO_KEEPALIVE_ALARM = '985gmgn-fomo-keepalive';
-chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 10 });
+// 用 create 的幂等性：同名闹钟已存在时不会重置计时。
+// 之前直接在模块顶层 create——service worker 每次休眠/唤醒都重跑一遍模块，
+// 闹钟被反复重建、计时永远归零，10 分钟的周期实际从来没走到过。
+chrome.alarms.get(FOMO_KEEPALIVE_ALARM).then((existing) => {
+  if (!existing) chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 5 });
+}).catch(() => {});
 
-async function fomoKeepAlive() {
+// 令牌实测总寿命约 70 分钟（不是整 1 小时）。SW 会被浏览器随时挂起，
+// 挂起期间不跑任何代码，所以阈值必须留足余量：剩不到一半寿命就续。
+const FOMO_REFRESH_AHEAD_MS = 35 * 60000;
+let fomoKeepAliveAt = 0;
+
+async function fomoKeepAlive(force) {
   try {
+    // 同一分钟内被多个入口触发时只做一次
+    if (!force && Date.now() - fomoKeepAliveAt < 60000) return;
+    fomoKeepAliveAt = Date.now();
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
     if (!fomoToken?.refresh) return; // 从未登录/会话已被 privy 作废，无从保活
     const exp = Number(fomoToken.exp) || 0;
-    if (exp && exp - Date.now() > 12 * 60000) return; // 还很新鲜，不动
+    if (exp && exp - Date.now() > FOMO_REFRESH_AHEAD_MS) return; // 还很新鲜，不动
     await fomoRefreshSession();
   } catch {
     // 网络抖动等，下一轮再试
@@ -883,6 +896,19 @@ async function fetchMarkedFeed() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // 每次页面来消息都顺手看一眼要不要续期。用户在用 GMGN 就一定有消息流（fomo 拉取、
+  // 徽章、混排…），比只靠 alarms 可靠得多——SW 被唤醒执行消息时闹钟可能还没到点。
+  fomoKeepAlive();
+
+  // 面板遇到 expired 时主动求续一次，续上就不用打扰用户重新登录
+  if (message?.type === 'fomo-force-refresh') {
+    fomoKeepAlive(true)
+      .then(() => chrome.storage.local.get('fomoToken'))
+      .then(({ fomoToken }) => sendResponse({ ok: !!fomoToken?.token, exp: Number(fomoToken?.exp) || 0 }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message?.type === 'marked-holdings') {
     fetchMarkedFeed()
       .then(sendResponse)

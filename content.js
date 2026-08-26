@@ -3398,6 +3398,14 @@ ${flapTooltipText(info)}
       // 扩展上下文失效
     }
     const reason = res?.reason || 'unknown';
+    // 令牌过期先自救：让后台用 refresh 换一张新的，成了就重载，别急着叫人重新登录。
+    // 每个面板会话只自救一次，避免续不动时反复打接口。
+    if (reason === 'expired' && !fomoSelfHealTried) {
+      fomoSelfHealTried = true;
+      chrome.runtime.sendMessage({ type: 'fomo-force-refresh' })
+        .then((r) => { if (r?.ok) { fomoLoadedKey = ''; fomoErrKey = ''; loadFomoData(true); } })
+        .catch(() => {});
+    }
     const needLogin = reason === 'no-token' || reason === 'expired';
 
     const title = document.createElement('div');
@@ -3484,6 +3492,7 @@ ${flapTooltipText(info)}
   // 持有人数 / thesis 条数来自两个接口的总数；持仓占比 = 已加载持仓量之和 ÷ 链上总供应量。
   // 只能看到前 N 名持仓者，所以占比标「≥」——这是下界，不是精确值。
   let fomoStats = { key: '', holders: null, thesisCount: null, supply: 0 };
+  let fomoSelfHealTried = false;
 
   function fomoStatBlock(label, value, sub, accent) {
     const box = document.createElement('div');
@@ -3594,7 +3603,10 @@ ${flapTooltipText(info)}
         fomoErrKey = '';
         fomoLastItems = res.items || [];
         const statKey = `${route.chain}|${route.address}`;
-        if (fomoStats.key !== statKey) fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0 };
+        if (fomoStats.key !== statKey) {
+          fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0 };
+          fomoSelfHealTried = false;
+        }
         if (fomoTab === 'holders') fomoStats.holders = { items: res.items || [], total: Number(res.total) };
         if (fomoTab === 'thesis') fomoStats.thesisCount = (res.items || []).length;
         loadFomoSupply(route);
