@@ -3746,7 +3746,9 @@ ${flapTooltipText(info)}
   /** 从持仓面板行收集当前链的持仓，合并进缓存清单。 */
   function collectHoldingRows() {
     let changed = false;
-    document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach((row) => {
+    // page-bridge 会给持仓行打 data-gdh-hold-*，这里直接按属性找，
+    // 不再依赖构建期的 sentry 标记（那个在部分用户页面上根本不存在）。
+    document.querySelectorAll('[data-gdh-hold-addr]').forEach((row) => {
       const chain = row.getAttribute('data-gdh-hold-chain') || '';
       const address = row.getAttribute('data-gdh-hold-addr') || '';
       if (!chain || !address) return;
@@ -3785,9 +3787,11 @@ ${flapTooltipText(info)}
       for (let i = 0; i < items.length; i += HOLDING_BATCH) {
         const slice = items.slice(i, i + HOLDING_BATCH);
         try {
-          const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${DEV_ATH_QS}`, {
+          // 参数与登录态对齐页面自身请求：GMGN 的接口受 Cloudflare 盯防，
+          // 空 device_id/app_ver 的裸请求随时可能被 403（👤 徽章就栽过这个）。
+          const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${gmgnApiQuery() || DEV_ATH_QS}`, {
             method: 'POST',
-            credentials: 'omit',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chain, addresses: slice.map((s) => s.address) }),
           });

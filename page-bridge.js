@@ -10,7 +10,10 @@
     '[data-testid="trench-token-card"], [data-sentry-source-file="TokenItem.tsx"][href^="/bsc/token/"]';
   const CALLOUT_SELECTOR = '[data-sentry-component="CalloutItem"]';
   const MANIFESTO_SELECTOR = '[data-sentry-component="ManifestoChipInner"]';
+  // 持仓面板行：data-sentry-component 是构建期标记，实测有用户页面完全没有它
+  // （追踪流/钱包/徽章都因此栽过）。这里同时用「行内含代币页链接」反查兜底。
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
+  const HOLDING_ROW_FALLBACK = 'a[href*="/token/"]';
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
   // 代币页「持有者」表格的行（实测自线上 DOM，不是紧凑列表的 HolderItemView）
   const HOLDER_ROW_SELECTOR = '[data-testid="token-detail-holders-row"]';
@@ -461,7 +464,18 @@
 
   function scanCards() {
     scanScheduled = false;
-    document.querySelectorAll(HOLDING_ROW_SELECTOR).forEach(scanHoldingRow);
+    const holdingRows = new Set(document.querySelectorAll(HOLDING_ROW_SELECTOR));
+    // 兜底：持仓面板里指向代币页的链接，往上找到能读出 {chain,address,symbol} 的那层。
+    // fiber 读不到就不标记，不会误伤别处（战壕/搜索的链接读不出这三件套）。
+    document.querySelectorAll(HOLDING_ROW_FALLBACK).forEach((link) => {
+      if (link.closest(HOLDING_ROW_SELECTOR)) return;
+      let el = link;
+      for (let level = 0; level < 4 && el instanceof HTMLElement; level += 1) {
+        if (readHoldingToken(el)) { holdingRows.add(el); return; }
+        el = el.parentElement;
+      }
+    });
+    holdingRows.forEach(scanHoldingRow);
     // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
     const trackerSeen = new Set();
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => trackerSeen.add(el));
