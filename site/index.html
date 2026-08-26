@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="icon128.png">
 <style>
 :root{
   --bg:oklch(16% .012 80);
@@ -35,6 +36,7 @@ a:hover{text-decoration:underline;text-underline-offset:3px}
 
 /* ── hero ─────────────────────────── */
 header{padding:clamp(64px,12vh,140px) 0 clamp(48px,8vh,96px);border-bottom:1px solid var(--line)}
+.logo{display:block;width:64px;height:64px;image-rendering:pixelated;margin-bottom:22px;filter:drop-shadow(0 4px 14px oklch(70% .15 145 / .28))}
 .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--gold-deep);margin-bottom:20px}
 h1{font-size:clamp(52px,9vw,108px);font-weight:900;letter-spacing:-.035em;line-height:1.02;color:var(--gold)}
 .tagline{font-size:clamp(18px,2.4vw,23px);color:var(--ink);max-width:33em;margin:28px 0 8px;font-weight:400}
@@ -138,10 +140,11 @@ footer .sp{flex:1}
 <body>
 
 <header class="wrap">
+  <img class="logo" src="icon128.png" alt="better gmgn 图标" width="64" height="64">
   <div class="kicker">CHROME / EDGE 扩展 · 985monitor 出品</div>
   <h1>better gmgn</h1>
   <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
-  <p class="sub">不替代 GMGN，是长在 GMGN 上的一层。所有名单、配置、登录令牌只存你浏览器本地。</p>
+  <p class="sub">所有名单、配置、登录令牌只存你浏览器本地，代码开源。</p>
   <div class="dl">
     <a class="btn btn-gold" id="dl-exe" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">下载安装器 (.exe)</a>
     <a class="btn btn-ghost" id="dl-zip" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">zip 手动安装</a>
@@ -152,7 +155,7 @@ footer .sp{flex:1}
 
 <section class="wrap" id="features">
   <div class="sec-head rv"><span class="sec-no">01</span><h2>它做什么</h2></div>
-  <p class="sec-lede rv">每个功能都对应真实实现，下面的界面示意是插件实际呈现的忠实重绘。</p>
+  <p class="sec-lede rv">下面的示意图就是插件在 GMGN 页面上实际的样子。</p>
 
   <div class="feat rv">
     <div>
@@ -164,7 +167,7 @@ footer .sp{flex:1}
         <li>左缘链条色与 GMGN Fusion 一致：BSC 黄、Solana 紫、Robinhood 绿，你自定义过的链色自动跟随</li>
         <li>点卡片站内无刷新跳代币页；屏蔽的人、关掉的事件类型，直接沿用你在 985monitor 网页上的配置</li>
       </ul>
-      <p class="how">摆放不碰 GMGN 的虚拟列表布局：行位移 + 绝对定位塞缝，任何情况不打乱原列表。</p>
+      <p class="how">插卡不会打乱 GMGN 自己的列表布局。</p>
     </div>
     <div class="demo" aria-hidden="true">
       <div class="demo-cap">追踪流 · 混排实景</div>
@@ -189,7 +192,7 @@ footer .sp{flex:1}
       <ul>
         <li>战壕、搜索、追踪里的每个币旁标 <b>👤N</b>：几个被标注的人正持有它，悬停看人名和金额</li>
         <li>持仓由 985 服务器用 <b>GMGN 官方 API 全量采集</b>（每人几百条，不止前 50），3 分钟一轮，插件零请求负担</li>
-        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人也会自动进服务器采集</b></li>
+        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人只对你显示</b>，持仓由服务器代为采集</li>
         <li>$30 以下灰尘仓不算持有，不会满屏误标</li>
       </ul>
     </div>
@@ -263,7 +266,7 @@ footer .sp{flex:1}
 
 <section class="wrap" id="setup">
   <div class="sec-head rv"><span class="sec-no">03</span><h2>初次配置</h2></div>
-  <p class="sec-lede rv">三个网页各打开一次，插件把它们串起来。之后就不用管了。</p>
+  <p class="sec-lede rv">装好后把下面三个网页各打开一次就行。</p>
   <div class="steps rv">
     <div class="step"><div><h4>登录 gmgn.ai</h4><p>你平时怎么用就怎么用。战壕高亮、追踪流增强、混排立即生效。</p></div></div>
     <div class="step"><div><h4>登录一次 fomo.family</h4><p>fomo 浮窗和混排需要你自己的 fomo 登录态。登录后插件自动接管令牌并<b>永续续期</b>（含页面加载抢跑同步，不会再反复要求重登）。没账号也不影响其它功能。</p></div></div>
@@ -274,14 +277,14 @@ footer .sp{flex:1}
 
 <section class="wrap" id="privacy">
   <div class="sec-head rv"><span class="sec-no">04</span><h2>数据边界</h2></div>
-  <p class="sec-lede rv">装扩展前该问的问题，直接回答。</p>
+  <p class="sec-lede rv">数据存在哪、发给谁，一条条说清。</p>
   <div class="priv rv">
     <div><b>配置存哪</b><span>名单、开关、登录令牌全部在浏览器本地 chrome.storage，不上传任何服务器。</span></div>
     <div><b>fomo 令牌</b><span>只从 fomo.family 页面读取，只发给 fomo 官方 API 与 privy 官方续期接口。</span></div>
     <div><b>行情数据</b><span>走 GMGN 公开接口与 985monitor 公开数据，不带你的登录凭据。</span></div>
     <div><b>翻译</b><span>浏览器内置本地模型，内容不出你的电脑。</span></div>
     <div><b>开源</b><span>代码全部公开：<a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub 仓库</a>，逐版本 CHANGELOG 与 <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私说明</a>。</span></div>
-    <div><b>唯一上行</b><span>你自己在名单里添加标注人物时，该地址会进入 985 服务器的持仓采集名单（这正是功能本身）。</span></div>
+    <div><b>唯一上行</b><span>你在名单里添加标注人物时，插件会把该地址提交给 985 服务器代为采集持仓；只有你自己的插件会显示这个人。</span></div>
   </div>
 </section>
 
