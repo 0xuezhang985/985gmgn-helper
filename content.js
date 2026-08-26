@@ -1296,12 +1296,14 @@ ${flapTooltipText(info)}
     loadMarkedHoldings();
     if (!markedMap.size) return;
 
-    // 追踪推送卡：币名那一行（位置已在 0.25.1 实测确认）
+    // 追踪推送卡：只挂在币名那一格里。GMGN 改版后若该格 testid 变了、找不到，
+    // 宁可不显示也不 fallback 到整张卡片——那样徽章会乱位、盖住币名。
     trackerCards().forEach((card) => {
       const addr = card.dataset.gdhTrackAddr;
       if (!addr) return;
-      const row = card.querySelector(TRACKER_SYMBOL_CELL) || card;
-      ensureMarkedBadge(row, addr);
+      const row = card.querySelector(TRACKER_SYMBOL_CELL);
+      if (row) ensureMarkedBadge(row, addr);
+      else { card.querySelector(':scope .gdh-marked')?.remove(); }
     });
 
     // 搜索结果等其它地方：凡是指向代币页的链接都算一行，不依赖组件名

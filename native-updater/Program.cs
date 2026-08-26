@@ -60,21 +60,22 @@ namespace Gmgn985Updater
         internal static readonly string ConfigPath = Path.Combine(InstallRoot, "install.json");
         internal static readonly string BackupsPath = Path.Combine(InstallRoot, "Backups");
 
-        internal static readonly HashSet<string> ExtensionFiles = new HashSet<string>(
+        // 允许的文件扩展名（防止安装包被注入 exe/dll/bat 等可执行文件）。
+        // 早期版本用精确文件名白名单，但每新增一个扩展文件都会导致旧升级器判定
+        // 「未授权文件」而升级失败——改为按扩展名放行 + 下面的核心必需集校验完整性。
+        internal static readonly HashSet<string> AllowedExtensions = new HashSet<string>(
+            new[] { ".json", ".js", ".css", ".html", ".png", ".svg", ".woff", ".woff2" },
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        // 核心文件：升级包必须包含它们，否则视为损坏（缺一不可）。
+        internal static readonly HashSet<string> RequiredFiles = new HashSet<string>(
             new[]
             {
                 "manifest.json",
                 "background.js",
-                "page-bridge.js",
                 "content.js",
-                "styles.css",
-                "popup.html",
-                "popup.css",
-                "popup.js",
-                "icons/icon16.png",
-                "icons/icon32.png",
-                "icons/icon48.png",
-                "icons/icon128.png"
+                "page-bridge.js"
             },
             StringComparer.OrdinalIgnoreCase
         );
@@ -486,7 +487,12 @@ namespace Gmgn985Updater
                 {
                     string relativePath = entry.FullName.Replace('\\', '/').TrimStart('/');
                     if (string.IsNullOrEmpty(entry.Name)) continue;
-                    if (!ProductInfo.ExtensionFiles.Contains(relativePath))
+                    if (relativePath.Contains(".."))
+                    {
+                        throw new InvalidDataException("安装包路径非法：" + relativePath);
+                    }
+                    string entryExt = Path.GetExtension(entry.Name);
+                    if (!ProductInfo.AllowedExtensions.Contains(entryExt))
                     {
                         throw new InvalidDataException("安装包包含未授权文件：" + relativePath);
                     }
@@ -509,7 +515,7 @@ namespace Gmgn985Updater
                 }
             }
 
-            foreach (string requiredFile in ProductInfo.ExtensionFiles)
+            foreach (string requiredFile in ProductInfo.RequiredFiles)
             {
                 if (!extracted.Contains(requiredFile)) throw new InvalidDataException("安装包缺少文件：" + requiredFile);
             }
@@ -920,6 +926,23 @@ namespace Gmgn985Updater
                     );
                     string version = ExtensionPackage.ExtractValidated(zipPath, extractedPath, expectedVersion);
                     if (!string.Equals(version, expectedVersion, StringComparison.Ordinal)) return 5;
+
+                    // 安全回归：注入可执行文件的包必须被拒（校验放开扩展名后仍守住这条底线）
+                    string evilZip = Path.Combine(tempRoot, "evil.zip");
+                    using (FileStream fs = File.Create(evilZip))
+                    using (ZipArchive za = new ZipArchive(fs, ZipArchiveMode.Create))
+                    {
+                        using (Stream e = za.CreateEntry("manifest.json").Open())
+                        {
+                            byte[] mj = Encoding.UTF8.GetBytes("{\"version\":\"" + expectedVersion + "\"}");
+                            e.Write(mj, 0, mj.Length);
+                        }
+                        za.CreateEntry("payload.exe").Open().Dispose();
+                    }
+                    bool rejectedExe = false;
+                    try { ExtensionPackage.ExtractValidated(evilZip, Path.Combine(tempRoot, "Evil"), expectedVersion); }
+                    catch (InvalidDataException) { rejectedExe = true; }
+                    if (!rejectedExe) return 6;
                 }
                 finally
                 {
