@@ -146,8 +146,8 @@ footer .sp{flex:1}
   <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
   <p class="sub">所有名单、配置、登录令牌只存你浏览器本地，代码开源。</p>
   <div class="dl">
-    <a class="btn btn-gold" id="dl-exe" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">下载安装器 (.exe)</a>
-    <a class="btn btn-ghost" id="dl-zip" href="https://github.com/0xuezhang985/985gmgn-helper/releases/latest">zip 手动安装</a>
+    <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.42.3.exe" download>下载安装器 (.exe)</a>
+    <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.42.3.zip" download>zip 手动安装</a>
     <span class="ver" id="ver">最新版本 <b>加载中…</b></span>
   </div>
   <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
@@ -311,20 +311,15 @@ footer .sp{flex:1}
 <script>
 (() => {
   'use strict';
-  // 最新版本与直链:GitHub API 拿最新 release 资产;失败保持 releases/latest 兜底
-  fetch('https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/latest')
+  // 版本与直链:读本站 version.json（下载全部走 985monitor，不经 GitHub）。
+  // HTML 里已硬编码了当前版本的直链作兜底，version.json 只负责在发新版时更新。
+  fetch('version.json?t=' + Date.now())
     .then((r) => (r.ok ? r.json() : null))
-    .then((rel) => {
-      if (!rel || !Array.isArray(rel.assets)) return;
-      const exe = rel.assets.find((a) => /setup-v[\d.]+\.exe$/.test(a.name));
-      const zip = rel.assets.find((a) => /helper-v[\d.]+\.zip$/.test(a.name));
-      if (exe) {
-        document.getElementById('dl-exe').href = exe.browser_download_url;
-        document.getElementById('exe-name').textContent = exe.name;
-      }
-      if (zip) document.getElementById('dl-zip').href = zip.browser_download_url;
-      const tag = String(rel.tag_name || '').replace(/^v/, '');
-      if (tag) document.getElementById('ver').innerHTML = '最新版本 <b>v' + tag + '</b>';
+    .then((v) => {
+      if (!v || !v.version) return;
+      if (v.exe) { document.getElementById('dl-exe').href = v.exe; document.getElementById('exe-name').textContent = v.exe.split('/').pop(); }
+      if (v.zip) document.getElementById('dl-zip').href = v.zip;
+      document.getElementById('ver').innerHTML = '最新版本 <b>v' + v.version + '</b>';
     })
     .catch(() => {});
 
