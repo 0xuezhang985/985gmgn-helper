@@ -5019,5 +5019,18 @@ ${flapTooltipText(info)}
     scheduleScan();
   });
 
+  // 后台 SSE 收到新 fomo 事件时的即时通知：立刻取一次缓存（命中控频内的
+  // stale 分支，零额外 HTTP），把新事件在下一拍摆进追踪流
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg?.type === 'gdh-fomo-push') {
+        fomoFeedLastPollAt = 0;
+        pollFomoFeed();
+      }
+    });
+  } catch {
+    // 扩展上下文失效
+  }
+
   window.setInterval(scanVisibleCards, 1000);
 })();

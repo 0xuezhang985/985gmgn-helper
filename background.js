@@ -648,8 +648,95 @@ async function fetchFomoFeed() {
   return fomoFeedInflight;
 }
 
+
+// ---- 985monitor SSE 实时订阅（fomo 事件秒级到达）----
+// MV3 service worker 没有 EventSource，用 fetch 流手工解析。收到 fomo 事件直接
+// 更新 fomoFeedCache 并通知 GMGN 标签页；标签页照旧用 'fomo-feed' 拿缓存（命中
+// 控频间隔内的 stale 分支，零额外 HTTP）。SW 被挂起时连接自然断，content 侧
+// 18 秒轮询一到就会唤醒 SW 触发重连——轮询同时也是 SSE 断档期的兜底。
+const FOMO_SSE_URL = 'https://www.985monitor.xyz/api/events-stream';
+let fomoSseAbort = null;
+let fomoSseBackoff = 5000;
+
+function fomoSseNotifyTabs() {
+  try {
+    chrome.tabs.query({ url: 'https://gmgn.ai/*' }, (tabs) => {
+      if (chrome.runtime.lastError || !Array.isArray(tabs)) return;
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'gdh-fomo-push' }, () => void chrome.runtime.lastError);
+      }
+    });
+  } catch {
+    // tabs 不可用
+  }
+}
+
+function fomoSseIngest(raw) {
+  const ev = slimFomoEvent(raw);
+  if (!ev) return;
+  const rest = fomoFeedCache.events.filter((e) => e.key !== ev.key);
+  rest.unshift(ev);
+  rest.sort((a, b) => b.ts - a.ts);
+  fomoFeedCache = { ...fomoFeedCache, events: rest.slice(0, FOMO_FEED_KEEP), updatedAt: Date.now() };
+  fomoSseNotifyTabs();
+}
+
+async function connectFomoSse() {
+  if (fomoSseAbort) return;
+  const controller = new AbortController();
+  fomoSseAbort = controller;
+  try {
+    const response = await fetch(FOMO_SSE_URL, {
+      headers: { Accept: 'text/event-stream' },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    fomoSseBackoff = 5000;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventType = '';
+    let dataLines = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx).replace(/\r$/, '');
+        buffer = buffer.slice(idx + 1);
+        if (line === '') {
+          if (eventType === 'fomo' && dataLines.length) {
+            try {
+              const payload = JSON.parse(dataLines.join('\n'));
+              if (payload?.event) fomoSseIngest(payload.event);
+            } catch {
+              // 单帧坏数据不断流
+            }
+          }
+          eventType = '';
+          dataLines = [];
+          continue;
+        }
+        if (line.startsWith('event:')) eventType = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+      }
+    }
+  } catch {
+    // 断线/超时/SW 即将挂起，都走重连
+  } finally {
+    fomoSseAbort = null;
+  }
+  // 指数退避重连（上限 2 分钟）；SW 若被挂起，这个定时器作废，
+  // 由下一次 'fomo-feed' 消息唤醒时重连
+  setTimeout(connectFomoSse, fomoSseBackoff);
+  fomoSseBackoff = Math.min(120000, fomoSseBackoff * 2);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'fomo-feed') {
+    connectFomoSse(); // SW 被唤醒时顺手把实时流接回来（已连着则立即返回）
     fetchFomoFeed()
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
