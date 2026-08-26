@@ -278,6 +278,13 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   box-shadow: inset 3px 0 0 0 var(--gdh-sp-border, #f5b83d);
 }
 
+/* 表格模式下同一行会被标记两层（外层 <a> + 内层内容 DIV），
+   两层各画一条竖条就成了双条。内层只保留底色，竖条交给最外层那一个。 */
+[data-gdh-special="1"] [data-gdh-special="1"] {
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
 /* 价格/市值提醒醒目卡片（画面正中，涨绿跌红） */
 .gdh-remind-container {
   position: fixed;

@@ -3229,7 +3229,7 @@ ${flapTooltipText(info)}
       attachFomoBoard(who, fomoUser(item)?.userHandle);
 
       if (settings.mergeFomoHolders !== false) {
-        const rankEl = buildRankBadge(Number(item?.humanAmount));
+        const rankEl = buildRankBadge(holderTokenAmount(item));
         if (rankEl) who.appendChild(rankEl);
       }
 
@@ -3501,6 +3501,27 @@ ${flapTooltipText(info)}
     return box;
   }
 
+  /**
+   * 一个持仓者持有的代币数量（人类可读口径）。
+   * 之前只裸取 humanAmount —— fomo 换个字段名或多包一层，这里就是 undefined，
+   * 于是分子归零、占比整个算不出来（"很多币没有持仓占比"就是这么来的）。
+   * 现在三级兜底：本名 → 深度找同义字段 → 用持仓金额÷单价反推。
+   */
+  function holderTokenAmount(item) {
+    const direct = Number(item?.humanAmount);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const found = deepPick(item, /^(human_?amount|token_?amount|amount|balance|quantity|qty|size)$/i, 'number');
+    if (Number.isFinite(found) && found > 0) return found;
+
+    // 金额 ÷ 单价：两者都是 fomo 自己给的，口径一致
+    const usd = Number(item?.value ?? deepPick(item, /(position|value|balance)(usd)?$/i, 'number'));
+    const price = Number(item?.priceUsd ?? item?.price
+      ?? deepPick(item, /^(price|price_?usd|token_?price)$/i, 'number'));
+    if (Number.isFinite(usd) && usd > 0 && Number.isFinite(price) && price > 0) return usd / price;
+    return 0;
+  }
+
   function renderFomoStats() {
     if (!fomoPanelEl) return;
     const box = fomoPanelEl.querySelector('.gdh-fomo__stats');
@@ -3511,7 +3532,7 @@ ${flapTooltipText(info)}
     const loaded = h.items.length;
     const total = Number.isFinite(h.total) && h.total > 0 ? h.total : loaded;
     const sumUsd = h.items.reduce((a, x) => a + (Number(x?.value) || 0), 0);
-    const sumAmt = h.items.reduce((a, x) => a + (Number(x?.humanAmount) || 0), 0);
+    const sumAmt = h.items.reduce((a, x) => a + holderTokenAmount(x), 0);
     const pct = fomoStats.supply > 0 ? (sumAmt / fomoStats.supply) * 100 : NaN;
 
     const thesis = Number.isFinite(fomoStats.thesisCount)
