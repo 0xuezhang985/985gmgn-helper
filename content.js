@@ -4419,6 +4419,7 @@ ${flapTooltipText(info)}
 
   function scanCards() {
     scanScheduled = false;
+    scanRafId = 0;
     if (settings.showDevTooltip === false) {
       activeCard = null;
       tooltip?.classList.remove('gdh-tooltip--visible');
@@ -4555,6 +4556,86 @@ ${flapTooltipText(info)}
     }, 450);
   }
 
+  /** 表格模式的一行:列结构与 GMGN 对齐(时间 | 名称 | 币种 | 金额 | 市值)。 */
+  function buildFomoFeedTableRow(ev, card, tag) {
+    const row = document.createElement('div');
+    row.className = 'gdh-fomofeed__trow';
+
+    const time = document.createElement('span');
+    time.className = 'gdh-fomofeed__tcell gdh-fomofeed__ttime';
+    time.textContent = fomoFeedRelTime(ev.ts);
+
+    // 名称列：头像 + 交易员名 + [fomo] 来源标
+    const who = document.createElement('span');
+    who.className = 'gdh-fomofeed__tcell gdh-fomofeed__twho';
+    const av = document.createElement('span');
+    av.className = 'gdh-fomofeed__av';
+    if (ev.avatar) {
+      const img = document.createElement('img');
+      img.src = ev.avatar; img.loading = 'lazy'; img.decoding = 'async';
+      img.onerror = function () { this.remove(); };
+      av.appendChild(img);
+    } else {
+      av.textContent = (ev.name || ev.handle || '?').slice(0, 1).toUpperCase();
+    }
+    const name = document.createElement('span');
+    name.className = 'gdh-fomofeed__name';
+    name.textContent = ev.name || ev.handle || '?';
+    name.title = `@${ev.handle} · 打开 fomo 主页`;
+    const openProfile = (event) => {
+      event.preventDefault(); event.stopPropagation();
+      if (ev.handle) window.open(`https://fomo.family/profile/${encodeURIComponent(ev.handle)}`, '_blank', 'noopener,noreferrer');
+    };
+    av.addEventListener('click', openProfile);
+    name.addEventListener('click', openProfile);
+    const src = document.createElement('span');
+    src.className = 'gdh-fomofeed__src';
+    src.textContent = 'fomo';
+    who.append(av, name, src);
+
+    // 币种列：币 logo + 符号 + 动作词（买入/卖出，代替 GMGN 的持币时长）
+    const sym = document.createElement('span');
+    sym.className = 'gdh-fomofeed__tcell gdh-fomofeed__tsym';
+    if (ev.img) {
+      const logo = document.createElement('span');
+      logo.className = 'gdh-fomofeed__logo';
+      const img = document.createElement('img');
+      img.src = ev.img; img.loading = 'lazy'; img.decoding = 'async';
+      img.onerror = function () { this.parentElement?.remove(); };
+      logo.appendChild(img);
+      sym.appendChild(logo);
+    }
+    const symText = document.createElement('span');
+    symText.className = 'gdh-fomofeed__symtext';
+    symText.textContent = ev.symbol || '';
+    const act = document.createElement('span');
+    act.className = 'gdh-fomofeed__tag';
+    act.textContent = tag.label;
+    sym.append(symText, act);
+
+    // 金额列
+    const amt = document.createElement('span');
+    amt.className = 'gdh-fomofeed__tcell gdh-fomofeed__tamt';
+    amt.textContent = ev.usd > 0 ? fomoUsd(ev.usd) : '';
+
+    // 市值列
+    const mc = document.createElement('span');
+    mc.className = 'gdh-fomofeed__tcell gdh-fomofeed__tmc';
+    mc.textContent = ev.mc > 0 ? fomoUsd(ev.mc) : '';
+
+    row.append(time, who, sym, amt, mc);
+    card.appendChild(row);
+
+    // 观点正文在表格模式下另起一行（表格行放不下），带译文
+    if (ev.type === 'thesis' && ev.comment) {
+      const text = document.createElement('div');
+      text.className = 'gdh-fomofeed__thesis';
+      text.textContent = ev.comment;
+      card.appendChild(text);
+      queueFomoTranslate(text, ev.comment);
+    }
+  }
+
   function buildFomoFeedCard(ev) {
     const tag = FOMO_FEED_TAGS[ev.type] || { label: 'fomo', cls: '' };
     const card = document.createElement('div');
@@ -4569,7 +4650,15 @@ ${flapTooltipText(info)}
       card.appendChild(stripe);
     }
 
-    // 结构对齐 GMGN 原生追踪卡的两行：
+    // 表格模式：按列渲染，与 GMGN 表格行同构
+    if (isTrackerTableMode()) {
+      card.classList.add('is-table');
+      buildFomoFeedTableRow(ev, card, tag);
+      attachFomoFeedCardBehavior(ev, card);
+      return card;
+    }
+
+    // 卡片模式：对齐 GMGN 原生追踪卡的两行
     // 行1 = 头像 名字 动作 [fomo] ……时间；行2 = 金额 币logo 币名/观点 ……MC
     const r1 = document.createElement('div');
     r1.className = 'gdh-fomofeed__r1';
@@ -4661,6 +4750,12 @@ ${flapTooltipText(info)}
       queueFomoTranslate(text, ev.comment);
     }
 
+    attachFomoFeedCardBehavior(ev, card);
+    return card;
+  }
+
+  /** 点击跳转 + 新事件高亮，两种布局模式共用。 */
+  function attachFomoFeedCardBehavior(ev, card) {
     if (ev.addr && ev.chain) {
       card.title = `${ev.symbol || ev.addr} · 点击打开 GMGN 代币页`;
       card.addEventListener('click', (event) => {
@@ -4675,7 +4770,6 @@ ${flapTooltipText(info)}
       fomoFeedSeen.add(ev.key);
       card.classList.add('is-new');
     }
-    return card;
   }
 
   function fomoFeedCardFor(ev) {
@@ -4774,11 +4868,17 @@ ${flapTooltipText(info)}
     clearFomoFeedShifts();
   }
 
+  let fomoFeedLastMode = null;
+
   function scanFomoFeed() {
     if (!settings.enabled || settings.enableFomoFeed === false) {
       teardownFomoFeed();
       return;
     }
+    // 卡片/表格模式切换后，旧模式的卡片结构不能留着——整体重建
+    const mode = isTrackerTableMode() ? 'table' : 'card';
+    if (fomoFeedLastMode !== null && fomoFeedLastMode !== mode) teardownFomoFeed();
+    fomoFeedLastMode = mode;
     // 追踪流在页面上才拉取；到点自动补一轮（setInterval 之外的即时首拉）
     if (Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
 
@@ -4947,17 +5047,49 @@ ${flapTooltipText(info)}
     scanFomoFeed();
   }
 
+  // 滚动中虚拟列表每帧回收/重建行，MutationObserver 会被打成一片。
+  // 用 rAF 合帧（一帧最多一次），滚动期间进一步降到 ~120ms 一次——
+  // 滚动停下 200ms 内立即补一次全量扫描，保证不漏挂。
+  let scanRafId = 0;
+  let lastScanAt = 0;
+  let scrollingUntil = 0;
+  const SCAN_MIN_GAP_SCROLLING = 120;
+
+  function runScheduledScan() {
+    scanRafId = 0;
+    const now = Date.now();
+    if (now < scrollingUntil && now - lastScanAt < SCAN_MIN_GAP_SCROLLING) {
+      // 滚动中且离上次太近：不做全量扫描，等下一帧再判断
+      scanScheduled = false;
+      scheduleScan();
+      return;
+    }
+    lastScanAt = now;
+    scanCards();
+  }
+
   function scheduleScan() {
     if (scanScheduled) return;
     scanScheduled = true;
-    window.setTimeout(scanCards, 0);
+    if (scanRafId) return;
+    scanRafId = window.requestAnimationFrame(runScheduledScan);
   }
 
   function scheduleScrollScan(event) {
+    // 任何滚动都进入"滚动中"降频窗口：追踪流表格模式滚动时虚拟列表疯狂重建行，
+    // 不降频的话每帧都会触发一次全量扫描，直接把滚动卡住。
+    scrollingUntil = Date.now() + 200;
+
     const target = event.target;
     if (!(target instanceof Element)
       || (!target.closest('[data-sentry-component="PumpSubX"]')
         && !target.closest('[data-testid="trench-token-card"]'))) {
+      // 非战壕容器的滚动（追踪流等）：只在停下后补一次，滚动中交给降频窗口
+      window.clearTimeout(scrollScanTimer);
+      scrollScanTimer = window.setTimeout(() => {
+        scrollScanTimer = 0;
+        scheduleScan();
+      }, 180);
       return;
     }
 

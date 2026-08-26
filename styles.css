@@ -2148,3 +2148,39 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 /* 代币详情页的徽章独立行：整宽可换行，长分配串不再被标题行裁掉 */
 .gdh-flap-row--detail { width: 100%; flex-basis: 100%; min-width: 0; margin-top: 3px; }
 .gdh-flap-row--detail .gdh-flap { white-space: normal; line-height: 1.5; margin-left: 0; }
+
+/* ==== fomo 卡:表格模式(与 GMGN 表格行同构:时间|名称|币种|金额|市值) ==== */
+.gdh-fomofeed.is-table {
+  height: auto;
+  min-height: 44px;
+  padding: 0 0 0 6px;
+  gap: 0;
+  justify-content: center;
+}
+.gdh-fomofeed__trow {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  line-height: 28px;
+  font-size: 13px;
+  min-width: 0;
+}
+.gdh-fomofeed__tcell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.gdh-fomofeed__ttime { width: 42px; color: #8a93a6; font-size: 12px; }
+.gdh-fomofeed__twho { width: 120px; }
+.gdh-fomofeed__twho .gdh-fomofeed__name { max-width: 62px; }
+.gdh-fomofeed__tsym { width: 120px; }
+.gdh-fomofeed__symtext { overflow: hidden; text-overflow: ellipsis; max-width: 62px; color: #e8ecf3; }
+.gdh-fomofeed__tamt { width: 84px; font-weight: 600; justify-content: flex-end; }
+.gdh-fomofeed.is-buy .gdh-fomofeed__tamt { color: #22c55e; }
+.gdh-fomofeed.is-sell .gdh-fomofeed__tamt { color: #f87171; }
+.gdh-fomofeed.is-swap .gdh-fomofeed__tamt { color: #eab308; }
+.gdh-fomofeed__tmc { flex: 1; min-width: 0; justify-content: flex-end; padding-right: 10px; color: #8a93a6; font-size: 12px; }
+.gdh-fomofeed.is-table .gdh-fomofeed__thesis { padding: 0 10px 8px 6px; }
