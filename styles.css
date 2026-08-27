@@ -2224,6 +2224,9 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomo-panel.is-folded .gdh-fomo__list,
 .gdh-fomo-panel.is-folded .gdh-fomo__tabs { display: none !important; }
 .gdh-fomo-panel.is-folded .gdh-fomo__stats { margin-bottom: 0; }
+/* 折叠时出错（最常见是登录态过期）：列表必须放出来，否则引导和修复按钮全被藏住，
+   只剩一条点不动的空白横条。用户存的折叠偏好不动，错误一消失就自动收回去。 */
+.gdh-fomo-panel.is-folded.has-error .gdh-fomo__list { display: block !important; }
 
 /* 添加钱包：跨链提示（粘了别的链的地址时出现） */
 .gdh-addw-cross { display: none; }

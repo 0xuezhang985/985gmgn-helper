@@ -3630,11 +3630,16 @@ ${flapTooltipText(info)}
         loadFomoSupply(route);
         renderFomoStats();
         renderFomoItems(list, fomoLastItems, fomoTab);
+        fomoPanelEl.classList.remove('has-error');
       } else {
         fomoErrKey = key;
         fomoErrAt = Date.now();
         const box = await buildFomoErrorBox(res);
         list.replaceChildren(box);
+        // 折叠态本来会把列表整个 display:none —— 引导和「打开 fomo」按钮全被藏掉，
+        // 折叠着遇到登录态过期就成了一条空白横条：既没提示也没法修。出错时标记面板，
+        // 让样式把列表放出来，不动用户存的折叠偏好。
+        fomoPanelEl.classList.add('has-error');
       }
     } catch {
       // 扩展上下文失效
