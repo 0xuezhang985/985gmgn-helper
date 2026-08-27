@@ -296,6 +296,26 @@
   }
 
   /** 持仓面板行：从 fiber 取 {chain,address,symbol}，供插件缓存持仓清单。 */
+  /**
+   * 这一仓的「每币平均成本」。字段名全部取自 GMGN 自己的分包（_app-*.js）里
+   * 持仓对象的解构：{ amount_cur, buy_amount_cur, realized_profit, avg_cost,
+   * avg_sold, total_cost, cost, native_balance, ... }；GMGN 自己也是按
+   * `balance > 0 ? avg_cost : history_avg_cost` 取均价的，这里照抄。
+   * 取不到就返回 0，由 content.js 退回「首次看到时的价格」当基准。
+   */
+  function readHoldingCost(hit) {
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const direct = num(hit.avg_cost) || num(hit.history_avg_cost);
+    if (direct) return direct;
+    // 没有均价就用「总成本 ÷ 持仓数量」自己算
+    const amount = num(hit.balance) || num(hit.amount_cur) || num(hit.amount);
+    const total = num(hit.total_cost) || num(hit.cost) || num(hit.accu_cost);
+    return amount && total ? total / amount : 0;
+  }
+
   function readHoldingToken(element) {
     const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
     if (!fiberKey) return null;
@@ -331,6 +351,7 @@
               chain: String(hit.chain || '').slice(0, 16),
               address: String(hit.address || '').slice(0, 64),
               symbol: String(hit.symbol || '').slice(0, 24),
+              cost: readHoldingCost(hit),
             };
           }
         }
@@ -424,11 +445,13 @@
       element.removeAttribute('data-gdh-hold-chain');
       element.removeAttribute('data-gdh-hold-addr');
       element.removeAttribute('data-gdh-hold-symbol');
+      element.removeAttribute('data-gdh-hold-cost');
       return;
     }
     setAttribute(element, 'data-gdh-hold-chain', data.chain);
     setAttribute(element, 'data-gdh-hold-addr', data.address);
     setAttribute(element, 'data-gdh-hold-symbol', data.symbol);
+    if (data.cost > 0) setAttribute(element, 'data-gdh-hold-cost', String(data.cost));
   }
 
   /**

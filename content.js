@@ -3929,6 +3929,9 @@ ${flapTooltipText(info)}
   // 行情：走公开的 mutil_window_token_info（免登录，返回 price 与 price_1m/5m），
   // 全程不碰任何登录凭据。
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
+  // 判断「持仓面板确实在页面上」用的锚点：testid 是 GMGN 自己的稳定标记，
+  // 另外两个是持仓表所在文件名，部分构建里没有 testid 时兜底。
+  const HOLDING_PANEL_PRESENT = '[data-testid="position-table-floating"], [data-sentry-source-file^="PositionTable"], [data-sentry-source-file="Holding.tsx"]';
   const HOLDING_WATCH_MAX = 80;
   const HOLDING_POLL_MS = 30000;
   /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
@@ -3938,6 +3941,10 @@ ${flapTooltipText(info)}
   }
   const HOLDING_BATCH = 40;
   const holdingAlertedAt = new Map();
+  // 已播报到的档位（pct / 阈值 取整）。首轮只建基准不弹，之后每上一个新档才报一次。
+  const holdingAlertLevel = new Map();
+  // 读不到真实成本时的兜底基准：第一次看到这个仓位时的价格。
+  const holdingBasePrice = new Map();
   let holdingWatchMap = new Map();
   let holdingSaveTimer = 0;
   let holdingPollTimer = 0;
@@ -3953,6 +3960,7 @@ ${flapTooltipText(info)}
             chain: String(item.chain),
             address: String(item.address),
             symbol: String(item.symbol || ''),
+            cost: Number(item.cost) > 0 ? Number(item.cost) : 0,
             at: Number(item.at) || 0,
           },
         ]),
@@ -3988,13 +3996,27 @@ ${flapTooltipText(info)}
       const address = row.getAttribute('data-gdh-hold-addr') || '';
       if (!chain || !address) return;
       const symbol = row.getAttribute('data-gdh-hold-symbol') || '';
+      // 这一仓的每币平均成本（page-bridge 从持仓行的 React props 里读的）。
+      // 读不到就保留上一轮的值，别被面板某一帧的空数据擦掉。
+      const cost = Number(row.getAttribute('data-gdh-hold-cost')) || 0;
       const key = `${chain}:${address}`;
       seenChains.add(chain);
       seenKeys.add(key);
       const prev = holdingWatchMap.get(key);
       if (!prev || prev.symbol !== symbol) changed = true;
-      holdingWatchMap.set(key, { chain, address, symbol, at: Date.now() });
+      const nextCost = cost > 0 ? cost : (Number(prev?.cost) || 0);
+      if ((Number(prev?.cost) || 0) !== nextCost) changed = true;
+      holdingWatchMap.set(key, { chain, address, symbol, cost: nextCost, at: Date.now() });
     });
+
+    // 面板开着却一行都没有 = 这条链已经清空，同样要对账。
+    // 只看 seenChains 的话，卖掉某条链上最后一个持仓后它就永远为空，
+    // 那个币会一直赖在清单里被查价、被报警——还是"提醒你没有的持仓"。
+    // 面板压根没渲染时下面这句取不到元素，seenChains 保持为空，绝不误删。
+    if (!seenChains.size && document.querySelector(HOLDING_PANEL_PRESENT)) {
+      const chain = currentChain();
+      if (chain) seenChains.add(chain);
+    }
 
     // 对账：面板本轮渲染了某条链的持仓，那这条链上没出现的币就是已经卖掉的——
     // 从清单里删掉。否则清单只增不减，清仓后的币一涨还会弹"你没有的持仓"提醒。
@@ -4005,6 +4027,8 @@ ${flapTooltipText(info)}
         if (seenKeys.has(key)) continue;
         holdingWatchMap.delete(key);
         holdingAlertedAt.delete(key);
+        holdingAlertLevel.delete(key);
+        holdingBasePrice.delete(key);
         changed = true;
       }
     }
@@ -4051,18 +4075,37 @@ ${flapTooltipText(info)}
             const p = token?.price;
             if (!p) return;
             const now = Number(p.price);
-            const past = Number(p.price_5m);
-            if (!Number.isFinite(now) || !Number.isFinite(past) || past <= 0) return;
-            const pct = ((now - past) / past) * 100;
-            if (pct < threshold) return;
+            if (!Number.isFinite(now) || now <= 0) return;
             const address = String(token.address || p.address || '');
             const key = `${chain}:${address}`;
             // 二次确认：一轮查价是异步的，期间清单可能已因对账移除该币（清仓）。
             // 没在清单里就不弹——这是"提醒了自己没有的持仓"的最后一道闸。
             const meta = holdingWatchMap.get(key);
             if (!meta) return;
+
+            // 基准价：优先用这一仓的真实平均成本。以前拿「5 分钟前的价格」当基准——
+            // 而刚买入时，那 5 分钟涨幅正是你追进去的那一波，于是买完立刻误报一次。
+            // 成本读不到（面板没展开等）就退回「第一次看到它时的价格」，同样不会误报。
+            const hasCost = Number(meta.cost) > 0;
+            let base = hasCost ? Number(meta.cost) : (holdingBasePrice.get(key) || 0);
+            if (!base) {
+              holdingBasePrice.set(key, now);
+              return;
+            }
+            const pct = ((now - base) / base) * 100;
+            const level = Math.floor(pct / threshold);
+
+            // 首轮只建基准不弹：打开页面时老仓位可能已经 +300%，不该一上来就报一串。
+            // 刚买的仓位这时 pct≈0、落在 0 级，之后真涨到 +阈值 才报。
+            if (!holdingAlertLevel.has(key)) {
+              holdingAlertLevel.set(key, Math.max(level, 0));
+              return;
+            }
+            if (level <= holdingAlertLevel.get(key)) return;
             const last = holdingAlertedAt.get(key) || 0;
+            // 冷却期内不弹，也不推进档位——冷却一过这次上涨照样会报出来
             if (Date.now() - last < holdingCooldownMs()) return;
+            holdingAlertLevel.set(key, level);
             holdingAlertedAt.set(key, Date.now());
             showRemindCard({
               href: `/${chain}/token/${address}`,
@@ -4070,7 +4113,7 @@ ${flapTooltipText(info)}
               bell: '🚀',
               tagText: '持仓暴涨',
               symbol: meta?.symbol || token.symbol || '持仓代币',
-              label: '5分钟',
+              label: hasCost ? '较成本' : '较首见价',
               value: `+${pct.toFixed(0)}%  ${formatPriceShort(now)}`,
               raw: '',
             });
