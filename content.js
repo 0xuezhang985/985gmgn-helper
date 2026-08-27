@@ -896,6 +896,10 @@
   const FLAP_ADDR_RE = /^0x[a-fA-F0-9]{36}(?:7777|8888)$/;
   const flapInfoCache = new Map();
   const flapPending = new Set();
+  // 取失败的币的重试账本：{ at, tries }。not-flap 不进这里（那是定论）。
+  const flapRetry = new Map();
+  const FLAP_RETRY_BASE = 8000;
+  const FLAP_RETRY_MAX = 5;
 
   /** 按税收去向判定模式，与展示图标一一对应。 */
   function flapMode(dist) {
@@ -1035,9 +1039,12 @@
         badge?.remove();
         // 读不到就把原生标签还回去，别让人两头落空
         if (native) native.style.removeProperty('display');
+        // 用户报「徽章不显示」时，看这个属性就知道是节点没取到还是压根不是 Flap 币
+        host.dataset.gdhFlapFail = info.reason || 'unknown';
       }
       return;
     }
+    delete host.dataset.gdhFlapFail;
     // 信息比原生的全，藏掉原生税标避免重复（读不到数据时上面已还原）
     if (native && native.isConnected) native.style.setProperty('display', 'none', 'important');
     if (!badge) {
@@ -1070,15 +1077,36 @@ ${flapTooltipText(info)}
 点击打开 flap 税收详情页`;
   }
 
+  /**
+   * 取一次链上信息。要点是区分两种「没取到」：
+   * - not-flap：这币根本不是 Flap 系（地址尾号 7777/8888 只是撞了个巧），是定论，别再问；
+   * - 其它（节点抖动 / SW 正好被挂起 / 网络闪断）：是暂时的，必须能重试。
+   * 之前这里把两种一起写进 flapInfoCache 且没有 TTL，一次抖动就把这个币永久钉死，
+   * 徽章直到整页刷新都不会再出现——「开了却不显示」就是这么来的。
+   */
   function requestFlapInfo(token) {
-    if (flapInfoCache.has(token) || flapPending.has(token)) return;
+    if (flapPending.has(token)) return;
+    const cached = flapInfoCache.get(token);
+    if (cached) {
+      if (cached.ok !== false || cached.reason === 'not-flap') return;
+      const last = flapRetry.get(token);
+      if (!last || last.tries >= FLAP_RETRY_MAX) return;
+      // 指数退避，别拿一堆失败的币去连打节点
+      if (Date.now() - last.at < FLAP_RETRY_BASE * 2 ** (last.tries - 1)) return;
+    }
     if (flapPending.size >= 4) return;
     flapPending.add(token);
     chrome.runtime.sendMessage({
       type: 'flap-token-info',
       payload: { token, rpc: String(settings.flapRpc || '').trim() },
     }).then((res) => {
-      flapInfoCache.set(token, res || { ok: false });
+      // sendMessage 在 SW 被挂起时会拿到 undefined，那也是暂时的，同样要能重试
+      flapInfoCache.set(token, res || { ok: false, reason: 'no-response' });
+      if (res?.ok || res?.reason === 'not-flap') {
+        flapRetry.delete(token);
+      } else {
+        flapRetry.set(token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 });
+      }
     }).catch(() => {}).finally(() => {
       flapPending.delete(token);
       scheduleScan();
@@ -1115,7 +1143,9 @@ ${flapTooltipText(info)}
       if (!FLAP_ADDR_RE.test(token)) return;
       const key = token.toLowerCase();
       seen.add(key);
-      if (!flapInfoCache.has(key)) return void requestFlapInfo(key);
+      // requestFlapInfo 自己判断要不要真发（首次、或退避到点的重试），这里无条件叫一声。
+      // 以前是「缓存里没有才请求」，于是一条失败记录就等于永久放弃。
+      requestFlapInfo(key);
       ensureFlapBadge(host, key, native);
     };
 
