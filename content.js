@@ -98,8 +98,26 @@
       // 扩展上下文失效
     }
     syncFomoToken();
-    window.setInterval(syncFomoToken, 20000);
+    // 页面开着时它才是 privy 轮换链的主人，插件只镜像。同一个 document 里的
+    // localStorage 写入不触发 storage 事件，监听不到，只能轮询——间隔要短，
+    // 页面续期后插件手里的 refresh 立刻就是废的，镜像慢一秒就多一秒踩空的窗口。
+    window.setInterval(syncFomoToken, 5000);
     window.addEventListener('focus', syncFomoToken);
+    window.addEventListener('visibilitychange', syncFomoToken);
+
+    // 心跳：告诉后台"这页还活着、现在可见不可见"。后台据此决定要不要让位——
+    // 可见的页面 SDK 会自己续，插件插手就会分叉；藏起来的页面定时器被节流，
+    // 续不动，得由插件接管。tabs.query 只能看出标签页在不在，看不出被没被节流。
+    const beat = () => {
+      try {
+        chrome.storage.local.set({ fomoPage: { at: Date.now(), visible: document.visibilityState === 'visible' } });
+      } catch {
+        // 扩展上下文失效
+      }
+    };
+    beat();
+    window.setInterval(beat, 15000);
+    document.addEventListener('visibilitychange', beat);
     return;
   }
 

@@ -86,6 +86,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: CHECK_INTERVAL_MINUTES });
   checkForUpdate();
+  // 浏览器关着的时间不跑任何代码，开机时令牌多半已经过期，先补一次
+  fomoKeepAlive(true);
 });
 
 // fomo 登录态保活：privy access 令牌约 1 小时过期。原来只在用到 fomo 接口时
@@ -102,10 +104,44 @@ chrome.alarms.get(FOMO_KEEPALIVE_ALARM).then((existing) => {
   if (!existing) chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 5 });
 }).catch(() => {});
 
-// 令牌实测总寿命约 70 分钟（不是整 1 小时）。SW 会被浏览器随时挂起，
-// 挂起期间不跑任何代码，所以阈值必须留足余量：剩不到一半寿命就续。
-const FOMO_REFRESH_AHEAD_MS = 35 * 60000;
+// 令牌实测寿命整 60 分钟（iat→exp 恰好 3600 秒）。SW 会被浏览器随时挂起，
+// 挂起期间不跑任何代码，所以要留足余量：剩 20 分钟就续（闹钟 5 分钟一响，
+// 过期前还有四次机会）。别调得更早——每次续期都轮换 refresh，续得越勤越容易分叉。
+const FOMO_REFRESH_AHEAD_MS = 20 * 60000;
 let fomoKeepAliveAt = 0;
+
+/** 开着的 fomo.family 标签页 */
+async function fomoOpenTabs() {
+  try {
+    return await chrome.tabs.query({ url: ['https://fomo.family/*', 'https://*.fomo.family/*'] });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * fomo 页面还活着吗——活着它就是 privy 轮换链的主人。
+ * 靠 content script 的 15 秒心跳判断，不靠 tabs.query：标签页在不在是一回事，
+ * 里面的 JS 还跑不跑是另一回事（Chrome 会冻结长期后台标签页，冻住的页面不会续期）。
+ */
+async function fomoPageAlive() {
+  try {
+    const { fomoPage } = await chrome.storage.local.get('fomoPage');
+    return !!(fomoPage?.at && Date.now() - fomoPage.at < 45000);
+  } catch {
+    return false;
+  }
+}
+
+/** 等页面把它续出来的新令牌镜像过来（content.js 每 5 秒同步一次） */
+async function fomoWaitMirror(prevToken) {
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const { fomoToken } = await chrome.storage.local.get('fomoToken');
+    if (fomoToken?.token && fomoToken.token !== prevToken) return fomoToken;
+  }
+  return null;
+}
 
 async function fomoKeepAlive(force) {
   try {
@@ -115,7 +151,20 @@ async function fomoKeepAlive(force) {
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
     if (!fomoToken?.refresh) return; // 从未登录/会话已被 privy 作废，无从保活
     const exp = Number(fomoToken.exp) || 0;
-    if (exp && exp - Date.now() > FOMO_REFRESH_AHEAD_MS) return; // 还很新鲜，不动
+    const left = exp ? exp - Date.now() : 0;
+    if (exp && left > FOMO_REFRESH_AHEAD_MS) return; // 还很新鲜，不动
+
+    // 页面还活着就完全让位。实测（真实浏览器抓的）：privy SDK 会在过期那一刻准时
+    // 续期，隐藏标签页也照续。插件这时插一脚就是灾难——privy 每次续期都作废旧
+    // refresh，而写回 localStorage 并不会更新页面 SDK 内存里的那一份（同一个
+    // document 的写入不触发 storage 事件，SDK 根本感知不到），页面迟早拿着已作废的
+    // refresh 去续，撞上 privy 的复用检测，整条会话连坐作废 =「又要重新登录」。
+    // force 是面板自己撞上过期来求救的，不能一句"让位"把它打发走——那样面板会一直
+    // 显示过期。它走 fomoRefreshSession，里面会先等页面把新令牌镜像过来再决定。
+    if (!force && await fomoPageAlive()) {
+      await fomoAuthNote('defer-to-page', { leftMin: Math.round(left / 60000) });
+      return;
+    }
     await fomoRefreshSession();
   } catch {
     // 网络抖动等，下一轮再试
@@ -161,6 +210,18 @@ const PRIVY_APP_ID = 'cm6h485o300n3zj9yl6vpedq7';
 const PRIVY_CLIENT = 'react-auth:3.34.0';
 let fomoRefreshInFlight = null;
 
+// 登录态出问题时只能靠猜，太被动：留一份最近 20 条的续期流水，面板上能看。
+async function fomoAuthNote(what, extra) {
+  try {
+    const { fomoAuthLog } = await chrome.storage.local.get('fomoAuthLog');
+    const log = Array.isArray(fomoAuthLog) ? fomoAuthLog : [];
+    log.unshift({ at: Date.now(), what, ...(extra || {}) });
+    await chrome.storage.local.set({ fomoAuthLog: log.slice(0, 20) });
+  } catch {
+    // 存不下就算了，诊断不该影响主流程
+  }
+}
+
 function jwtExpMs(token) {
   try {
     const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -176,6 +237,15 @@ async function fomoRefreshSession() {
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
     const refresh = fomoToken?.refresh;
     if (!refresh) return null;
+    // 页面还活着却走到这一步（多半是接口按需续期正好撞上过期那几秒）：先等页面自己
+    // 续出来的新令牌镜像过来，等到就直接用。自己轮换 = 和页面分叉 = 整条会话作废。
+    if (await fomoPageAlive()) {
+      const adopted = await fomoWaitMirror(fomoToken.token);
+      if (adopted) {
+        await fomoAuthNote('adopt-from-page');
+        return adopted;
+      }
+    }
     const res = await fetch('https://auth.privy.io/api/v1/sessions', {
       method: 'POST',
       headers: {
@@ -186,15 +256,22 @@ async function fomoRefreshSession() {
       },
       body: JSON.stringify({ refresh_token: refresh }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      await fomoAuthNote('refresh-http-fail', { status: res.status });
+      return null;
+    }
     const body = await res.json().catch(() => null);
     // privy 明确说会话作废时才清，其它情况宁可留着旧的
     if (body?.session_update_action === 'clear') {
+      await fomoAuthNote('session-cleared');
       await chrome.storage.local.set({ fomoToken: null });
       return null;
     }
     const token = body?.token;
-    if (!token) return null;
+    if (!token) {
+      await fomoAuthNote('refresh-empty');
+      return null;
+    }
     const next = {
       token,
       refresh: body.refresh_token || refresh,
@@ -203,9 +280,10 @@ async function fomoRefreshSession() {
       renewed: true,
     };
     await chrome.storage.local.set({ fomoToken: next });
+    await fomoAuthNote('refreshed', { expMin: Math.round((next.exp - Date.now()) / 60000) });
     // 新令牌写回开着的 fomo.family 页，网页和插件共用同一条 privy 轮换链
     try {
-      const tabs = await chrome.tabs.query({ url: ['https://fomo.family/*', 'https://*.fomo.family/*'] });
+      const tabs = await fomoOpenTabs();
       for (const tab of tabs) {
         chrome.tabs.sendMessage(
           tab.id,
@@ -213,6 +291,13 @@ async function fomoRefreshSession() {
           () => void chrome.runtime.lastError,
         );
       }
+      // 还能走到"插件自己轮换"这一步却又有 fomo 标签页在，说明那页已经被 Chrome
+      // 冻结了（心跳早断了）。它内存里的 refresh 刚被这次轮换作废，等用户回头点开
+      // 就会拿着废 refresh 去续、撞上复用检测。刷新一下让 SDK 重启读到新链。
+      for (const tab of tabs) {
+        try { await chrome.tabs.reload(tab.id); } catch { /* 标签页已关 */ }
+      }
+      if (tabs.length) await fomoAuthNote('reloaded-frozen-page', { tabs: tabs.length });
     } catch {
       // 没有 tabs 权限或没有开着的页面：跳过，等下次同步
     }
