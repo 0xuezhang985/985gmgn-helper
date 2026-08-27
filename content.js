@@ -2014,10 +2014,6 @@ ${flapTooltipText(info)}
     });
 
     refreshOnchainBalances();
-    // 这两个要打网络、又要动第三方 DOM；一旦抛错不能把同一轮里后面的
-    // ☆/高亮/管理入口一起带塌，各自兜住
-    try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ }
-    try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ }
     ensureAddressPageStar();
     ensureAddWalletStarRow();
     ensureSpecialManageUI();
@@ -5294,6 +5290,13 @@ ${flapTooltipText(info)}
     timed('callout', scanCalloutBlacklist);
     timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
     timed('special', scanSpecialWallets);
+    // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
+    // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
+    // 「特别关注高亮」关掉就 return 的分支，于是用户一关特别关注，
+    // Flap 税收徽章和标注人物徽章就跟着一起没了（开关明明还开着）。
+    // 两个都要打网络、又要动第三方 DOM，各自兜住别把整轮扫描带塌。
+    timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
+    timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
     timed('lightning', scanFrontrunLightning);
     timed('remind', scanRemindToasts);
     timed('surge', scanHoldingSurge);
