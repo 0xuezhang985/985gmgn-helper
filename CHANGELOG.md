@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.45.8 - 2026-08-28
+
+- **修复跨链加钱包报 `HTTP 401`**。两处都错了，实测确认：
+  - **鉴权**：这个接口只认 `Authorization: Bearer`，光带 cookie 一律 `401 code 40101611 "empty token"`。令牌就是 GMGN 自己放在本站 `localStorage.tgInfo` 里的 `token.access_token`（只在本机读、只发回 gmgn.ai）。顺带纠正一条旧结论：GMGN 的鉴权请求走的是 **XHR 而非 fetch**，也不在 Web Worker 里——之前"主线程钩子抓不到鉴权头"的判断是错的。
+  - **请求体字段名全是猜的**：以前发 `{chain, address, name}`，服务端回「`FollowWalletsRequest.WalletAddresses` required」。正确形状取自 GMGN 自己的分包：`wallet_addresses` 是**数组**，`remark_addresses` 是 `[地址, 备注, emoji]` **三元组数组**。补上鉴权后换成正确字段名，服务端才开始正常校验地址本身。
+- **修复 Solana 钱包的「特别关注」完全失效**。三处写死了 EVM：
+  - 地址规范化统一 `toLowerCase()`——而 **Solana 是大小写敏感的 base58**，转小写等于换了个地址，存进去也永远匹配不上。
+  - 选择器写死 `a[href*="/address/0x"]`，SOL 的地址链接根本不匹配 → 钱包行、追踪卡、地址详情页全都挂不上星标。
+  - 添加时的校验写死 `/^0x[a-f0-9]{40}$/`，SOL 地址直接被拒。
+  - 现在钱包地址走独立的链感知规范化：EVM 照旧转小写，Solana 原样保留；通用的 `normalizeAddress` 不动（它还被代币地址等处共用，改了会和已存数据对不上）。喊单功能里同类的两处写死一并放宽。
+
 ## 0.45.7 - 2026-08-28
 
 - **持仓暴涨提醒改按「你的实际成本」算**（修复「刚买完立刻误报一次」）。

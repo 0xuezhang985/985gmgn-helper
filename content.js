@@ -313,6 +313,30 @@
     return typeof value === 'string' ? value.toLowerCase() : '';
   }
 
+  // 钱包地址专用。EVM 大小写无关，统一小写便于比对；Solana 是 base58、
+  // **大小写敏感**，转小写等于换了个地址——SOL 钱包的特别关注一直失效就是因为这个。
+  // 不动通用的 normalizeAddress：那个还被代币地址等处共用，改了会和已存数据对不上。
+  const EVM_ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+  const SOL_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+  function isWalletAddress(value) {
+    const v = String(value || '').trim();
+    return EVM_ADDR_RE.test(v) || SOL_ADDR_RE.test(v);
+  }
+
+  function normalizeWalletAddress(value) {
+    if (typeof value !== 'string') return '';
+    const v = value.trim();
+    if (SOL_ADDR_RE.test(v)) return v;
+    return EVM_ADDR_RE.test(v) ? v.toLowerCase() : '';
+  }
+
+  /** 从 /xxx/address/<addr> 这类链接里取钱包地址，EVM 与 Solana 都认。 */
+  function walletAddressFromHref(href) {
+    const seg = String(href || '').match(/\/address\/([^/?#]+)/)?.[1] || '';
+    return normalizeWalletAddress(seg);
+  }
+
   function normalizeHandle(value) {
     return typeof value === 'string' ? value.trim().replace(/^@/, '').toLowerCase() : '';
   }
@@ -362,7 +386,7 @@
     specialWalletMap = new Map(
       (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
         .map((item) => {
-          const address = normalizeAddress(item?.address);
+          const address = normalizeWalletAddress(item?.address);
           if (!address) return null;
           return [address, {
             label: String(item?.label || ''),
@@ -853,7 +877,7 @@
 
   function ensureCalloutBlockButton(card) {
     const addressView = card.querySelector('[data-sentry-component="WalletAddressView"]');
-    const addressLink = addressView?.closest('a[href*="/address/0x"]');
+    const addressLink = addressView?.closest('a[href*="/address/"]');
     const titleRow = addressLink?.parentElement;
     if (!titleRow) return;
 
@@ -1244,6 +1268,23 @@ ${flapTooltipText(info)}
   // app_ver…）就是 403 拦截页。参数不自己编——从本页已经发过的请求里原样抄一份
   // （resource timing 里有完整 URL），一次抄到后缓存本会话。
   let markedApiQuery = '';
+  /**
+   * GMGN 自己的登录令牌（localStorage.tgInfo → token.access_token），
+   * 请求头写成 `Authorization: Bearer <它>`。GMGN 的钱包类接口都靠这个鉴权，
+   * 只带 cookie 一律 401（code 40101611 "empty token"）。
+   * 只读不存、只发回 gmgn.ai 自己，不落地不外传。
+   */
+  function gmgnAccessToken() {
+    try {
+      const raw = window.localStorage.getItem('tgInfo');
+      if (!raw) return '';
+      const token = JSON.parse(raw)?.token?.access_token;
+      return typeof token === 'string' && token.length > 20 ? token : '';
+    } catch {
+      return '';
+    }
+  }
+
   function gmgnApiQuery() {
     if (markedApiQuery) return markedApiQuery;
     try {
@@ -1522,7 +1563,7 @@ ${flapTooltipText(info)}
     const nodes = card.querySelectorAll('span, div, p');
     for (const node of nodes) {
       if (node.querySelector('span, div, p')) continue;
-      if (node.closest('a[href*="/address/0x"]')) continue;
+      if (node.closest('a[href*="/address/"]')) continue;
       if ((node.textContent || '').trim() === target) return node;
     }
     return null;
@@ -1654,7 +1695,7 @@ ${flapTooltipText(info)}
     document.querySelectorAll(TRACK_TAB_CELL).forEach((tab) => {
       let el = tab.parentElement;
       for (let level = 0; level < 8 && el instanceof HTMLElement; level += 1) {
-        if (el.querySelector('a[href*="/address/0x"]')) return void scopes.add(el);
+        if (el.querySelector('a[href*="/address/"]')) return void scopes.add(el);
         el = el.parentElement;
       }
     });
@@ -1662,17 +1703,16 @@ ${flapTooltipText(info)}
   }
 
   function extractRowWalletAddress(scope) {
-    const link = scope.querySelector('a[href*="/address/0x"]');
-    const match = link?.getAttribute('href')?.match(/\/address\/(0x[a-fA-F0-9]{40})/);
-    if (match) return match[1].toLowerCase();
+    const link = scope.querySelector('a[href*="/address/"]');
+    const fromHref = walletAddressFromHref(link?.getAttribute('href'));
+    if (fromHref) return fromHref;
     // GMGN 改版后追踪卡里的钱包名不一定还是 /address/ 链接了；page-bridge 从卡片数据
     // 里读到的 maker 就是这条推送的钱包地址，拿它兜底，否则高亮/☆/🚫 会一起失效。
-    const maker = scope.dataset?.gdhTrackMaker || '';
-    return /^0x[a-fA-F0-9]{40}$/.test(maker) ? maker.toLowerCase() : '';
+    return normalizeWalletAddress(scope.dataset?.gdhTrackMaker || '');
   }
 
   function extractRowWalletLabel(scope) {
-    const link = scope.querySelector('a[href*="/address/0x"]');
+    const link = scope.querySelector('a[href*="/address/"]');
     const text = String(link?.textContent || '').trim();
     return (text || scope.dataset?.gdhTrackNick || '').slice(0, 32);
   }
@@ -1710,9 +1750,9 @@ ${flapTooltipText(info)}
   function toggleSpecialWallet(address, label) {
     if (!address) return;
     const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
-    const exists = current.some((item) => normalizeAddress(item?.address) === address);
+    const exists = current.some((item) => normalizeWalletAddress(item?.address) === address);
     const next = exists
-      ? current.filter((item) => normalizeAddress(item?.address) !== address)
+      ? current.filter((item) => normalizeWalletAddress(item?.address) !== address)
       : [...current, { address, label: label || '', color: SPECIAL_COLOR_PALETTE[0] }];
     persistSpecialWallets(next);
   }
@@ -1722,7 +1762,7 @@ ${flapTooltipText(info)}
     if (color !== 'rainbow' && !/^#[0-9a-fA-F]{6}$/.test(String(color || ''))) return;
     const next = (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
       .map((item) => (
-        normalizeAddress(item?.address) === address
+        normalizeWalletAddress(item?.address) === address
           ? { ...item, color: normalizeSpecialColor(color) }
           : item
       ));
@@ -1733,14 +1773,14 @@ ${flapTooltipText(info)}
     if (!address || !specialWalletMap.has(address)) return;
     const next = (Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
       .map((item) => (
-        normalizeAddress(item?.address) === address ? { ...item, pin: pin === true } : item
+        normalizeWalletAddress(item?.address) === address ? { ...item, pin: pin === true } : item
       ));
     persistSpecialWallets(next);
   }
 
   function addSpecialWallet(address, label, color, pin) {
-    const normalized = normalizeAddress(address);
-    if (!/^0x[a-f0-9]{40}$/.test(normalized) || specialWalletMap.has(normalized)) return false;
+    const normalized = normalizeWalletAddress(address);
+    if (!normalized || specialWalletMap.has(normalized)) return false;
     const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
     persistSpecialWallets([
       ...current,
@@ -2002,7 +2042,7 @@ ${flapTooltipText(info)}
 
     // 钱包列表行：从地址链接爬到行容器。
     walletTableScopes().forEach((table) => {
-      table.querySelectorAll('a[href*="/address/0x"]').forEach((link) => {
+      table.querySelectorAll('a[href*="/address/"]').forEach((link) => {
         const row = findWalletTableRow(link);
         if (!(row instanceof HTMLElement)) return;
         const address = extractRowWalletAddress(row);
@@ -2022,15 +2062,15 @@ ${flapTooltipText(info)}
 
   // ---- 地址页（添加/关注钱包处）同步打星 ----
   function ensureAddressPageStar() {
-    const match = location.href.match(/address\/(0x[a-fA-F0-9]{40})/);
+    const pageAddress = walletAddressFromHref(location.pathname);
     const follow = document.querySelector('[data-sentry-component="UserFollow"]');
     const existing = document.querySelector('.gdh-star-button--address');
-    if (!match || !(follow instanceof HTMLElement) || !follow.parentElement) {
+    if (!pageAddress || !(follow instanceof HTMLElement) || !follow.parentElement) {
       existing?.remove();
       document.querySelector('.gdh-color-button--address')?.remove();
       return;
     }
-    const address = match[1].toLowerCase();
+    const address = pageAddress;
     const host = follow.parentElement;
     if (host.dataset.gdhStarHost !== '1') host.dataset.gdhStarHost = '1';
     const label = String(document.title || '').split(' ')[0].trim().slice(0, 32);
@@ -2096,12 +2136,24 @@ ${flapTooltipText(info)}
   async function followWalletOnChain(chain, address, name) {
     const apiQuery = gmgnApiQuery();
     if (!apiQuery) return { ok: false, reason: '页面参数未就绪，稍后再试' };
+    // 这个接口只认 Bearer 令牌，光带 cookie 会 401（code 40101611 empty token）。
+    // 令牌就是 GMGN 自己放在本站 localStorage 里的那一份，只在本机、只发回 gmgn.ai。
+    const token = gmgnAccessToken();
+    if (!token) return { ok: false, reason: '未登录 GMGN，请先登录' };
     try {
       const res = await fetch(`https://gmgn.ai/api/v1/follow/follow_wallet?${apiQuery}`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chain, address, name: name || '' }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        // 字段名取自 GMGN 自己的分包：wallet_addresses 是数组，
+        // remark_addresses 是 [地址, 备注, emoji] 三元组数组。
+        // 之前发的 {chain,address,name} 全是猜的，服务端直接回
+        // 「FollowWalletsRequest.WalletAddresses required」。
+        body: JSON.stringify({
+          chain,
+          wallet_addresses: [address],
+          remark_addresses: name ? [[address, String(name).slice(0, 32), '']] : [],
+        }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
