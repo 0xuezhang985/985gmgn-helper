@@ -1576,11 +1576,17 @@ ${flapTooltipText(info)}
    * 「只包着这一张追踪卡」就说明它是这张卡的专属外壳，一并折叠；一旦某层里出现了
    * 别的追踪卡，那就是列表容器，停手。
    */
+  /**
+   * 给这条推送的各层打上「已屏蔽」标记，最高只到那层绝对定位的虚拟化外壳为止。
+   * 边界必须按 position:absolute 判，不能按 TrackerListItem 判——表格模式下压根
+   * 没有那个标记，旧写法会一路向上标满 6 层，可能把整个列表容器一起压掉。
+   */
   function markBlockedHosts(card, blocked) {
     let el = card;
     for (let level = 0; level < 6 && el instanceof HTMLElement; level += 1) {
       if (blocked) el.dataset.gdhTokenBlocked = '1';
       else delete el.dataset.gdhTokenBlocked;
+      if ((el.style.position || '') === 'absolute') break; // 外壳本身标完就停
       const parent = el.parentElement;
       if (!parent) break;
       if (parent.querySelectorAll(TRACKER_ITEM_SELECTOR).length > 1) break;
@@ -5200,8 +5206,14 @@ ${flapTooltipText(info)}
   let fomoFeedLastMode = null;
 
   function scanFomoFeed() {
-    if (!settings.enabled || settings.enableFomoFeed === false) {
+    if (!settings.enabled) {
       teardownFomoFeed();
+      return;
+    }
+    // 屏蔽折叠和 fomo 混排是两件事：就算关掉了 fomo 推送，被屏蔽的行照样得折叠掉
+    if (settings.enableFomoFeed === false) {
+      teardownFomoFeed();
+      collapseBlockedTrackerRows();
       return;
     }
     // 卡片/表格模式切换后，旧模式的卡片结构不能留着——整体重建
@@ -5215,6 +5227,8 @@ ${flapTooltipText(info)}
     const cards = trackerCards().filter((c) => c.isConnected);
     if (!events.length || !cards.length) {
       teardownFomoFeed();
+      // 没有 fomo 卡要插，但被屏蔽的行仍要折叠——否则屏蔽完就是一排空白
+      if (cards.length) layoutFomoFeedFixed(cards, new Map());
       return;
     }
 
@@ -5324,6 +5338,12 @@ ${flapTooltipText(info)}
    * 塞进腾出的缝里。React 滚动/插新行时重写 top 不会碰 transform，两套定位互不
    * 覆盖；锚行被卸载时卡和位移一起回收，视口之外的列表零影响。
    */
+  /** 只做「把被屏蔽的行折叠掉」，复用混排那套位移；没有 fomo 事件时也要能跑。 */
+  function collapseBlockedTrackerRows() {
+    const cards = trackerCards().filter((c) => c.isConnected);
+    if (cards.length) layoutFomoFeedFixed(cards, new Map());
+  }
+
   function layoutFomoFeedFixed(cards, byAnchor) {
     const rows = [];
     for (const card of cards) {
@@ -5341,6 +5361,14 @@ ${flapTooltipText(info)}
       const shift = cum ? `translateY(${cum}px)` : '';
       if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
       if (cum) { fomoFeedShifted.add(row.wrap); stillShifted.add(row.wrap); }
+      // 被屏蔽的币：这一行只是视觉隐藏，位置还占着（固定行高公式布局，行推不动）。
+      // 给后面的行一个负位移把它这一格吃掉，屏蔽后就不会留一排空白了。
+      // 判据取 DOM 上的标记而不是 isTokenBlocked()——标记是「真的已经隐藏了」的凭证。
+      // 若特别关注扫描没跑（功能被关掉），行还看得见却被位移吃掉，后面的行就会压上来。
+      if (row.card.dataset.gdhTokenBlocked === '1') {
+        cum -= row.h;
+        continue; // 锚都没了，别再往它下面插 fomo 卡
+      }
       const group = byAnchor.get(row.card);
       if (!group) continue;
       let inner = 0;

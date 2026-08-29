@@ -1756,18 +1756,13 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   to { filter: brightness(1.6) drop-shadow(0 0 5px rgba(248, 113, 113, 0.9)); transform: scale(1.45); }
 }
 
-/* 被屏蔽的币：整条追踪推送折叠掉。
-   追踪流是 react-virtuoso，靠 ResizeObserver 量每项高度，而它会忽略 display:none 的
-   测量结果（避免闪烁），于是被隐藏的项仍占着位置、留下空档。折成 0 高度它才会重新量。 */
+/* 被屏蔽的币：整条追踪推送藏起来，空出来的位置由 JS 用 translateY 把后面的行拉上来
+   （layoutFomoFeedFixed）。
+   注意别再改回「压成 0 高度」：追踪流不是靠测量的虚拟列表，而是固定行高的公式布局
+   （top = 序号 × 行高），压成 0 后那一格照样空着，反而把行高量成 0、位移算不出来。
+   这里只做视觉隐藏、保留原有高度，测量和位移才对得上。 */
 [data-gdh-token-blocked="1"] {
-  height: 0 !important;
-  min-height: 0 !important;
-  max-height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  overflow: hidden !important;
-  opacity: 0 !important;
+  visibility: hidden !important;
   pointer-events: none !important;
 }
 
