@@ -738,6 +738,9 @@ const FOMO_FEED_TYPE = {
   FOMO_SELL: 'sell',
   FOMO_SWAP: 'swap',
   FOMO_THESIS: 'thesis',
+  // 转入不是买入：链上腿只看得到代币进账那一条腿，空投 / 税收分红 / 别人打款
+  // 形状和买入一模一样。采集端判出「不是交易」的，这边单独成一类，别混进买入。
+  FOMO_TRANSFER_IN: 'transferIn',
 };
 
 // fomo 的链名 → GMGN 的路径段

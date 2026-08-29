@@ -21,7 +21,7 @@ const DEFAULTS = {
   flapRpc: '',
   enableFomoFeed: true,
   fomoFeedChainOnly: false,
-  fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
+  fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true },
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
     { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰大号1' },
@@ -64,6 +64,7 @@ const fomoFeedTypeInputs = {
   sell: document.querySelector('#fomo-feed-sell'),
   swap: document.querySelector('#fomo-feed-swap'),
   thesis: document.querySelector('#fomo-feed-thesis'),
+  transferIn: document.querySelector('#fomo-feed-transfer-in'),
 };
 
 // 自定义 RPC 不写进固定权限（那等于索取全站访问），改为填了才当场申请该域名

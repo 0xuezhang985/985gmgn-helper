@@ -2085,6 +2085,8 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomofeed.is-sell .gdh-fomofeed__tag { color: #f87171; }
 .gdh-fomofeed.is-swap .gdh-fomofeed__tag { color: #eab308; }
 .gdh-fomofeed.is-thesis .gdh-fomofeed__tag { color: #c084fc; }
+/* 转入不是交易，用中性灰蓝，别跟买入的绿撞在一起 */
+.gdh-fomofeed.is-transfer .gdh-fomofeed__tag { color: #94a3b8; }
 .gdh-fomofeed__src {
   flex: none;
   font-size: 9px; line-height: 12px; color: #6b7280;
@@ -2094,6 +2096,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomofeed__usd { font-weight: 600; flex: none; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__usd { color: #22c55e; }
 .gdh-fomofeed.is-sell .gdh-fomofeed__usd { color: #f87171; }
+.gdh-fomofeed.is-transfer .gdh-fomofeed__usd { color: #94a3b8; }
 .gdh-fomofeed.is-swap .gdh-fomofeed__usd { color: #eab308; }
 .gdh-fomofeed__logo {
   width: 16px; height: 16px; border-radius: 50%; overflow: hidden; flex: none; background: #2a2f3a;
@@ -2185,6 +2188,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomofeed__tamt { width: 84px; font-weight: 600; justify-content: flex-end; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__tamt { color: #22c55e; }
 .gdh-fomofeed.is-sell .gdh-fomofeed__tamt { color: #f87171; }
+.gdh-fomofeed.is-transfer .gdh-fomofeed__tamt { color: #94a3b8; }
 .gdh-fomofeed.is-swap .gdh-fomofeed__tamt { color: #eab308; }
 .gdh-fomofeed__tmc { flex: 1; min-width: 0; justify-content: flex-end; padding-right: 10px; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed.is-table .gdh-fomofeed__thesis { padding: 0 10px 8px 6px; }

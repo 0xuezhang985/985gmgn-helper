@@ -203,7 +203,7 @@
     flapRpc: '',
     enableFomoFeed: true,
     fomoFeedChainOnly: false,
-    fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true },
+    fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -4801,6 +4801,7 @@ ${flapTooltipText(info)}
     sell: { label: '卖出', cls: 'is-sell' },
     swap: { label: '换仓', cls: 'is-swap' },
     thesis: { label: '观点', cls: 'is-thesis' },
+    transferIn: { label: '转入', cls: 'is-transfer' },
   };
   let fomoFeedEvents = [];
   const fomoFeedCards = new Map();
