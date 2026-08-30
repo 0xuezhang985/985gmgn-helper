@@ -128,6 +128,22 @@ await test('每条链独立保留 100 个仓位，活跃链不会挤掉其他链
   assert.equal(result.filter((x) => x.chain === 'sol').length, 100);
 });
 
+await test('追踪流新挂载虚拟行会继承已有插卡位移', () => {
+  const fn = extractFunction(content, 'fomoFeedInsertionShift');
+  const inserts = [
+    { afterTop: 516, height: 66 },
+    { afterTop: 516, height: 66 },
+    { afterTop: 646.5, height: 66 },
+    { afterTop: 712.5, height: 66 },
+    { afterTop: 778.5, height: 66 },
+    { afterTop: 844.5, height: 66 },
+  ];
+  assert.equal(evaluate([fn], `fomoFeedInsertionShift(451.5, ${JSON.stringify(inserts)})`), 0);
+  assert.equal(evaluate([fn], `fomoFeedInsertionShift(838.5, ${JSON.stringify(inserts)})`), 330);
+  assert.equal(evaluate([fn], `fomoFeedInsertionShift(903, ${JSON.stringify(inserts)})`), 396);
+  assert.match(content, /scheduleFomoFeedRowReflow\(\);\s*\n\s*}\s*\n\s*if \(\!\(target instanceof Element\)/);
+});
+
 await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async () => {
   const calls = [];
   const chrome = { tabs: {

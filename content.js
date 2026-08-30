@@ -5277,12 +5277,72 @@ ${flapTooltipText(info)}
   // 「scrollTop ÷ 行高 → 该挂载哪些行」的映射拉出 overscan 冗余，底部会露白
   const FOMO_FEED_INLINE_CAP = 6;
   const fomoFeedShifted = new Set();
+  let fomoFeedReflowRaf = 0;
 
   function clearFomoFeedShifts() {
     for (const el of fomoFeedShifted) {
       if (el.isConnected) el.style.transform = '';
     }
     fomoFeedShifted.clear();
+  }
+
+  /** 一条原生虚拟行应继承多少插卡位移。afterTop 使用未位移的列表坐标。 */
+  function fomoFeedInsertionShift(rowTop, inserts) {
+    let shift = 0;
+    for (const insert of inserts) {
+      if (insert.afterTop <= rowTop + 0.25) shift += insert.height;
+    }
+    return shift;
+  }
+
+  /**
+   * 滚动时 Virtuoso 会先挂新行、稍后主扫描才重排。旧逻辑让新行短暂保持 transform=""，
+   * 直接压进绝对定位的 fomo 卡区域。这里只读取当前插卡阈值并修正已挂载行，
+   * 不重新配对事件、不发请求，单帧工作量最多约 13 行 × 6 卡。
+   */
+  function refreshFomoFeedFixedRowShifts() {
+    const cards = trackerCards().filter((card) => card.isConnected);
+    const rows = [];
+    for (const card of cards) {
+      const info = fomoFeedFixedRow(card);
+      if (info) rows.push({ card, ...info });
+    }
+    if (!rows.length) return;
+    rows.sort((a, b) => a.top - b.top);
+    const spacer = rows[0].wrap.parentElement;
+    if (!(spacer instanceof HTMLElement)) return;
+    const inserts = [...fomoFeedCards.values()]
+      .filter((el) => el.isConnected && el.parentElement === spacer && el.classList.contains('is-abs'))
+      .map((el) => ({
+        afterTop: Number.parseFloat(el.dataset.gdhFomoAfterTop),
+        height: el.offsetHeight + 2,
+      }))
+      .filter((item) => Number.isFinite(item.afterTop) && item.height > 0);
+
+    const stillShifted = new Set();
+    let collapsed = 0;
+    for (const row of rows) {
+      const amount = fomoFeedInsertionShift(row.top, inserts) + collapsed;
+      const shift = amount ? `translateY(${amount}px)` : '';
+      if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
+      if (amount) { fomoFeedShifted.add(row.wrap); stillShifted.add(row.wrap); }
+      if (row.card.dataset.gdhTokenBlocked === '1') collapsed -= row.h;
+    }
+    for (const el of [...fomoFeedShifted]) {
+      if (!stillShifted.has(el)) {
+        if (el.isConnected) el.style.transform = '';
+        fomoFeedShifted.delete(el);
+      }
+    }
+  }
+
+  function scheduleFomoFeedRowReflow() {
+    if (fomoFeedReflowRaf) return;
+    if (!document.querySelector('.gdh-fomofeed.is-abs, [data-gdh-token-blocked="1"]')) return;
+    fomoFeedReflowRaf = window.requestAnimationFrame(() => {
+      fomoFeedReflowRaf = 0;
+      refreshFomoFeedFixedRowShifts();
+    });
   }
 
   /** 追踪行的绝对定位包装（GMGN 实测：data-index 层 absolute + inline top/height 公式布局）。 */
@@ -5396,6 +5456,7 @@ ${flapTooltipText(info)}
         for (const ev of pinItems) {
           const el = fomoFeedCardFor(ev);
           el.classList.remove('is-abs');
+          delete el.dataset.gdhFomoAfterTop;
           if (el.style.top) el.style.top = '';
           if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
           prev = el;
@@ -5484,6 +5545,7 @@ ${flapTooltipText(info)}
         const el = fomoFeedCardFor(ev);
         el.classList.add('is-abs');
         if (el.parentElement !== spacer) spacer.appendChild(el);
+        el.dataset.gdhFomoAfterTop = String(row.top + row.h);
         const top = `${row.top + row.h + cum + inner}px`;
         if (el.style.top !== top) el.style.top = top;
         inner += el.offsetHeight + 2;
@@ -5497,6 +5559,8 @@ ${flapTooltipText(info)}
         fomoFeedShifted.delete(el);
       }
     }
+    // 统一走同一套阈值计算，确保全量布局与滚动轻量重排结果完全一致。
+    refreshFomoFeedFixedRowShifts();
   }
 
   let lastFullScanAt = 0;
@@ -5577,6 +5641,10 @@ ${flapTooltipText(info)}
     scrollingUntil = Date.now() + 200;
 
     const target = event.target;
+    if (target instanceof Element
+      && (target.querySelector(TRACKER_ITEM_SELECTOR) || target.querySelector(TRACKER_SYMBOL_CELL))) {
+      scheduleFomoFeedRowReflow();
+    }
     if (!(target instanceof Element)
       || (!target.closest('[data-sentry-component="PumpSubX"]')
         && !target.closest('[data-testid="trench-token-card"]'))) {
@@ -5700,6 +5768,11 @@ ${flapTooltipText(info)}
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
+      // 虚拟列表新挂载的行必须在本帧绘制前继承已有插卡位移。这里同步重排；
+      // observer 不监听 style，所以写 transform 不会反过来触发自身。
+      if (document.querySelector('.gdh-fomofeed.is-abs, [data-gdh-token-blocked="1"]')) {
+        refreshFomoFeedFixedRowShifts();
+      }
       scheduleScan();
       return;
     }
