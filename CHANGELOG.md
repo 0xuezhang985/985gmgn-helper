@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.6 - 2026-08-31
+
+- 继续修复 App 持仓提醒同步：现场确认 GMGN 页面主世界已有登录令牌，但 Chrome 内容脚本隔离世界读取不到该站的 `localStorage.tgInfo`，因此 v0.46.5 虽修正请求参数，仍会误报“请登录”。
+- 配置请求移入现有 `page-bridge.js` MAIN world；Bearer 不离开 GMGN 页面，只通过一次性 DOM 事件向内容脚本传递 SOL/BSC/Base 的脱敏 `holding_signal` 值。
+- 保留 v0.46.5 已实测成功的空对象请求，并按真实返回补齐 `open / close` 枚举；新增桥接白名单回归，其他链和 `push_switch_dict` 里的无关字段不会跨隔离世界传递。
+
 ## 0.46.5 - 2026-08-31
 
 - 修复 GMGN App 持仓提醒开关一直显示“未同步”：官方 `getNotiUserConfig(accountId)` 默认发送空对象并返回全部链，旧版错误发送逗号分隔的 `push_chains`，服务端实际返回 `40000301 invalid argument`。

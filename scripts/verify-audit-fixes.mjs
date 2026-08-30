@@ -112,15 +112,26 @@ await test('持仓提醒读取 GMGN App 的逐链 holding_signal 开关', () => 
   ] })`);
   assert.deepEqual(JSON.parse(JSON.stringify(wrapped)), { sol: true, bsc: false, base: true });
   const direct = evaluate(functions, `parseGmgnHoldingSignalConfig([
-    { push_chain: 'sol', push_switch_dict: { holding_signal: 'false' } }
+    { push_chain: 'sol', push_switch_dict: { holding_signal: 'open' } },
+    { push_chain: 'bsc', push_switch_dict: { holding_signal: 'close' } }
   ])`);
-  assert.deepEqual(JSON.parse(JSON.stringify(direct)), { sol: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(direct)), { sol: true, bsc: false });
   assert.equal(evaluate(functions, "parseGmgnHoldingSignalConfig({ data: [{ chain: 'sol', enabled: true }] })"), null);
 });
 
 await test('GMGN App 通知配置请求使用官方默认空对象', () => {
-  assert.match(content, /GMGN_HOLDING_SIGNAL_CONFIG_URL[\s\S]*?body:\s*'\{\}'/);
-  assert.doesNotMatch(content, /body:\s*JSON\.stringify\(\{\s*push_chains:/);
+  const sanitize = extractFunction(bridge, 'sanitizeHoldingConfig');
+  const bridged = evaluate([sanitize], `sanitizeHoldingConfig({ code: 0, data: [
+    { push_chain: 'sol', push_switch_dict: { holding_signal: '1', other: 'secret' } },
+    { push_chain: 'eth', push_switch_dict: { holding_signal: '1' } }
+  ] })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(bridged)), [
+    { push_chain: 'sol', push_switch_dict: { holding_signal: '1' } },
+  ]);
+  assert.match(bridge, /HOLDING_CONFIG_URL[\s\S]*?body:\s*'\{\}'/);
+  assert.match(bridge, /localStorage\.getItem\('tgInfo'\)/);
+  assert.match(content, /document\.dispatchEvent\(new Event\(GMGN_HOLDING_CONFIG_REQUEST_EVENT\)\)/);
+  assert.doesNotMatch(bridge, /body:\s*JSON\.stringify\(\{\s*push_chains:/);
 });
 
 await test('主世界在页面 WebSocket 创建前桥接 token_stat 且不新开连接', () => {
@@ -273,8 +284,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.5.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.5.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.6.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.6.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

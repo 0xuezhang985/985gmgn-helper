@@ -4,19 +4,123 @@
   if (window.__gdhPageBridgeStarted) return;
   window.__gdhPageBridgeStarted = true;
 
-  // 插件的持仓价格计算复用 GMGN 页面原生 token_stat 行情流。App 通知开关另由
-  // 账户配置接口同步；桥接层只透出当前价、5 分钟前价格和链/地址，不复制登录态，
-  // 也不新开第二条 WebSocket。
+  // 插件的持仓价格计算复用 GMGN 页面原生 token_stat 行情流。MAIN world 才能读取
+  // GMGN 自己的 localStorage 登录态，所以 App 通知开关也在这里请求；桥接层只透出
+  // SOL/BSC/Base 的布尔开关，不复制令牌，也不新开第二条 WebSocket。
   const TOKEN_STAT_ATTRIBUTE = 'data-gdh-token-stat';
   const TOKEN_STAT_EVENT = 'gdh-token-stat';
+  const HOLDING_CONFIG_REQUEST_EVENT = 'gdh-holding-config-request';
+  const HOLDING_CONFIG_RESULT_EVENT = 'gdh-holding-config-result';
+  const HOLDING_CONFIG_RESULT_ATTRIBUTE = 'data-gdh-holding-config-result';
+  const HOLDING_CONFIG_URL = 'https://gmgn.ai/api/v1/notification/user_config_list';
   const nativeWebSocket = window.WebSocket;
   const tokenStatChains = new WeakMap();
+  let holdingConfigInflight = null;
 
   function normalizeTokenStatAddress(value) {
     const raw = String(value || '');
     if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw.toLowerCase();
     return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw) ? raw : '';
   }
+
+  function emitHoldingConfigResult(result) {
+    if (!document.documentElement) return;
+    document.documentElement.setAttribute(HOLDING_CONFIG_RESULT_ATTRIBUTE, JSON.stringify(result));
+    document.dispatchEvent(new Event(HOLDING_CONFIG_RESULT_EVENT));
+    document.documentElement.removeAttribute(HOLDING_CONFIG_RESULT_ATTRIBUTE);
+  }
+
+  function gmgnPageAccessToken() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem('tgInfo') || 'null');
+      const token = parsed?.token?.access_token;
+      return typeof token === 'string' && token.length > 20 ? token : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function gmgnPageApiQuery() {
+    try {
+      const src = performance.getEntriesByType('resource')
+        .map((entry) => entry.name)
+        .find((url) => url.includes('gmgn.ai/') && url.includes('device_id='));
+      return src?.split('?')[1] || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function sanitizeHoldingConfig(payload) {
+    const candidates = [payload, payload?.data, payload?.result];
+    const rows = candidates.find((value) => Array.isArray(value));
+    if (!rows) return null;
+    const allowed = new Set(['sol', 'bsc', 'base']);
+    const sanitized = [];
+    for (const row of rows) {
+      const chain = String(row?.push_chain || '').trim().toLowerCase();
+      const dict = row?.push_switch_dict;
+      if (!allowed.has(chain) || !dict || typeof dict !== 'object'
+        || !Object.prototype.hasOwnProperty.call(dict, 'holding_signal')) continue;
+      sanitized.push({
+        push_chain: chain,
+        push_switch_dict: { holding_signal: dict.holding_signal },
+      });
+    }
+    return sanitized.length ? sanitized : null;
+  }
+
+  async function fetchHoldingConfig() {
+    const token = gmgnPageAccessToken();
+    if (!token) return emitHoldingConfigResult({ ok: false, reason: 'login-required', stage: 'token' });
+    let query = gmgnPageApiQuery();
+    // content script 在 document_idle 就会请求；冷启动时 GMGN 自己第一条带客户端参数的
+    // API 可能还没进入 resource timing。最多等 5 秒，不把这个时序差误报成接口故障。
+    for (let attempt = 0; !query && attempt < 20; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      query = gmgnPageApiQuery();
+    }
+    if (!query) return emitHoldingConfigResult({ ok: false, reason: 'unavailable', stage: 'query' });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${HOLDING_CONFIG_URL}?${query}`, {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Content-Type': 'application/json',
+        },
+        // 官方 getNotiUserConfig(accountId) 默认发送空对象并返回全部链。
+        body: '{}',
+      });
+      const body = await response.json().catch(() => null);
+      const data = response.ok && (body?.code === undefined || body?.code === 0)
+        ? sanitizeHoldingConfig(body) : null;
+      if (!data) {
+        emitHoldingConfigResult({
+          ok: false,
+          reason: response.status === 401 || response.status === 403 ? 'login-required' : 'unavailable',
+          stage: 'response',
+          status: response.status,
+        });
+        return;
+      }
+      emitHoldingConfigResult({ ok: true, data });
+    } catch {
+      emitHoldingConfigResult({ ok: false, reason: 'unavailable', stage: 'fetch' });
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  document.addEventListener(HOLDING_CONFIG_REQUEST_EVENT, () => {
+    if (holdingConfigInflight) return;
+    holdingConfigInflight = fetchHoldingConfig()
+      .finally(() => { holdingConfigInflight = null; });
+  });
 
   function rememberTokenStatSubscription(socket, data) {
     if (typeof data !== 'string' || !data.includes('token_stat')) return;

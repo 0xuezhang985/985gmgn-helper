@@ -3995,7 +3995,9 @@ ${flapTooltipText(info)}
   // 官方 App 的账户级通知配置：POST /api/v1/notification/user_config_list，
   // 每条链返回 push_switch_dict.holding_signal。这里只复用开关；移动端消息本身
   // 走 JPush/FCM 设备令牌，浏览器无法直接订阅，所以触发仍使用页面原生行情流。
-  const GMGN_HOLDING_SIGNAL_CONFIG_URL = 'https://gmgn.ai/api/v1/notification/user_config_list';
+  const GMGN_HOLDING_CONFIG_REQUEST_EVENT = 'gdh-holding-config-request';
+  const GMGN_HOLDING_CONFIG_RESULT_EVENT = 'gdh-holding-config-result';
+  const GMGN_HOLDING_CONFIG_RESULT_ATTRIBUTE = 'data-gdh-holding-config-result';
   const GMGN_HOLDING_SIGNAL_SYNC_MS = 5 * 60 * 1000;
   const GMGN_HOLDING_SIGNAL_RETRY_MS = 60 * 1000;
   /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
@@ -4020,8 +4022,8 @@ ${flapTooltipText(info)}
 
   function holdingSignalBoolean(value) {
     if (typeof value === 'boolean') return value;
-    if (value === 1 || value === '1' || value === 'true' || value === 'on') return true;
-    if (value === 0 || value === '0' || value === 'false' || value === 'off') return false;
+    if (value === 1 || value === '1' || value === 'true' || value === 'on' || value === 'open') return true;
+    if (value === 0 || value === '0' || value === 'false' || value === 'off' || value === 'close') return false;
     return null;
   }
 
@@ -4059,6 +4061,34 @@ ${flapTooltipText(info)}
     }
   }
 
+  function requestGmgnHoldingSignalConfig() {
+    return new Promise((resolve) => {
+      if (!document.documentElement) return resolve({ ok: false, reason: 'unavailable', stage: 'document' });
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        document.removeEventListener(GMGN_HOLDING_CONFIG_RESULT_EVENT, onResult);
+        resolve(result);
+      };
+      const onResult = () => {
+        try {
+          const raw = document.documentElement.getAttribute(GMGN_HOLDING_CONFIG_RESULT_ATTRIBUTE);
+          finish(raw ? JSON.parse(raw) : { ok: false, reason: 'unavailable', stage: 'missing-result' });
+        } catch {
+          finish({ ok: false, reason: 'unavailable', stage: 'invalid-result' });
+        }
+      };
+      const timeout = window.setTimeout(
+        () => finish({ ok: false, reason: 'unavailable', stage: 'timeout' }),
+        11000,
+      );
+      document.addEventListener(GMGN_HOLDING_CONFIG_RESULT_EVENT, onResult);
+      document.dispatchEvent(new Event(GMGN_HOLDING_CONFIG_REQUEST_EVENT));
+    });
+  }
+
   async function syncGmgnHoldingSignalConfig(force = false) {
     if (gmgnHoldingSignalInflight) return gmgnHoldingSignalInflight;
     if (settings.enableHoldingSurge === false || !isTabVisibleForHolding()) return null;
@@ -4067,42 +4097,16 @@ ${flapTooltipText(info)}
       ? GMGN_HOLDING_SIGNAL_SYNC_MS : GMGN_HOLDING_SIGNAL_RETRY_MS;
     if (!force && now - gmgnHoldingSignalAttemptAt < waitMs) return null;
     gmgnHoldingSignalAttemptAt = now;
-    const token = gmgnAccessToken();
-    if (!token) {
-      saveGmgnHoldingSignalSyncState({
-        synced: false,
-        reason: 'login-required',
-        attemptedAt: now,
-        lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
-      });
-      return null;
-    }
-
     gmgnHoldingSignalInflight = (async () => {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 10000);
       try {
-        const query = gmgnApiQuery() || DEV_ATH_QS;
-        const response = await fetch(`${GMGN_HOLDING_SIGNAL_CONFIG_URL}?${query}`, {
-          method: 'POST',
-          credentials: 'include',
-          signal: controller.signal,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Cache-Control': 'no-cache',
-            'Content-Type': 'application/json',
-          },
-          // 官方 getNotiUserConfig(accountId) 默认发送空对象并返回全部链；
-          // push_chains 不是逗号分隔字符串，错误传法会返回 40000301。
-          body: '{}',
-        });
-        const body = await response.json().catch(() => null);
-        const parsed = response.ok && (body?.code === undefined || body?.code === 0)
-          ? parseGmgnHoldingSignalConfig(body) : null;
+        const result = await requestGmgnHoldingSignalConfig();
+        const parsed = result?.ok ? parseGmgnHoldingSignalConfig(result.data) : null;
         if (!parsed) {
           saveGmgnHoldingSignalSyncState({
             synced: false,
-            reason: response.status === 401 || response.status === 403 ? 'login-required' : 'unavailable',
+            reason: result?.reason === 'login-required' ? 'login-required' : 'unavailable',
+            detail: String(result?.stage || ''),
+            status: Number(result?.status) || 0,
             attemptedAt: Date.now(),
             lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
           });
@@ -4126,16 +4130,16 @@ ${flapTooltipText(info)}
           lastSyncedAt: gmgnHoldingSignalConfig.at,
         });
         return parsed;
-      } catch {
+      } catch (error) {
         saveGmgnHoldingSignalSyncState({
           synced: false,
           reason: 'unavailable',
+          detail: String(error?.message || error?.name || 'exception').slice(0, 120),
+          status: 0,
           attemptedAt: Date.now(),
           lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
         });
         return null;
-      } finally {
-        window.clearTimeout(timeout);
       }
     })().finally(() => { gmgnHoldingSignalInflight = null; });
     return gmgnHoldingSignalInflight;
@@ -4442,6 +4446,7 @@ ${flapTooltipText(info)}
   function startHoldingPoll() {
     if (holdingPollTimer) return;
     holdingPollTimer = window.setInterval(() => {
+      syncGmgnHoldingSignalConfig().catch(() => {});
       pollHoldingSurge().catch(() => {});
     }, HOLDING_POLL_MS);
   }
