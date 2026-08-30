@@ -11,6 +11,7 @@ const background = read('background.js');
 const content = read('content.js');
 const bridge = read('page-bridge.js');
 const site = read('site/index.html');
+const bgmSync = read('scripts/sync-bgm-download.py');
 
 function extractFunction(source, name) {
   const functionStart = source.indexOf(`function ${name}(`);
@@ -242,6 +243,15 @@ await test('下载同步脚本拒绝恶意版本参数', () => {
   const result = spawnSync(python, [path.join(root, 'scripts', 'sync-bgm-download.py'), '0.46.1;echo-pwned'], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /X\.Y\.Z/);
+});
+
+await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', () => {
+  assert.ok(bgmSync.includes("releases/download/v{V}"));
+  assert.ok(bgmSync.includes("f'{fn}.sha256'"));
+  assert.ok(bgmSync.includes('Release SHA256 不一致'));
+  assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.3.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.3.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
