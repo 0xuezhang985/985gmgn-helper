@@ -568,6 +568,166 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 /* fomo 浮窗（GMGN 代币页） */
+.gdh-notification-launcher {
+  position: fixed;
+  right: 18px;
+  bottom: 126px;
+  z-index: 2147482900;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(139, 147, 161, 0.4);
+  border-radius: 50%;
+  background: #16181d;
+  color: #d6d9df;
+  font: 18px/34px system-ui, -apple-system, "Segoe UI Emoji", sans-serif;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.gdh-notification-launcher:hover,
+.gdh-notification-launcher.is-active {
+  color: #fff;
+  border-color: rgba(245, 184, 61, 0.8);
+  background: rgba(245, 184, 61, 0.12);
+}
+
+.gdh-notification-launcher__badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 2px solid #16181d;
+  border-radius: 10px;
+  background: #ef5350;
+  color: #fff;
+  font: 700 10px/14px system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-sizing: border-box;
+}
+
+.gdh-notification-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 174px;
+  z-index: 2147482950;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: 58vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(139, 147, 161, 0.34);
+  border-radius: 10px;
+  background: #14171c;
+  color: #d6d9df;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.68);
+  font: 400 12px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.gdh-notification__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 9px 7px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.18);
+  box-sizing: border-box;
+}
+
+.gdh-notification__title {
+  color: #f5b83d;
+  font-size: 13px;
+}
+
+.gdh-notification__count {
+  flex: 1;
+  color: #707887;
+  font-size: 11px;
+}
+
+.gdh-notification__clear,
+.gdh-notification__close {
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b93a1;
+  cursor: pointer;
+}
+
+.gdh-notification__clear:hover,
+.gdh-notification__close:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+.gdh-notification__close {
+  font-size: 18px;
+  line-height: 18px;
+}
+
+.gdh-notification__list {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.gdh-notification__item {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.14);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gdh-notification__item:hover { background: rgba(255, 255, 255, 0.045); }
+.gdh-notification__item:disabled { cursor: default; opacity: 1; }
+.gdh-notification__item:disabled:hover { background: transparent; }
+
+.gdh-notification__item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gdh-notification__item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #e3e6eb;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-notification__item-time {
+  flex: none;
+  color: #707887;
+  font-size: 10px;
+}
+
+.gdh-notification__item-value {
+  color: #a7afbc;
+  font-size: 12px;
+}
+
+.gdh-notification__item.is-up .gdh-notification__item-value { color: #43c07a; }
+.gdh-notification__item.is-down .gdh-notification__item-value { color: #ef5350; }
+
+.gdh-notification__empty {
+  padding: 36px 16px;
+  color: #707887;
+  text-align: center;
+}
+
 .gdh-fomo-launcher {
   position: fixed;
   right: 16px;

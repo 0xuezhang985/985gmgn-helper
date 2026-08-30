@@ -1003,6 +1003,92 @@ function updateHoldingWatchList(payload) {
   return holdingWatchWriteQueue;
 }
 
+// ---- 提醒历史：由后台串行落库，避免多个 GMGN 标签页互相覆盖 ----
+const NOTIFICATION_HISTORY_KEY = 'notificationHistoryV1';
+const NOTIFICATION_HISTORY_READ_AT_KEY = 'notificationHistoryReadAtV1';
+const NOTIFICATION_HISTORY_MAX = 100;
+let notificationHistoryWriteQueue = Promise.resolve();
+
+function cleanNotificationText(value, maxLength) {
+  return String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLength);
+}
+
+function normalizeNotificationHistoryItem(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const at = Number(raw.at) > 0 ? Number(raw.at) : Date.now();
+  const tag = cleanNotificationText(raw.tag, 24);
+  const symbol = cleanNotificationText(raw.symbol, 32);
+  const label = cleanNotificationText(raw.label, 32);
+  const value = cleanNotificationText(raw.value, 96);
+  const bell = cleanNotificationText(raw.bell, 8);
+  const dir = raw.dir === 'up' || raw.dir === 'down' ? raw.dir : '';
+  const rawHref = cleanNotificationText(raw.href, 512);
+  const href = /^\/[a-z0-9]+\/token\/[A-Za-z0-9]+(?:[/?#].*)?$/.test(rawHref) ? rawHref : '';
+  if (!tag && !symbol && !label && !value) return null;
+  const fallbackId = `${at}-${tag}-${symbol}-${value}`.slice(0, 160);
+  const id = cleanNotificationText(raw.id, 160) || fallbackId;
+  return { id, at, tag, symbol, label, value, bell, dir, href };
+}
+
+function notificationHistoryFingerprint(item) {
+  return [item.tag, item.symbol, item.label, item.value, item.dir, item.href].join('\n');
+}
+
+function mergeNotificationHistory(current, incoming) {
+  const next = normalizeNotificationHistoryItem(incoming);
+  const normalized = (Array.isArray(current) ? current : [])
+    .map(normalizeNotificationHistoryItem)
+    .filter(Boolean)
+    .sort((a, b) => b.at - a.at);
+  if (!next) return normalized.slice(0, NOTIFICATION_HISTORY_MAX);
+  const duplicate = normalized.find((item) => (
+    Math.abs(next.at - item.at) < 5000
+    && notificationHistoryFingerprint(item) === notificationHistoryFingerprint(next)
+  ));
+  const combined = duplicate ? normalized : [next, ...normalized];
+  const seen = new Set();
+  return combined.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  }).slice(0, NOTIFICATION_HISTORY_MAX);
+}
+
+function appendNotificationHistory(payload) {
+  notificationHistoryWriteQueue = notificationHistoryWriteQueue.catch(() => {}).then(async () => {
+    const stored = await chrome.storage.local.get({ [NOTIFICATION_HISTORY_KEY]: [] });
+    const next = mergeNotificationHistory(stored[NOTIFICATION_HISTORY_KEY], {
+      ...payload,
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+      at: Date.now(),
+    });
+    await chrome.storage.local.set({ [NOTIFICATION_HISTORY_KEY]: next });
+    return { ok: true, count: next.length };
+  });
+  return notificationHistoryWriteQueue;
+}
+
+function markNotificationHistoryRead() {
+  notificationHistoryWriteQueue = notificationHistoryWriteQueue.catch(() => {}).then(async () => {
+    const readAt = Date.now();
+    await chrome.storage.local.set({ [NOTIFICATION_HISTORY_READ_AT_KEY]: readAt });
+    return { ok: true, readAt };
+  });
+  return notificationHistoryWriteQueue;
+}
+
+function clearNotificationHistory() {
+  notificationHistoryWriteQueue = notificationHistoryWriteQueue.catch(() => {}).then(async () => {
+    const readAt = Date.now();
+    await chrome.storage.local.set({
+      [NOTIFICATION_HISTORY_KEY]: [],
+      [NOTIFICATION_HISTORY_READ_AT_KEY]: readAt,
+    });
+    return { ok: true, readAt };
+  });
+  return notificationHistoryWriteQueue;
+}
+
 async function recordFomoPageHeartbeat(message, sender) {
   try {
     const tabId = Number(sender?.tab?.id);
@@ -1064,6 +1150,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     updateHoldingWatchList(message.payload || {})
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'notification-history-add') {
+    appendNotificationHistory(message.payload || {})
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (message?.type === 'notification-history-read') {
+    markNotificationHistoryRead()
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (message?.type === 'notification-history-clear') {
+    clearNotificationHistory()
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false }));
     return true;
   }
 

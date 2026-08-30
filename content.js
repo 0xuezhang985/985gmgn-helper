@@ -2727,7 +2727,32 @@ ${flapTooltipText(info)}
   const REMIND_TOAST_SELECTOR = '[data-sentry-component="RemindToast"]';
   const REMIND_CARD_MS = 15000;
   const REMIND_CARD_MAX = 3;
+  const NOTIFICATION_HISTORY_KEY = 'notificationHistoryV1';
+  const NOTIFICATION_HISTORY_READ_AT_KEY = 'notificationHistoryReadAtV1';
   let remindContainer = null;
+  let notificationHistory = [];
+  let notificationHistoryReadAt = 0;
+  let notificationPanelOpen = false;
+  let notificationPanelEl = null;
+
+  function recordNotificationHistory(info) {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'notification-history-add',
+        payload: {
+          tag: info.tagText || (info.dir === 'down' ? '跌破提醒' : '到价提醒'),
+          symbol: info.symbol || '持仓代币',
+          label: info.label || '',
+          value: info.value || String(info.raw || '').slice(0, 40),
+          bell: info.bell || '🔔',
+          dir: info.dir || '',
+          href: info.href || '',
+        },
+      }, () => void chrome.runtime.lastError);
+    } catch {
+      // 扩展上下文失效时，提醒卡片本身仍正常显示
+    }
+  }
 
   function ensureRemindContainer() {
     if (remindContainer && document.contains(remindContainer)) return remindContainer;
@@ -2841,6 +2866,7 @@ ${flapTooltipText(info)}
     });
     arm();
     container.appendChild(card);
+    recordNotificationHistory(info);
   }
 
   // ---- fomo 浮窗：在 GMGN 代币页看该代币在 fomo 的观点/交易 ----
@@ -2863,6 +2889,169 @@ ${flapTooltipText(info)}
     const chain = m[1];
     if (!(chain in FOMO_NETWORK_ID)) return null;
     return { chain, address: m[2], networkId: FOMO_NETWORK_ID[chain] };
+  }
+
+  function normalizedNotificationHistory(value) {
+    return (Array.isArray(value) ? value : [])
+      .filter((item) => item && typeof item === 'object' && Number(item.at) > 0)
+      .slice(0, 100);
+  }
+
+  function notificationUnreadCount() {
+    return notificationHistory.filter((item) => Number(item.at) > notificationHistoryReadAt).length;
+  }
+
+  function notificationTime(value) {
+    const date = new Date(Number(value));
+    if (!Number.isFinite(date.getTime())) return '';
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    });
+  }
+
+  function renderNotificationPanel() {
+    if (!notificationPanelEl) return;
+    const count = notificationPanelEl.querySelector('.gdh-notification__count');
+    if (count) count.textContent = `最近 ${notificationHistory.length}/100 条`;
+    const list = notificationPanelEl.querySelector('.gdh-notification__list');
+    if (!list) return;
+    list.replaceChildren();
+    if (!notificationHistory.length) {
+      const empty = document.createElement('div');
+      empty.className = 'gdh-notification__empty';
+      empty.textContent = '暂无推送记录';
+      list.appendChild(empty);
+      return;
+    }
+    notificationHistory.forEach((item) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = `gdh-notification__item${item.dir === 'up' ? ' is-up' : item.dir === 'down' ? ' is-down' : ''}`;
+      const head = document.createElement('span');
+      head.className = 'gdh-notification__item-head';
+      const title = document.createElement('strong');
+      title.className = 'gdh-notification__item-title';
+      title.textContent = `${item.bell || '🔔'} ${item.tag || '提醒'} · ${item.symbol || '持仓代币'}`;
+      const time = document.createElement('time');
+      time.className = 'gdh-notification__item-time';
+      time.textContent = notificationTime(item.at);
+      head.append(title, time);
+      const value = document.createElement('span');
+      value.className = 'gdh-notification__item-value';
+      value.textContent = [item.label, item.value].filter(Boolean).join('  ') || '—';
+      row.append(head, value);
+      if (item.href) {
+        row.title = '进入代币页';
+        row.addEventListener('click', () => {
+          notificationPanelOpen = false;
+          notificationPanelEl?.remove();
+          notificationPanelEl = null;
+          gdhSpaNavigate(item.href);
+        });
+      } else {
+        row.disabled = true;
+      }
+      list.appendChild(row);
+    });
+  }
+
+  function buildNotificationPanel() {
+    const panel = document.createElement('section');
+    panel.className = 'gdh-notification-panel';
+    const head = document.createElement('div');
+    head.className = 'gdh-notification__bar';
+    const title = document.createElement('strong');
+    title.className = 'gdh-notification__title';
+    title.textContent = '推送历史';
+    const count = document.createElement('span');
+    count.className = 'gdh-notification__count';
+    count.textContent = `最近 ${notificationHistory.length}/100 条`;
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'gdh-notification__clear';
+    clear.textContent = '清空';
+    clear.addEventListener('click', () => {
+      if (!window.confirm('清空全部推送历史？')) return;
+      try {
+        chrome.runtime.sendMessage({ type: 'notification-history-clear' }, () => void chrome.runtime.lastError);
+      } catch {
+        // 扩展上下文失效
+      }
+    });
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-notification__close';
+    close.textContent = '×';
+    close.title = '关闭';
+    close.addEventListener('click', () => {
+      notificationPanelOpen = false;
+      panel.remove();
+      notificationPanelEl = null;
+      scheduleScan();
+    });
+    head.append(title, count, clear, close);
+    const list = document.createElement('div');
+    list.className = 'gdh-notification__list';
+    panel.append(head, list);
+    return panel;
+  }
+
+  function markNotificationHistoryRead() {
+    try {
+      chrome.runtime.sendMessage({ type: 'notification-history-read' }, () => void chrome.runtime.lastError);
+    } catch {
+      // 扩展上下文失效
+    }
+  }
+
+  function ensureNotificationLauncher() {
+    let btn = document.querySelector('.gdh-notification-launcher');
+    if (!currentTokenRoute()) {
+      btn?.remove();
+      notificationPanelEl?.remove();
+      notificationPanelEl = null;
+      notificationPanelOpen = false;
+      return;
+    }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'gdh-notification-launcher';
+      btn.textContent = '🔔';
+      btn.title = '查看推送历史';
+      const badge = document.createElement('span');
+      badge.className = 'gdh-notification-launcher__badge';
+      btn.appendChild(badge);
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        notificationPanelOpen = !notificationPanelOpen;
+        if (notificationPanelOpen) {
+          if (settings.fomoPanelOpen === true) setFomoOpen(false);
+          markNotificationHistoryRead();
+        }
+        scheduleScan();
+      });
+      document.body.appendChild(btn);
+    }
+    btn.classList.toggle('is-active', notificationPanelOpen);
+    const badge = btn.querySelector('.gdh-notification-launcher__badge');
+    const unread = notificationUnreadCount();
+    if (badge) {
+      badge.textContent = unread > 99 ? '99+' : String(unread || '');
+      badge.hidden = unread === 0;
+    }
+    if (!notificationPanelOpen) {
+      notificationPanelEl?.remove();
+      notificationPanelEl = null;
+      return;
+    }
+    if (!notificationPanelEl || !document.contains(notificationPanelEl)) {
+      notificationPanelEl = buildNotificationPanel();
+      document.body.appendChild(notificationPanelEl);
+      renderNotificationPanel();
+    }
   }
 
   function fomoAgo(value) {
@@ -3938,6 +4127,9 @@ ${flapTooltipText(info)}
       btn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        notificationPanelOpen = false;
+        notificationPanelEl?.remove();
+        notificationPanelEl = null;
         setFomoOpen(!settings.fomoPanelOpen);
         scheduleScan();
       });
@@ -3947,6 +4139,7 @@ ${flapTooltipText(info)}
   }
 
   function scanFomoPanel() {
+    ensureNotificationLauncher();
     const route = currentTokenRoute();
     if (settings.enableFomoPanel === false || !route || settings.fomoPanelOpen !== true) {
       if (fomoPanelEl) {
@@ -5915,7 +6108,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-fomofeed-pin, .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-fomofeed-pin, .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
@@ -5960,6 +6153,15 @@ ${flapTooltipText(info)}
 
   chrome.storage.local.get({ monitorFomoConfig: null }, (stored) => {
     if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
+  });
+
+  chrome.storage.local.get({
+    [NOTIFICATION_HISTORY_KEY]: [],
+    [NOTIFICATION_HISTORY_READ_AT_KEY]: 0,
+  }, (stored) => {
+    notificationHistory = normalizedNotificationHistory(stored[NOTIFICATION_HISTORY_KEY]);
+    notificationHistoryReadAt = Number(stored[NOTIFICATION_HISTORY_READ_AT_KEY]) || 0;
+    scheduleScan();
   });
 
   // 0.43~0.44.1 的持仓兜底识别过宽,把战壕/搜索里别人的币也攒进了暴涨监控清单
@@ -6014,6 +6216,15 @@ ${flapTooltipText(info)}
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
       if (key === 'gmgnHoldingSignalSyncState') continue; // 只读诊断状态，不是设置项
+      if (key === NOTIFICATION_HISTORY_KEY) {
+        notificationHistory = normalizedNotificationHistory(change.newValue);
+        renderNotificationPanel();
+        continue;
+      }
+      if (key === NOTIFICATION_HISTORY_READ_AT_KEY) {
+        notificationHistoryReadAt = Number(change.newValue) || 0;
+        continue;
+      }
       // 翻译开关切换：混排卡整体重建，译文才会随开关出现/移除
       if (key === 'fomoTranslate') {
         settings[key] = change.newValue;

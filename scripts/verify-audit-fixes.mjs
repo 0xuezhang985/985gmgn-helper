@@ -100,6 +100,38 @@ await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒',
   assert.deepEqual(JSON.parse(JSON.stringify(call('1', 5))), { nextLevel: 0, alert: false });
 });
 
+await test('推送历史清洗危险字段、跨标签去重并限制为 100 条', () => {
+  const functions = [
+    extractFunction(background, 'cleanNotificationText'),
+    extractFunction(background, 'normalizeNotificationHistoryItem'),
+    extractFunction(background, 'notificationHistoryFingerprint'),
+    extractFunction(background, 'mergeNotificationHistory'),
+  ];
+  const sanitized = evaluate(functions, `normalizeNotificationHistoryItem({
+    id: 'safe-id', at: 1000, tag: '持仓暴涨\\u0000', symbol: 'TEST', label: '5分钟涨幅',
+    value: '+25%', dir: 'sideways', href: 'javascript:alert(1)'
+  })`);
+  assert.equal(sanitized.tag, '持仓暴涨');
+  assert.equal(sanitized.dir, '');
+  assert.equal(sanitized.href, '');
+
+  const merged = evaluate(functions, `mergeNotificationHistory([
+    { id: 'old', at: 1000, tag: '持仓暴涨', symbol: 'TEST', label: '5分钟涨幅', value: '+25%', dir: 'up', href: '/sol/token/Abc123' }
+  ], { id: 'new', at: 2000, tag: '持仓暴涨', symbol: 'TEST', label: '5分钟涨幅', value: '+25%', dir: 'up', href: '/sol/token/Abc123' })`, {
+    NOTIFICATION_HISTORY_MAX: 100,
+  });
+  assert.equal(merged.length, 1);
+
+  const capped = evaluate(functions, `mergeNotificationHistory(
+    Array.from({ length: 120 }, (_, i) => ({ id: String(i), at: i + 1, tag: '提醒', symbol: String(i), value: String(i) })),
+    { id: 'latest', at: 9999, tag: '提醒', symbol: 'LATEST', value: '+1%' }
+  )`, { NOTIFICATION_HISTORY_MAX: 100 });
+  assert.equal(capped.length, 100);
+  assert.equal(capped[0].id, 'latest');
+  assert.ok(content.includes('recordNotificationHistory(info);'));
+  assert.ok(content.includes("className = 'gdh-notification-launcher'"));
+});
+
 await test('持仓提醒读取 GMGN App 的逐链 holding_signal 开关', () => {
   const functions = [
     extractFunction(content, 'holdingSignalBoolean'),
@@ -284,8 +316,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.6.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.6.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.7.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.7.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
