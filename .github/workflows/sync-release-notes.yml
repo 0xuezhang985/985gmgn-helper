@@ -9,6 +9,11 @@ on:
       - "scripts/build-release-notes.ps1"
       - ".github/workflows/sync-release-notes.yml"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to sync (for example v0.46.1)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -27,7 +32,31 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
-          $files = Get-ChildItem -LiteralPath release-notes -Filter 'v*.md' -File | Sort-Object Name
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $tag = '${{ inputs.tag }}'
+            if ($tag -notmatch '^v\d+\.\d+\.\d+(?:\.\d+)?$') {
+              throw "版本标签格式无效：$tag"
+            }
+            $path = "release-notes/$tag.md"
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "版本说明不存在：$path"
+            }
+            $files = @(Get-Item -LiteralPath $path)
+          } else {
+            $before = '${{ github.event.before }}'
+            $after = '${{ github.sha }}'
+            $paths = git diff --name-only $before $after -- 'release-notes/v*.md'
+            if ($LASTEXITCODE -ne 0) {
+              throw '读取本次变更的版本说明失败'
+            }
+            $files = @($paths | Where-Object {
+              $_ -match '^release-notes/v\d+\.\d+\.\d+(?:\.\d+)?\.md$' -and (Test-Path -LiteralPath $_)
+            } | ForEach-Object { Get-Item -LiteralPath $_ } | Sort-Object Name)
+          }
+          if ($files.Count -eq 0) {
+            Write-Output 'skip=no changed release notes'
+            exit 0
+          }
           foreach ($file in $files) {
             $tag = $file.BaseName
             $output = Join-Path $env:RUNNER_TEMP "$tag-release-notes.md"
