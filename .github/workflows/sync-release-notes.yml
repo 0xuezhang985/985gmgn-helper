@@ -64,9 +64,18 @@ jobs:
             $output = Join-Path $env:RUNNER_TEMP "$tag-release-notes.md"
             ./scripts/build-release-notes.ps1 -Tag $tag -OutputPath $output
 
-            gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-            if ($LASTEXITCODE -ne 0) {
+            $releaseExists = $false
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+              gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+              if ($LASTEXITCODE -eq 0) {
+                $releaseExists = $true
+                break
+              }
+              Start-Sleep -Seconds 5
+            }
+            if (-not $releaseExists) {
               Write-Output "skip=$tag (Release 尚不存在)"
+              $global:LASTEXITCODE = 0
               continue
             }
 
