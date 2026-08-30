@@ -3983,8 +3983,8 @@ ${flapTooltipText(info)}
   // ---- 持仓暴涨提醒 ----
   // 清单：持仓面板开着时从行上读 {chain,address,symbol} 缓存下来（面板只显示当前链，
   // 切链再开一次就把那条链也收进来），之后面板关掉也在。
-  // 行情：走公开的 mutil_window_token_info（免登录，返回 price 与 price_1m/5m），
-  // 全程不碰任何登录凭据。
+  // 行情：实时复用 GMGN 页面/App 自己的 token_stat WebSocket；30 秒 REST 轮询仅兜底。
+  // 两条路径都按「现价 vs 5 分钟前价格」算涨幅，不再把累计持仓收益冒充 5 分钟涨幅。
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   // 判断「持仓面板确实在页面上」用的锚点：testid 是 GMGN 自己的稳定标记，
   // 另外两个是持仓表所在文件名，部分构建里没有 testid 时兜底。
@@ -3999,10 +3999,8 @@ ${flapTooltipText(info)}
   }
   const HOLDING_BATCH = 40;
   const holdingAlertedAt = new Map();
-  // 已播报到的档位（pct / 阈值 取整）。首轮只建基准不弹，之后每上一个新档才报一次。
+  // 已播报到的 5 分钟涨幅档位（pct / 阈值 取整）。首轮只建基准不弹。
   const holdingAlertLevel = new Map();
-  // 读不到真实成本时的兜底基准：第一次看到这个仓位时的价格。
-  const holdingBasePrice = new Map();
   let holdingWatchMap = new Map();
   let holdingSaveTimer = 0;
   const holdingPendingWrites = new Map();
@@ -4090,14 +4088,6 @@ ${flapTooltipText(info)}
       cost: Number(item.cost) > 0 ? Number(item.cost) : (Number(prev?.cost) || 0),
       at: Number(item.at) || Date.now(),
     };
-    const previousCost = Number(prev?.cost) || 0;
-    const costChanged = !!prev && Number(next.cost) > 0
-      && (previousCost <= 0 || Math.abs(previousCost - Number(next.cost)) / previousCost > 0.001);
-    if (costChanged) {
-      holdingAlertedAt.delete(key);
-      holdingAlertLevel.delete(key);
-      holdingBasePrice.delete(key);
-    }
     holdingWatchMap.set(key, next);
     return !prev || prev.symbol !== next.symbol || prev.cost !== next.cost;
   }
@@ -4165,7 +4155,6 @@ ${flapTooltipText(info)}
           holdingWatchMap.delete(key);
           holdingAlertedAt.delete(key);
           holdingAlertLevel.delete(key);
-          holdingBasePrice.delete(key);
         }
       }
       scheduleHoldingSave(chain, authoritative);
@@ -4205,6 +4194,68 @@ ${flapTooltipText(info)}
     return `$${n.toPrecision(4)}`;
   }
 
+  function holdingFiveMinuteChange(raw) {
+    const directRaw = raw?.pct5m ?? raw?.pcp5m ?? raw?.price_change_percent5m;
+    const direct = Number(directRaw);
+    if (directRaw !== null && directRaw !== undefined && directRaw !== '' && Number.isFinite(direct)) return direct;
+    const now = Number(raw?.price ?? raw?.p);
+    const before = Number(raw?.price5m ?? raw?.p5m ?? raw?.price_5m);
+    return now > 0 && before > 0 ? ((now - before) / before) * 100 : NaN;
+  }
+
+  function holdingSurgeDecision(previousLevel, pct, threshold, cooldownReady) {
+    const level = Math.floor((Number(pct) + 1e-9) / Number(threshold));
+    const previous = Number.isFinite(previousLevel) ? previousLevel : null;
+    if (!Number.isFinite(level)) return { nextLevel: previous ?? 0, alert: false };
+    if (previous === null) return { nextLevel: Math.max(level, 0), alert: false };
+    if (level <= 0) return { nextLevel: 0, alert: false };
+    if (level <= previous || !cooldownReady) return { nextLevel: previous, alert: false };
+    return { nextLevel: level, alert: true };
+  }
+
+  function handleHoldingPriceUpdate(update, fallbackSymbol = '') {
+    if (settings.enableHoldingSurge === false || !isTabVisibleForHolding()) return;
+    const chain = String(update?.chain || '').trim().toLowerCase();
+    const address = normalizeWalletAddress(String(update?.address || ''));
+    const key = holdingKey(chain, address);
+    const meta = holdingWatchMap.get(key);
+    const price = Number(update?.price ?? update?.p);
+    const pct = holdingFiveMinuteChange(update);
+    if (!meta || !(price > 0) || !Number.isFinite(pct)) return;
+    const threshold = Math.max(5, Number(settings.holdingSurgeThreshold) || 20);
+    const last = holdingAlertedAt.get(key) || 0;
+    const decision = holdingSurgeDecision(
+      holdingAlertLevel.has(key) ? holdingAlertLevel.get(key) : null,
+      pct,
+      threshold,
+      Date.now() - last >= holdingCooldownMs(),
+    );
+    holdingAlertLevel.set(key, decision.nextLevel);
+    if (!decision.alert) return;
+    holdingAlertedAt.set(key, Date.now());
+    showRemindCard({
+      href: `/${chain}/token/${address}`,
+      dir: 'up',
+      bell: '🚀',
+      tagText: '持仓暴涨',
+      symbol: meta.symbol || fallbackSymbol || '持仓代币',
+      label: '5分钟涨幅',
+      value: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%  ${formatPriceShort(price)}`,
+      raw: '',
+    });
+  }
+
+  document.addEventListener('gdh-token-stat', () => {
+    const raw = document.documentElement?.getAttribute('data-gdh-token-stat') || '';
+    if (!raw) return;
+    try {
+      const items = JSON.parse(raw);
+      if (Array.isArray(items)) items.forEach((item) => handleHoldingPriceUpdate(item));
+    } catch {
+      // 主世界桥接只会写 JSON；单条异常不影响 REST 兜底
+    }
+  });
+
   async function pollHoldingSurge() {
     if (holdingPolling) return;
     if (settings.enableHoldingSurge === false) return;
@@ -4213,7 +4264,6 @@ ${flapTooltipText(info)}
     if (!entries.length) return;
 
     holdingPolling = true;
-    const threshold = Math.max(5, Number(settings.holdingSurgeThreshold) || 20);
     const byChain = new Map();
     entries.forEach((item) => {
       if (!byChain.has(item.chain)) byChain.set(item.chain, []);
@@ -4238,48 +4288,10 @@ ${flapTooltipText(info)}
             const p = token?.price;
             if (!p) return;
             const now = Number(p.price);
-            if (!Number.isFinite(now) || now <= 0) return;
+            const before = Number(p.price_5m);
+            if (!(now > 0) || !(before > 0)) return;
             const address = normalizeWalletAddress(String(token.address || p.address || ''));
-            const key = holdingKey(chain, address);
-            // 二次确认：一轮查价是异步的，期间清单可能已因对账移除该币（清仓）。
-            // 没在清单里就不弹——这是"提醒了自己没有的持仓"的最后一道闸。
-            const meta = holdingWatchMap.get(key);
-            if (!meta) return;
-
-            // 基准价：优先用这一仓的真实平均成本。以前拿「5 分钟前的价格」当基准——
-            // 而刚买入时，那 5 分钟涨幅正是你追进去的那一波，于是买完立刻误报一次。
-            // 成本读不到（面板没展开等）就退回「第一次看到它时的价格」，同样不会误报。
-            const hasCost = Number(meta.cost) > 0;
-            let base = hasCost ? Number(meta.cost) : (holdingBasePrice.get(key) || 0);
-            if (!base) {
-              holdingBasePrice.set(key, now);
-              return;
-            }
-            const pct = ((now - base) / base) * 100;
-            const level = Math.floor(pct / threshold);
-
-            // 首轮只建基准不弹：打开页面时老仓位可能已经 +300%，不该一上来就报一串。
-            // 刚买的仓位这时 pct≈0、落在 0 级，之后真涨到 +阈值 才报。
-            if (!holdingAlertLevel.has(key)) {
-              holdingAlertLevel.set(key, Math.max(level, 0));
-              return;
-            }
-            if (level <= holdingAlertLevel.get(key)) return;
-            const last = holdingAlertedAt.get(key) || 0;
-            // 冷却期内不弹，也不推进档位——冷却一过这次上涨照样会报出来
-            if (Date.now() - last < holdingCooldownMs()) return;
-            holdingAlertLevel.set(key, level);
-            holdingAlertedAt.set(key, Date.now());
-            showRemindCard({
-              href: `/${chain}/token/${address}`,
-              dir: 'up',
-              bell: '🚀',
-              tagText: '持仓暴涨',
-              symbol: meta?.symbol || token.symbol || '持仓代币',
-              label: hasCost ? '较成本' : '较首见价',
-              value: `+${pct.toFixed(0)}%  ${formatPriceShort(now)}`,
-              raw: '',
-            });
+            handleHoldingPriceUpdate({ chain, address, price: now, price5m: before }, token.symbol);
           });
         } catch {
           // 网络失败静默跳过，下轮再试

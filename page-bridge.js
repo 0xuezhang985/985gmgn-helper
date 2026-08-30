@@ -4,6 +4,74 @@
   if (window.__gdhPageBridgeStarted) return;
   window.__gdhPageBridgeStarted = true;
 
+  // GMGN App/Web 的「Holdings Price Alerts」都吃 token_stat 行情流。桥接层只透出
+  // 当前价、5 分钟前价格和链/地址，不复制登录态，也不新开第二条 WebSocket。
+  const TOKEN_STAT_ATTRIBUTE = 'data-gdh-token-stat';
+  const TOKEN_STAT_EVENT = 'gdh-token-stat';
+  const nativeWebSocket = window.WebSocket;
+  const tokenStatChains = new WeakMap();
+
+  function normalizeTokenStatAddress(value) {
+    const raw = String(value || '');
+    if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw.toLowerCase();
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw) ? raw : '';
+  }
+
+  function rememberTokenStatSubscription(socket, data) {
+    if (typeof data !== 'string' || !data.includes('token_stat')) return;
+    let message;
+    try { message = JSON.parse(data); } catch { return; }
+    if (message?.channel !== 'token_stat' || !Array.isArray(message.data)) return;
+    const chains = tokenStatChains.get(socket) || new Map();
+    for (const item of message.data) {
+      const chain = String(item?.chain || item?.c || '').trim().toLowerCase();
+      const addresses = Array.isArray(item?.addresses) ? item.addresses : [item?.addresses || item?.address || item?.a];
+      for (const rawAddress of addresses) {
+        const address = normalizeTokenStatAddress(rawAddress);
+        if (!address) continue;
+        if (message.action === 'unsubscribe') chains.delete(address);
+        else if (message.action === 'subscribe' && chain) chains.set(address, chain);
+      }
+    }
+    tokenStatChains.set(socket, chains);
+  }
+
+  function forwardTokenStatMessage(socket, data) {
+    if (typeof data !== 'string' || !data.includes('token_stat')) return;
+    let message;
+    try { message = JSON.parse(data); } catch { return; }
+    if (message?.channel !== 'token_stat' || !Array.isArray(message.data)) return;
+    const chains = tokenStatChains.get(socket);
+    const items = message.data.slice(0, 200).map((raw) => {
+      const address = normalizeTokenStatAddress(raw?.a || raw?.address);
+      const chain = String(raw?.c || raw?.chain || chains?.get(address) || '').trim().toLowerCase();
+      const price = Number(raw?.p ?? raw?.price);
+      const price5m = Number(raw?.p5m ?? raw?.price_5m);
+      const pct5m = Number(raw?.pcp5m ?? raw?.price_change_percent5m);
+      if (!address || !chain || !(price > 0) || (!(price5m > 0) && !Number.isFinite(pct5m))) return null;
+      return { chain, address, price, price5m: price5m > 0 ? price5m : 0, pct5m: Number.isFinite(pct5m) ? pct5m : null };
+    }).filter(Boolean);
+    if (!items.length || !document.documentElement) return;
+    document.documentElement.setAttribute(TOKEN_STAT_ATTRIBUTE, JSON.stringify(items));
+    document.dispatchEvent(new Event(TOKEN_STAT_EVENT));
+    document.documentElement.removeAttribute(TOKEN_STAT_ATTRIBUTE);
+  }
+
+  if (typeof nativeWebSocket === 'function') {
+    window.WebSocket = new Proxy(nativeWebSocket, {
+      construct(Target, args) {
+        const socket = new Target(...args);
+        socket.addEventListener('message', (event) => forwardTokenStatMessage(socket, event.data));
+        const nativeSend = socket.send;
+        socket.send = function gdhTokenStatSend(data) {
+          rememberTokenStatSubscription(socket, data);
+          return nativeSend.call(socket, data);
+        };
+        return socket;
+      },
+    });
+  }
+
   // 战壕卡：GMGN 自己写的 testid 优先，构建期的 sentry 标记作兼容
   // （实测有用户页面上一个 data-sentry-* 都没有，只认后者会让整块功能哑掉）
   const CARD_SELECTOR =
@@ -580,16 +648,20 @@
 
   document.addEventListener('scroll', () => { scrollingUntil = Date.now() + 200; }, true);
 
-  const observer = new MutationObserver(scheduleScan);
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['href', 'data-gmgn-fee-mode-card'],
-  });
-
-  scheduleScan();
-  window.setInterval(scheduleScan, 1200);
+  function startDomScanner() {
+    if (!document.documentElement) return;
+    const observer = new MutationObserver(scheduleScan);
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['href', 'data-gmgn-fee-mode-card'],
+    });
+    scheduleScan();
+    window.setInterval(scheduleScan, 1200);
+  }
+  if (document.documentElement) startDomScanner();
+  else document.addEventListener('DOMContentLoaded', startDomScanner, { once: true });
 
   // ---- 站内无刷新跳转（fomo 混排卡用）----
   // content script 在隔离世界摸不到 Next 的路由；这里代为调用 window.next.router.push，

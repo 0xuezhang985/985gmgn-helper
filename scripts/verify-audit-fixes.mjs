@@ -82,6 +82,32 @@ await test('API 成本聚合函数与页面桥接口径一致', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { balance: 40, average: 1.02 });
 });
 
+await test('持仓暴涨按 GMGN token_stat 的 p/p5m 计算真实 5 分钟涨幅', () => {
+  const fn = extractFunction(content, 'holdingFiveMinuteChange');
+  assert.ok(Math.abs(evaluate([fn], "holdingFiveMinuteChange({ p: '1.2', p5m: '1' })") - 20) < 1e-9);
+  assert.equal(evaluate([fn], "holdingFiveMinuteChange({ price: '2', price_5m: '4' })"), -50);
+  assert.ok(Math.abs(evaluate([fn], "holdingFiveMinuteChange({ pct5m: null, price: '1.1', price5m: '1' })") - 10) < 1e-9);
+  assert.equal(evaluate([fn], "holdingFiveMinuteChange({ pcp5m: '12.5', p: '9', p5m: '1' })"), 12.5);
+});
+
+await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒', () => {
+  const fn = extractFunction(content, 'holdingSurgeDecision');
+  const call = (previous, pct, ready = true) => evaluate([fn], `holdingSurgeDecision(${previous}, ${pct}, 20, ${ready})`);
+  assert.deepEqual(JSON.parse(JSON.stringify(call('null', 25))), { nextLevel: 1, alert: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('0', 21))), { nextLevel: 1, alert: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('1', 45, false))), { nextLevel: 1, alert: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('1', 5))), { nextLevel: 0, alert: false });
+});
+
+await test('主世界在页面 WebSocket 创建前桥接 token_stat 且不新开连接', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  const mainBridge = manifest.content_scripts.find((item) => item.world === 'MAIN');
+  assert.equal(mainBridge.run_at, 'document_start');
+  assert.ok(bridge.includes("message?.channel !== 'token_stat'"));
+  assert.ok(bridge.includes('new Proxy(nativeWebSocket'));
+  assert.ok(!bridge.includes("new WebSocket('wss://ws.gmgn.ai"));
+});
+
 await test('仓位键保持 Solana 大小写并归一化 EVM', () => {
   const functions = [
     "const EVM_ADDR_RE = /^0x[a-fA-F0-9]{40}$/; const SOL_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;",
