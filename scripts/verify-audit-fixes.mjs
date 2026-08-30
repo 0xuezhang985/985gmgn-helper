@@ -118,6 +118,11 @@ await test('持仓提醒读取 GMGN App 的逐链 holding_signal 开关', () => 
   assert.equal(evaluate(functions, "parseGmgnHoldingSignalConfig({ data: [{ chain: 'sol', enabled: true }] })"), null);
 });
 
+await test('GMGN App 通知配置请求使用官方默认空对象', () => {
+  assert.match(content, /GMGN_HOLDING_SIGNAL_CONFIG_URL[\s\S]*?body:\s*'\{\}'/);
+  assert.doesNotMatch(content, /body:\s*JSON\.stringify\(\{\s*push_chains:/);
+});
+
 await test('主世界在页面 WebSocket 创建前桥接 token_stat 且不新开连接', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const mainBridge = manifest.content_scripts.find((item) => item.world === 'MAIN');
@@ -268,8 +273,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.4.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.4.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.5.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.5.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

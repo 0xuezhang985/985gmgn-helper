@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.5 - 2026-08-31
+
+- 修复 GMGN App 持仓提醒开关一直显示“未同步”：官方 `getNotiUserConfig(accountId)` 默认发送空对象并返回全部链，旧版错误发送逗号分隔的 `push_chains`，服务端实际返回 `40000301 invalid argument`。
+- 已用当前登录的 GMGN 网页实测：`POST /api/v1/notification/user_config_list` 配合空对象返回 HTTP 200、13 条逐链配置，SOL / BSC / Base 均包含 `push_switch_dict.holding_signal`；插件仍只使用这三条链。
+- 回归增至 20 项，锁定通知配置请求体必须是 `{}`，防止再次传入未经验证的筛选格式。
+
 ## 0.46.4 - 2026-08-31
 
 - **持仓暴涨提醒开始复用 GMGN App 的账户通知配置**。

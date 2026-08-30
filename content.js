@@ -3996,7 +3996,6 @@ ${flapTooltipText(info)}
   // 每条链返回 push_switch_dict.holding_signal。这里只复用开关；移动端消息本身
   // 走 JPush/FCM 设备令牌，浏览器无法直接订阅，所以触发仍使用页面原生行情流。
   const GMGN_HOLDING_SIGNAL_CONFIG_URL = 'https://gmgn.ai/api/v1/notification/user_config_list';
-  const GMGN_HOLDING_SIGNAL_CHAINS = 'sol,bsc,base';
   const GMGN_HOLDING_SIGNAL_SYNC_MS = 5 * 60 * 1000;
   const GMGN_HOLDING_SIGNAL_RETRY_MS = 60 * 1000;
   /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
@@ -4093,7 +4092,9 @@ ${flapTooltipText(info)}
             'Cache-Control': 'no-cache',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ push_chains: GMGN_HOLDING_SIGNAL_CHAINS }),
+          // 官方 getNotiUserConfig(accountId) 默认发送空对象并返回全部链；
+          // push_chains 不是逗号分隔字符串，错误传法会返回 40000301。
+          body: '{}',
         });
         const body = await response.json().catch(() => null);
         const parsed = response.ok && (body?.code === undefined || body?.code === 0)
