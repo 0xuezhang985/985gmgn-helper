@@ -1,0 +1,209 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
+const background = read('background.js');
+const content = read('content.js');
+const bridge = read('page-bridge.js');
+const site = read('site/index.html');
+
+function extractFunction(source, name) {
+  const functionStart = source.indexOf(`function ${name}(`);
+  assert.ok(functionStart >= 0, `missing function ${name}`);
+  const start = source.slice(Math.max(0, functionStart - 6), functionStart) === 'async '
+    ? functionStart - 6 : functionStart;
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = bodyStart; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (lineComment) {
+      if (ch === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; i += 1; }
+      continue;
+    }
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; i += 1; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; i += 1; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error(`unterminated function ${name}`);
+}
+
+function evaluate(functions, expression, extras = {}) {
+  const context = vm.createContext({ ...extras });
+  return vm.runInContext(`${functions.join('\n')}\n(${expression})`, context);
+}
+
+let passed = 0;
+const test = async (name, fn) => {
+  await fn();
+  passed += 1;
+  process.stdout.write(`ok ${passed} - ${name}\n`);
+};
+
+await test('部分卖出后的成本按累计买入数量计算并含手续费', () => {
+  const fn = extractFunction(bridge, 'readHoldingCost');
+  const result = evaluate([fn], 'readHoldingCost({ balance: 40, accu_amount: 100, accu_cost: 100, accu_fee: 2 })');
+  assert.equal(result, 1.02);
+});
+
+await test('已清仓记录不使用 history_avg_cost 冒充当前仓位', () => {
+  const fn = extractFunction(bridge, 'readHoldingCost');
+  const result = evaluate([fn], 'readHoldingCost({ balance: 0, history_avg_cost: 9 })');
+  assert.equal(result, 0);
+});
+
+await test('API 成本聚合函数与页面桥接口径一致', () => {
+  const fn = extractFunction(content, 'holdingCostFromApi');
+  const result = evaluate([fn], 'holdingCostFromApi({ balance: 40, accu_amount: 100, accu_cost: 100, accu_fee: 2 })');
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { balance: 40, average: 1.02 });
+});
+
+await test('仓位键保持 Solana 大小写并归一化 EVM', () => {
+  const functions = [
+    "const EVM_ADDR_RE = /^0x[a-fA-F0-9]{40}$/; const SOL_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;",
+    extractFunction(content, 'normalizeWalletAddress'),
+    extractFunction(content, 'holdingKey'),
+  ];
+  const sol = 'AbCdEfGhijkLMNPQRSTUVWXYZ123456789';
+  assert.equal(evaluate(functions, `holdingKey('sol', '${sol}')`), `sol:${sol}`);
+  assert.equal(evaluate(functions, `holdingKey('bsc', '0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD')`), 'bsc:0xabcdefabcdefabcdefabcdefabcdefabcdefabcd');
+});
+
+await test('权威对账只替换当前链并保留其他链', () => {
+  const functions = [extractFunction(background, 'normalizeHoldingWatchItem'), extractFunction(background, 'mergeHoldingWatchList')];
+  const current = [
+    { chain: 'bsc', address: '0x1111111111111111111111111111111111111111', cost: 1, at: 1 },
+    { chain: 'base', address: '0x2222222222222222222222222222222222222222', cost: 2, at: 2 },
+  ];
+  const incoming = [{ chain: 'bsc', address: '0x3333333333333333333333333333333333333333', cost: 3, at: 3 }];
+  const result = evaluate(functions, `mergeHoldingWatchList(${JSON.stringify(current)}, 'bsc', ${JSON.stringify(incoming)}, true)`, { HOLDING_WATCH_PER_CHAIN_MAX: 100, Date });
+  assert.equal(result.length, 2);
+  assert.ok(result.some((x) => x.chain === 'base'));
+  assert.ok(!result.some((x) => x.address.endsWith('1111')));
+});
+
+await test('虚拟列表增量合并不会删除未渲染行', () => {
+  const functions = [extractFunction(background, 'normalizeHoldingWatchItem'), extractFunction(background, 'mergeHoldingWatchList')];
+  const current = [{ chain: 'bsc', address: '0x1111111111111111111111111111111111111111', cost: 1, at: 1 }];
+  const incoming = [{ chain: 'bsc', address: '0x3333333333333333333333333333333333333333', cost: 3, at: 3 }];
+  const result = evaluate(functions, `mergeHoldingWatchList(${JSON.stringify(current)}, 'bsc', ${JSON.stringify(incoming)}, false)`, { HOLDING_WATCH_PER_CHAIN_MAX: 100, Date });
+  assert.equal(result.length, 2);
+});
+
+await test('每条链独立保留 100 个仓位，活跃链不会挤掉其他链', () => {
+  const functions = [extractFunction(background, 'normalizeHoldingWatchItem'), extractFunction(background, 'mergeHoldingWatchList')];
+  const address = (n) => `0x${n.toString(16).padStart(40, '0')}`;
+  const current = [
+    ...Array.from({ length: 100 }, (_, i) => ({ chain: 'bsc', address: address(i + 1), at: i + 1 })),
+    ...Array.from({ length: 100 }, (_, i) => ({ chain: 'base', address: address(i + 1001), at: i + 1 })),
+  ];
+  const incoming = Array.from({ length: 100 }, (_, i) => ({ chain: 'sol', address: address(i + 2001), at: 1000 + i }));
+  const result = evaluate(functions, `mergeHoldingWatchList(${JSON.stringify(current)}, 'sol', ${JSON.stringify(incoming)}, true)`, { HOLDING_WATCH_PER_CHAIN_MAX: 100, Date });
+  assert.equal(result.filter((x) => x.chain === 'bsc').length, 100);
+  assert.equal(result.filter((x) => x.chain === 'base').length, 100);
+  assert.equal(result.filter((x) => x.chain === 'sol').length, 100);
+});
+
+await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async () => {
+  const calls = [];
+  const chrome = { tabs: {
+    query: async () => [],
+    create: async (options) => { calls.push(['create', options]); return { id: 7, url: options.url, discarded: false }; },
+    update: async (id, options) => { calls.push(['update', id, options]); return { id, url: 'https://fomo.family/?gdh_keeper=1', discarded: false }; },
+    reload: async () => {},
+  } };
+  const fn = extractFunction(background, 'fomoEnsureSdkOwner');
+  const result = evaluate([fn], 'fomoEnsureSdkOwner(true)', {
+    chrome,
+    FOMO_KEEPER_URL: 'https://fomo.family/?gdh_keeper=1',
+    fomoOpenTabs: async () => [],
+    fomoAuthNote: async () => {},
+  });
+  await result;
+  assert.equal(calls[0][1].active, false);
+  assert.equal(calls[0][1].pinned, true);
+  assert.equal(calls[1][2].autoDiscardable, false);
+  const frozenCalls = [];
+  const frozenChrome = { tabs: {
+    query: async () => [],
+    create: async (options) => { frozenCalls.push(['create', options]); return { id: 8, url: options.url, discarded: false }; },
+    update: async (id, options) => ({ id, url: 'https://fomo.family/?gdh_keeper=1', discarded: false, ...options }),
+    reload: async () => {},
+  } };
+  await evaluate([fn], 'fomoEnsureSdkOwner(true)', {
+    chrome: frozenChrome,
+    FOMO_KEEPER_URL: 'https://fomo.family/?gdh_keeper=1',
+    fomoOpenTabs: async () => [{ id: 3, url: 'https://fomo.family/', discarded: false, status: 'complete' }],
+    fomoAuthNote: async () => {},
+  });
+  assert.equal(frozenCalls.length, 1);
+  const closed = [];
+  const heartbeatFn = extractFunction(background, 'recordFomoPageHeartbeat');
+  await evaluate([heartbeatFn], "recordFomoPageHeartbeat({ visible: true, keeper: false }, { tab: { id: 10, url: 'https://fomo.family/' } })", {
+    URL,
+    Date,
+    chrome: { storage: { local: { set: async () => {} } }, tabs: { remove: async (ids) => closed.push(...ids) } },
+    fomoOpenTabs: async () => [
+      { id: 10, url: 'https://fomo.family/' },
+      { id: 11, url: 'https://fomo.family/?gdh_keeper=1' },
+    ],
+    fomoAuthNote: async () => {},
+  });
+  assert.deepEqual(closed, [11]);
+});
+
+await test('FOMO HTTP 200 鉴权错误被识别', () => {
+  const fn = extractFunction(background, 'fomoBodyUnauthed');
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ success: false, statusCode: 401 })"), true);
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ statusCode: 403 })"), true);
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ success: true, statusCode: 200 })"), false);
+});
+
+await test('后台不再裸调 Privy sessions 或携带公开标注口令', () => {
+  assert.ok(!background.includes('auth.privy.io/api/v1/sessions'));
+  assert.ok(!background.includes('gdh-marked-watch-2026'));
+  assert.ok(!background.includes('reportCustomMarked'));
+});
+
+await test('下载页不使用 innerHTML 且严格绑定版本化同源文件名', () => {
+  assert.ok(!site.includes('.innerHTML ='));
+  assert.ok(site.includes('exe === expectedExe'));
+  assert.ok(site.includes('zip === expectedZip'));
+});
+
+await test('下载同步脚本拒绝恶意版本参数', () => {
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  const result = spawnSync(python, [path.join(root, 'scripts', 'sync-bgm-download.py'), '0.46.1;echo-pwned'], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /X\.Y\.Z/);
+});
+
+await test('Solana 供应量缓存键不再统一小写', () => {
+  assert.ok(background.includes("const normalizedAddress = looksEvm ? String(address).toLowerCase() : String(address);"));
+});
+
+process.stdout.write(`1..${passed}\n`);

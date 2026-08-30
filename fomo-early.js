@@ -2,13 +2,11 @@
   'use strict';
 
   // fomo.family 的 document_start 抢跑脚本，只做一件事：
-  // 把插件后台续期出来的最新 privy 令牌，抢在页面 SDK 初始化之前写进 localStorage。
+  // 把扩展镜像到本地的最新 Privy 会话，抢在页面 SDK 初始化前写回 localStorage。
   //
-  // 为什么必须抢跑：插件续期会轮换 refresh_token（旧的即刻作废），而写回只能在
-  // fomo.family 标签开着时进行。页面关着的时段插件续过期后，网页 localStorage 里
-  // 还是已作废的旧 refresh——页面一打开，privy SDK 先用旧 refresh 去续，触发
-  // privy 的复用检测把整条会话作废，插件的新链也连坐，表现为"又要重新登录"。
-  // document_start 时 SDK 还没跑，这里先把最新链放进去，分叉就不会发生。
+  // 旧版本曾由后台直接轮换 refresh_token，可能在扩展存储里留下比网页更新的链。
+  // document_start 时 SDK 还没跑，先做一次单向修复；新版本的日常续期只由页面 SDK
+  // 完成，扩展不会再制造第二个 refresh owner。
   if (window.__gdhFomoEarly) return;
   window.__gdhFomoEarly = true;
 
@@ -39,8 +37,16 @@
         const cur = stored?.fomoToken;
         if (!cur?.token || !cur.refresh) return;
         const keys = Object.keys(window.localStorage);
-        const tokenKey = keys.find((k) => /^privy:(.+:)?token$/.test(k)) || 'privy:token';
-        const refreshKey = keys.find((k) => /^privy:(.+:)?refresh_token$/.test(k)) || 'privy:refresh_token';
+        const candidates = keys
+          .filter((k) => /^privy:(.+:)?token$/.test(k))
+          .map((tokenKey) => {
+            const prefix = tokenKey.slice(0, -'token'.length);
+            const token = unwrap(window.localStorage.getItem(tokenKey));
+            return { tokenKey, refreshKey: `${prefix}refresh_token`, exp: jwtExpMs(token) };
+          })
+          .sort((a, b) => (b.exp || 0) - (a.exp || 0));
+        const tokenKey = candidates[0]?.tokenKey || 'privy:token';
+        const refreshKey = candidates[0]?.refreshKey || 'privy:refresh_token';
         const pageToken = unwrap(window.localStorage.getItem(tokenKey));
         const pageExp = pageToken ? jwtExpMs(pageToken) : 0;
         const curExp = Number(cur.exp) || jwtExpMs(cur.token);

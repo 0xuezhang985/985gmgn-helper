@@ -105,9 +105,10 @@ chrome.alarms.get(FOMO_KEEPALIVE_ALARM).then((existing) => {
 }).catch(() => {});
 
 // 令牌实测寿命整 60 分钟（iat→exp 恰好 3600 秒）。SW 会被浏览器随时挂起，
-// 挂起期间不跑任何代码，所以要留足余量：剩 20 分钟就续（闹钟 5 分钟一响，
-// 过期前还有四次机会）。别调得更早——每次续期都轮换 refresh，续得越勤越容易分叉。
+// 挂起期间不跑任何代码，所以剩 20 分钟就确保页面 owner 已存在且不可丢弃；
+// 真正的轮换时机仍由页面 Privy SDK 自己决定。
 const FOMO_REFRESH_AHEAD_MS = 20 * 60000;
+const FOMO_KEEPER_URL = 'https://fomo.family/?gdh_keeper=1';
 let fomoKeepAliveAt = 0;
 
 /** 开着的 fomo.family 标签页 */
@@ -133,9 +134,45 @@ async function fomoPageAlive() {
   }
 }
 
-/** 等页面把它续出来的新令牌镜像过来（content.js 每 5 秒同步一次） */
-async function fomoWaitMirror(prevToken) {
-  for (let i = 0; i < 6; i += 1) {
+/**
+ * Privy 的 refresh 不是一个可脱离页面裸调的公开契约。实测页面 SDK 会额外带
+ * Authorization / privy-ca-id / privy-client-id 等会话上下文，后台只交 refresh_token
+ * 会稳定返回 403。这里确保恰好有一个真实页面承担续期，并阻止 Chrome 丢弃它。
+ */
+async function fomoEnsureSdkOwner(requireDedicated = false) {
+  try {
+    const tabs = await fomoOpenTabs();
+    const keepers = tabs.filter((tab) => String(tab.url || '').includes('gdh_keeper='));
+    let owner = keepers.find((tab) => !tab.discarded) || keepers[0];
+    let created = false;
+    if (!owner && !requireDedicated) owner = tabs.find((tab) => !tab.discarded && tab.status === 'complete');
+    if (!owner && !requireDedicated) owner = tabs.find((tab) => !tab.discarded);
+    if (!owner) {
+      owner = await chrome.tabs.create({ url: FOMO_KEEPER_URL, active: false, pinned: true });
+      created = true;
+      await fomoAuthNote('keeper-created');
+    }
+    const dedicated = String(owner.url || '').includes('gdh_keeper=');
+    const wasDiscarded = !!owner.discarded;
+    owner = await chrome.tabs.update(owner.id, {
+      autoDiscardable: false,
+      ...(dedicated ? { pinned: true } : {}),
+    });
+    if (wasDiscarded || (requireDedicated && dedicated && !created)) {
+      await chrome.tabs.reload(owner.id);
+      await fomoAuthNote(wasDiscarded ? 'keeper-reloaded' : 'keeper-woken');
+    }
+    return owner;
+  } catch (error) {
+    await fomoAuthNote('keeper-failed', { message: String(error?.message || '').slice(0, 80) });
+    return null;
+  }
+}
+
+/** 等页面把它续出来的新令牌镜像过来（content.js 每 5 秒同步一次）。 */
+async function fomoWaitMirror(prevToken, timeoutMs = 35000) {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 1000));
+  for (let i = 0; i < attempts; i += 1) {
     await new Promise((r) => setTimeout(r, 1000));
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
     if (fomoToken?.token && fomoToken.token !== prevToken) return fomoToken;
@@ -154,18 +191,19 @@ async function fomoKeepAlive(force) {
     const left = exp ? exp - Date.now() : 0;
     if (exp && left > FOMO_REFRESH_AHEAD_MS) return; // 还很新鲜，不动
 
-    // 页面还活着就完全让位。实测（真实浏览器抓的）：privy SDK 会在过期那一刻准时
-    // 续期，隐藏标签页也照续。插件这时插一脚就是灾难——privy 每次续期都作废旧
-    // refresh，而写回 localStorage 并不会更新页面 SDK 内存里的那一份（同一个
-    // document 的写入不触发 storage 事件，SDK 根本感知不到），页面迟早拿着已作废的
-    // refresh 去续，撞上 privy 的复用检测，整条会话连坐作废 =「又要重新登录」。
-    // force 是面板自己撞上过期来求救的，不能一句"让位"把它打发走——那样面板会一直
-    // 显示过期。它走 fomoRefreshSession，里面会先等页面把新令牌镜像过来再决定。
-    if (!force && await fomoPageAlive()) {
+    // 页面 SDK 是唯一 refresh owner。没有活页时创建一个后台守护页；已有普通 fomo 页
+    // 就只设为不可丢弃，不擅自把用户正在看的页钉住或刷新。
+    const owner = await fomoEnsureSdkOwner();
+    if (!owner) return;
+    if (await fomoPageAlive()) {
       await fomoAuthNote('defer-to-page', { leftMin: Math.round(left / 60000) });
+      if (force) await fomoRefreshSession();
       return;
     }
-    await fomoRefreshSession();
+    // 普通标签页可能只是“未丢弃”但 JS 已冻结。心跳断了就确保专用 keeper 存在；
+    // 专用页可以安全重载，不会打断用户正在看的 FOMO 页面。
+    await fomoEnsureSdkOwner(true);
+    if (force) await fomoRefreshSession();
   } catch {
     // 网络抖动等，下一轮再试
   }
@@ -204,10 +242,8 @@ function firstObjectArray(value, depth) {
 }
 
 // ---- 令牌自动续期 ----
-// fomo 用 privy 登录，访问令牌约一小时就过期。捕获时连 refresh_token 一起存下来，
-// 过期或被拒时用它去 privy 换新的，这样不必反复回 fomo 页面手动刷。
-const PRIVY_APP_ID = 'cm6h485o300n3zj9yl6vpedq7';
-const PRIVY_CLIENT = 'react-auth:3.34.0';
+// fomo 用 Privy 登录，访问令牌约一小时过期。扩展只镜像页面 SDK 续出的令牌；
+// 不再自己轮换 refresh_token，避免缺页面上下文的 403 与双 owner 分叉。
 let fomoRefreshInFlight = null;
 
 // 登录态出问题时只能靠猜，太被动：留一份最近 20 条的续期流水，面板上能看。
@@ -235,73 +271,19 @@ async function fomoRefreshSession() {
   if (fomoRefreshInFlight) return fomoRefreshInFlight;
   fomoRefreshInFlight = (async () => {
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
-    const refresh = fomoToken?.refresh;
-    if (!refresh) return null;
-    // 页面还活着却走到这一步（多半是接口按需续期正好撞上过期那几秒）：先等页面自己
-    // 续出来的新令牌镜像过来，等到就直接用。自己轮换 = 和页面分叉 = 整条会话作废。
-    if (await fomoPageAlive()) {
-      const adopted = await fomoWaitMirror(fomoToken.token);
-      if (adopted) {
-        await fomoAuthNote('adopt-from-page');
-        return adopted;
-      }
+    if (!fomoToken?.refresh) return null;
+    const owner = await fomoEnsureSdkOwner(!(await fomoPageAlive()));
+    if (!owner) return null;
+    const adopted = await fomoWaitMirror(fomoToken.token);
+    if (adopted) {
+      await fomoAuthNote('adopt-from-page', { expMin: Math.round((adopted.exp - Date.now()) / 60000) });
+      return adopted;
     }
-    const res = await fetch('https://auth.privy.io/api/v1/sessions', {
-      method: 'POST',
-      headers: {
-        'privy-app-id': PRIVY_APP_ID,
-        'privy-client': PRIVY_CLIENT,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ refresh_token: refresh }),
-    });
-    if (!res.ok) {
-      await fomoAuthNote('refresh-http-fail', { status: res.status });
-      return null;
-    }
-    const body = await res.json().catch(() => null);
-    // privy 明确说会话作废时才清，其它情况宁可留着旧的
-    if (body?.session_update_action === 'clear') {
-      await fomoAuthNote('session-cleared');
-      await chrome.storage.local.set({ fomoToken: null });
-      return null;
-    }
-    const token = body?.token;
-    if (!token) {
-      await fomoAuthNote('refresh-empty');
-      return null;
-    }
-    const next = {
-      token,
-      refresh: body.refresh_token || refresh,
-      at: Date.now(),
-      exp: jwtExpMs(token),
-      renewed: true,
-    };
-    await chrome.storage.local.set({ fomoToken: next });
-    await fomoAuthNote('refreshed', { expMin: Math.round((next.exp - Date.now()) / 60000) });
-    // 新令牌写回开着的 fomo.family 页，网页和插件共用同一条 privy 轮换链
-    try {
-      const tabs = await fomoOpenTabs();
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(
-          tab.id,
-          { type: 'gdh-privy-writeback', token: next.token, refresh: next.refresh },
-          () => void chrome.runtime.lastError,
-        );
-      }
-      // 还能走到"插件自己轮换"这一步却又有 fomo 标签页在，说明那页已经被 Chrome
-      // 冻结了（心跳早断了）。它内存里的 refresh 刚被这次轮换作废，等用户回头点开
-      // 就会拿着废 refresh 去续、撞上复用检测。刷新一下让 SDK 重启读到新链。
-      for (const tab of tabs) {
-        try { await chrome.tabs.reload(tab.id); } catch { /* 标签页已关 */ }
-      }
-      if (tabs.length) await fomoAuthNote('reloaded-frozen-page', { tabs: tabs.length });
-    } catch {
-      // 没有 tabs 权限或没有开着的页面：跳过，等下次同步
-    }
-    return next;
+    // 页面刚加载而旧 JWT 尚未到 exp 时，SDK 合法地选择不轮换；保留可用旧令牌。
+    const latest = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
+    if (latest?.token && Number(latest.exp) > Date.now()) return latest;
+    await fomoAuthNote('page-refresh-timeout');
+    return null;
   })().catch(() => null);
   try {
     return await fomoRefreshInFlight;
@@ -310,11 +292,16 @@ async function fomoRefreshSession() {
   }
 }
 
-/** 带令牌打 fomo 接口：快过期先续，被拒再续一次并重试。 */
+function fomoBodyUnauthed(body) {
+  const inner = Number(body?.statusCode);
+  return inner === 401 || inner === 403;
+}
+
+/** 带令牌打 fomo 接口：快过期先交给页面 SDK 续，被拒再等待镜像并重试。 */
 async function fomoAuthedFetch(path) {
   let stored = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
-  // 剩不到一分钟就当已过期，先换新的再发，省掉一次注定失败的请求
-  if (stored?.refresh && stored.exp && stored.exp - Date.now() < 60000) {
+  // 剩不到 10 秒才等待页面续期；更早等待只会让一次正常请求白卡 35 秒。
+  if (stored?.refresh && stored.exp && stored.exp - Date.now() < 10000) {
     // 续期失败要区分两种：privy 把会话作废了（存储已被清空，应引导重新登录）
     // 还是只是这次没成（旧令牌还留着，照旧拿它试一把）
     stored = (await fomoRefreshSession())
@@ -328,9 +315,14 @@ async function fomoAuthedFetch(path) {
   };
   let res = await send(stored?.token);
   let renewed = false;
-  if (res.status === 401 && stored?.refresh) {
+  let bodyUnauthed = false;
+  if (res.ok) {
+    const probe = await res.clone().json().catch(() => null);
+    bodyUnauthed = fomoBodyUnauthed(probe);
+  }
+  if ((res.status === 401 || bodyUnauthed) && stored?.refresh) {
     const next = await fomoRefreshSession();
-    if (next?.token) {
+    if (next?.token && next.token !== stored?.token) {
       renewed = true;
       stored = next;
       res = await send(next.token);
@@ -359,7 +351,7 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     path = `/feed/token?tokenAddress=${tokenAddress}&networkId=${networkId}&excludeThesis=true&limit=50`;
   }
   try {
-    // 复用浏览器里的 fomo 登录态（cookie）+ Bearer 令牌；令牌过期会自动用 refresh_token 续。
+    // 复用浏览器里的 fomo 登录态（cookie）+ Bearer；过期时等待页面 SDK 续期并镜像。
     // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
     const { res, stored, renewed } = await fomoAuthedFetch(path);
     token = stored?.token;
@@ -684,7 +676,8 @@ async function tokenSupply({ chain, address, rpc, apiQuery }) {
     return { ok: false, reason: 'unsupported-chain' };
   }
   // 缓存按链隔离：不同链上可能有同名地址
-  const key = `${chainKey}:${address.toLowerCase()}`;
+  const normalizedAddress = looksEvm ? String(address).toLowerCase() : String(address);
+  const key = `${chainKey}:${normalizedAddress}`;
   if (supplyCache.has(key)) return { ok: true, supply: supplyCache.get(key) };
 
   // 先问 GMGN 接口：所有链通用（Solana / Robinhood 只有这条路走得通）
@@ -916,37 +909,6 @@ let markedFeedFailCount = 0;
 let markedFeedBackoffUntil = 0;
 let markedFeedInflight = null;
 
-// 用户在插件设置里自己加的标注人物，上报进服务器全量采集名单（服务器幂等去重、
-// 30 人上限）。上报成功后下一轮采集（≤3 分钟）就有他的完整持仓；期间插件端的
-// 页面直拉兜底照常工作，无缝切换。SW 生命周期内每地址只报一次。
-const MARKED_REPORT_URL = 'https://www.985monitor.xyz/api/marked-watch';
-const markedReported = new Set();
-
-async function reportCustomMarked(doc) {
-  try {
-    const { markedHolders } = await chrome.storage.local.get('markedHolders');
-    if (!Array.isArray(markedHolders)) return;
-    const serverSet = new Set((doc?.people || []).map((p) => String(p?.address || '').toLowerCase()));
-    for (const person of markedHolders) {
-      const addr = String(person?.address || '').toLowerCase();
-      if (!/^0x[a-f0-9]{40}$/.test(addr) || serverSet.has(addr) || markedReported.has(addr)) continue;
-      markedReported.add(addr);
-      try {
-        await fetch(MARKED_REPORT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-gdh-token': 'gdh-marked-watch-2026' },
-          body: JSON.stringify({ address: addr, name: String(person?.name || '').slice(0, 24) }),
-        });
-      } catch {
-        markedReported.delete(addr); // 网络失败下次再报
-      }
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  } catch {
-    // storage 不可用
-  }
-}
-
 async function fetchMarkedFeed() {
   if (markedFeedInflight) return markedFeedInflight;
   const now = Date.now();
@@ -969,7 +931,6 @@ async function fetchMarkedFeed() {
       markedFeedEtag = response.headers.get('ETag') || '';
       markedFeedFailCount = 0;
       markedFeedBackoffUntil = 0;
-      reportCustomMarked(doc); // 后台跑，不阻塞返回
       return { ok: true, ...doc };
     } catch (error) {
       markedFeedFailCount += 1;
@@ -983,7 +944,99 @@ async function fetchMarkedFeed() {
   return markedFeedInflight;
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+// ---- 持仓提醒清单的跨标签页串行写入 ----
+const HOLDING_WATCH_PER_CHAIN_MAX = 100;
+let holdingWatchWriteQueue = Promise.resolve();
+
+function normalizeHoldingWatchItem(raw, forcedChain = '') {
+  const chain = String(forcedChain || raw?.chain || '').trim().toLowerCase();
+  const sourceAddress = String(raw?.address || '').trim();
+  const evm = /^0x[a-fA-F0-9]{40}$/.test(sourceAddress);
+  const sol = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(sourceAddress);
+  if (!/^[a-z0-9]{2,16}$/.test(chain) || (!evm && !sol)) return null;
+  const address = evm ? sourceAddress.toLowerCase() : sourceAddress;
+  const cost = Number(raw?.cost);
+  return {
+    chain,
+    address,
+    symbol: String(raw?.symbol || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 24),
+    cost: Number.isFinite(cost) && cost > 0 ? cost : 0,
+    at: Number(raw?.at) > 0 ? Number(raw.at) : Date.now(),
+  };
+}
+
+function mergeHoldingWatchList(current, chain, incoming, replace) {
+  const normalizedChain = String(chain || '').trim().toLowerCase();
+  if (!/^[a-z0-9]{2,16}$/.test(normalizedChain)) return Array.isArray(current) ? current : [];
+  const map = new Map();
+  for (const raw of (Array.isArray(current) ? current : [])) {
+    const item = normalizeHoldingWatchItem(raw);
+    if (!item || (replace && item.chain === normalizedChain)) continue;
+    map.set(`${item.chain}:${item.address}`, item);
+  }
+  for (const raw of (Array.isArray(incoming) ? incoming : [])) {
+    const item = normalizeHoldingWatchItem(raw, normalizedChain);
+    if (!item) continue;
+    map.set(`${item.chain}:${item.address}`, item);
+  }
+  const counts = new Map();
+  return [...map.values()]
+    .sort((a, b) => b.at - a.at)
+    .filter((item) => {
+      const count = counts.get(item.chain) || 0;
+      if (count >= HOLDING_WATCH_PER_CHAIN_MAX) return false;
+      counts.set(item.chain, count + 1);
+      return true;
+    });
+}
+
+function updateHoldingWatchList(payload) {
+  const chain = String(payload?.chain || '').trim().toLowerCase();
+  const items = Array.isArray(payload?.items) ? payload.items.slice(0, HOLDING_WATCH_PER_CHAIN_MAX) : [];
+  const replace = payload?.replace === true;
+  holdingWatchWriteQueue = holdingWatchWriteQueue.then(async () => {
+    const { holdingWatchList } = await chrome.storage.local.get({ holdingWatchList: [] });
+    const next = mergeHoldingWatchList(holdingWatchList, chain, items, replace);
+    await chrome.storage.local.set({ holdingWatchList: next });
+    return { ok: true, count: next.length };
+  });
+  return holdingWatchWriteQueue;
+}
+
+async function recordFomoPageHeartbeat(message, sender) {
+  try {
+    const tabId = Number(sender?.tab?.id);
+    const pageUrl = new URL(String(sender?.tab?.url || ''));
+    if (!Number.isInteger(tabId) || !(pageUrl.hostname === 'fomo.family' || pageUrl.hostname.endsWith('.fomo.family'))) return;
+    const keeper = message?.keeper === true || pageUrl.searchParams.has('gdh_keeper');
+    await chrome.storage.local.set({
+      fomoPage: { at: Date.now(), visible: message?.visible === true, tabId, keeper },
+    });
+    // 用户打开真实 FOMO 页时，它接管 SDK 会话；关闭扩展专用 keeper，避免两个页面
+    // 同时在 exp 附近轮换同一个 refresh_token。只关带 gdh_keeper 标记的扩展页。
+    if (!keeper) {
+      const tabs = await fomoOpenTabs();
+      const extraIds = tabs
+        .filter((tab) => tab.id !== tabId && String(tab.url || '').includes('gdh_keeper='))
+        .map((tab) => tab.id)
+        .filter(Number.isInteger);
+      if (extraIds.length) {
+        await chrome.tabs.remove(extraIds);
+        await fomoAuthNote('keeper-closed-for-page', { tabs: extraIds.length });
+      }
+    }
+  } catch {
+    // 标签页在异步查询期间关闭，下一次心跳/闹钟会收敛
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'fomo-page-heartbeat') {
+    recordFomoPageHeartbeat(message, sender)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   // 每次页面来消息都顺手看一眼要不要续期。用户在用 GMGN 就一定有消息流（fomo 拉取、
   // 徽章、混排…），比只靠 alarms 可靠得多——SW 被唤醒执行消息时闹钟可能还没到点。
   fomoKeepAlive();
@@ -992,13 +1045,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'fomo-force-refresh') {
     fomoKeepAlive(true)
       .then(() => chrome.storage.local.get('fomoToken'))
-      .then(({ fomoToken }) => sendResponse({ ok: !!fomoToken?.token, exp: Number(fomoToken?.exp) || 0 }))
+      .then(({ fomoToken }) => {
+        const exp = Number(fomoToken?.exp) || 0;
+        sendResponse({ ok: !!fomoToken?.token && exp > Date.now(), exp });
+      })
       .catch(() => sendResponse({ ok: false }));
     return true;
   }
 
   if (message?.type === 'marked-holdings') {
     fetchMarkedFeed()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'holding-watch-update') {
+    updateHoldingWatchList(message.payload || {})
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

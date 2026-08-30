@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.1 - 2026-08-30
+
+- **FOMO 登录态改成真正稳定的单 owner 续期**。
+  - 真实浏览器取证确认：Privy 页面 SDK 的 sessions 请求除 `refresh_token` 外还依赖 `Authorization / privy-ca-id / privy-client-id` 等页面会话上下文；旧后台裸调稳定返回 HTTP 403，所以“页面不活跃时插件接管续期”实际上从未成功。
+  - 删除后台裸刷路径。令牌剩余 20 分钟时确保一个真实 FOMO 页面存在，并设置 `autoDiscardable=false`；没有页面才创建非激活的固定守护页。用户后来打开普通 FOMO 页时自动关闭专用 keeper，Privy SDK 始终只保留一个主动 owner。
+  - 补齐 FOMO 的 HTTP 200 错误信封：body `statusCode=401/403` 现在也会进入页面续期/重试，不再被当成“空数据”。多账号 Privy localStorage 键改为按同一命名空间成对读取。
+- **重做仓位暴涨的持仓与成本基线**。
+  - GMGN 当前真实成本字段为 `balance / accu_amount / accu_cost / accu_fee`；按其线上分包口径使用 `(accu_cost + accu_fee) / accu_amount`。旧代码误算成 `accu_cost / balance`，部分卖出后会把成本凭空放大。
+  - 持仓面板是虚拟列表，DOM 只有可见行。旧对账把未渲染行当成已卖出，隐藏标签页甚至会清空整条链。现在 DOM 永远只增量合并；删除只来自登录态下的 `/td/api/v1/wallets/holdings` 完整响应，且返回刚好 100 条（服务端硬顶）时不做删除。
+  - 多标签页不再各自覆盖整张 `holdingWatchList`，统一交给 service worker 按链串行合并；每条链独立保留最多 100 个仓位，活跃链不会再把其他链挤出监控。EVM 地址归一小写、Solana 保留大小写。成本变化会重建提醒档位。
+- **关闭公开标注名单写入口**：公开扩展里的共享口令不可能是秘密，旧 `/api/marked-watch` 可被第三方填满 30 人名单。扩展已停止上报用户自定义标注人物；私有名单改为浏览器内直查 GMGN（上限从 50 提升到 100），生产写入口同步关闭。
+- **安全收口**：移除不再需要的 `auth.privy.io` 主机权限；下载页不再用 `innerHTML` 渲染 `version.json`，下载路径必须严格匹配当前版本的同源文件名；985 下载同步脚本严格校验 SemVer 与 SSH known_hosts；GitHub Actions 的 checkout 固定到官方提交 SHA；Solana 供应量缓存键不再错误小写；隐私说明按真实网络与令牌处理路径更新。
+- 新增 `scripts/verify-audit-fixes.mjs` 13 项回归，覆盖部分卖出成本、已清仓过滤、链感知键、虚拟列表只增不删、按链权威替换、跨链容量隔离、FOMO 守护页、HTTP 200 鉴权错误、公开口令清除、下载页注入与版本参数注入。
+
 ## 0.46.0 - 2026-08-30
 
 - **转入不再当成买入报**。截图里那条「RUNE 买入 $226 SILVERINU」其实是一笔转入。

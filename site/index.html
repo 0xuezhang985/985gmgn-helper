@@ -146,8 +146,8 @@ footer .sp{flex:1}
   <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
   <p class="sub">所有名单、配置、登录令牌只存你浏览器本地，代码开源。</p>
   <div class="dl">
-    <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.42.3.exe" download>下载安装器 (.exe)</a>
-    <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.42.3.zip" download>zip 手动安装</a>
+      <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.1.exe" download>下载安装器 (.exe)</a>
+      <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.1.zip" download>zip 手动安装</a>
     <span class="ver" id="ver">最新版本 <b>加载中…</b></span>
   </div>
   <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
@@ -191,7 +191,7 @@ footer .sp{flex:1}
       <h3>标注人物<em>完整持仓</em>徽章</h3>
       <ul>
         <li>战壕、搜索、追踪里的每个币旁标 <b>👤N</b>：几个被标注的人正持有它，悬停看人名和金额</li>
-        <li>持仓由 985 服务器用 <b>GMGN 官方 API 全量采集</b>（每人几百条，不止前 50），3 分钟一轮，插件零请求负担</li>
+        <li>默认人物由 985 服务器用 <b>GMGN 官方 API 全量采集</b>；你自己添加的人只在本机直查 GMGN，不上传公共名单</li>
         <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人只对你显示</b>，持仓由服务器代为采集</li>
         <li>$30 以下灰尘仓不算持有，不会满屏误标</li>
       </ul>
@@ -292,7 +292,7 @@ footer .sp{flex:1}
   <div class="sec-head rv"><span class="sec-no">05</span><h2>常见问题</h2></div>
   <div class="rv">
     <details><summary>装好了但页面上什么都没出现</summary><div class="a">先刷新 GMGN 页面。仍没有就到 <code>chrome://extensions</code> 确认插件已启用，点一下刷新按钮 ⟳ 再回来。</div></details>
-    <details><summary>fomo 浮窗提示登录态过期</summary><div class="a">按浮窗里的引导去 fomo.family 登录一次即可。v0.42.1 起令牌自动续期含抢跑同步，正常不会再频繁过期；若仍反复出现，去 GitHub 提 issue 或群里说一声。</div></details>
+    <details><summary>fomo 浮窗提示登录态过期</summary><div class="a">按浮窗里的引导去 fomo.family 登录一次即可。v0.46.1 起由真实 FOMO 页面 SDK 单独续期，扩展会保留一个不抢焦点的守护页；服务端主动撤销会话时仍需重新登录。</div></details>
     <details><summary>混排里怎么没有 fomo 卡片</summary><div class="a">混排只在追踪流所在页面工作，且需要 985monitor 数据源可达。检查插件配置页里「fomo 推送混排」总开关；刚打开页面等几秒，事件是按真实时间锚定的，比当前可见推送更老的事件会随滚动补位。</div></details>
     <details><summary>👤 徽章不显示</summary><div class="a">确认浏览器已登录 GMGN。持仓数据 2~3 分钟一轮更新；$30 以下的灰尘仓不计为持有。</div></details>
     <details><summary>升级会丢配置吗</summary><div class="a">不会。扩展 ID 固定，名单与配置都在原地；安装器升级前自动备份，失败回滚，保留最近 3 份备份。</div></details>
@@ -316,10 +316,20 @@ footer .sp{flex:1}
   fetch('version.json?t=' + Date.now())
     .then((r) => (r.ok ? r.json() : null))
     .then((v) => {
-      if (!v || !v.version) return;
-      if (v.exe) { document.getElementById('dl-exe').href = v.exe; document.getElementById('exe-name').textContent = v.exe.split('/').pop(); }
-      if (v.zip) document.getElementById('dl-zip').href = v.zip;
-      document.getElementById('ver').innerHTML = '最新版本 <b>v' + v.version + '</b>';
+      const version = String(v?.version || '');
+      if (!/^\d+\.\d+\.\d+$/.test(version)) return;
+      const exe = String(v?.exe || '');
+      const zip = String(v?.zip || '');
+      const expectedExe = `dl/985gmgn-helper-setup-v${version}.exe`;
+      const expectedZip = `dl/985gmgn-helper-v${version}.zip`;
+      if (exe === expectedExe) {
+        document.getElementById('dl-exe').href = exe;
+        document.getElementById('exe-name').textContent = exe.split('/').pop();
+      }
+      if (zip === expectedZip) document.getElementById('dl-zip').href = zip;
+      const strong = document.createElement('b');
+      strong.textContent = `v${version}`;
+      document.getElementById('ver').replaceChildren('最新版本 ', strong);
     })
     .catch(() => {});
 

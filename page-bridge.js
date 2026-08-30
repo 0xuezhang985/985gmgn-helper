@@ -297,23 +297,32 @@
 
   /** 持仓面板行：从 fiber 取 {chain,address,symbol}，供插件缓存持仓清单。 */
   /**
-   * 这一仓的「每币平均成本」。字段名全部取自 GMGN 自己的分包（_app-*.js）里
-   * 持仓对象的解构：{ amount_cur, buy_amount_cur, realized_profit, avg_cost,
-   * avg_sold, total_cost, cost, native_balance, ... }；GMGN 自己也是按
-   * `balance > 0 ? avg_cost : history_avg_cost` 取均价的，这里照抄。
-   * 取不到就返回 0，由 content.js 退回「首次看到时的价格」当基准。
+   * 这一仓的「每币平均成本」。GMGN 当前 holdings 接口返回
+   * balance / accu_amount / accu_cost / accu_fee，线上分包的成本含手续费口径是
+   * `(accu_cost + accu_fee) / accu_amount`。不能拿 accu_cost / balance：部分卖出后
+   * balance 会变小，而累计买入数量不变，那样会把成本凭空放大。
    */
   function readHoldingCost(hit) {
     const num = (v) => {
       const n = Number(v);
       return Number.isFinite(n) && n > 0 ? n : 0;
     };
-    const direct = num(hit.avg_cost) || num(hit.history_avg_cost);
+    const nonNegative = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    };
+    const balance = num(hit.balance) || num(hit.amount_cur) || num(hit.amount);
+    if (!balance) return 0; // 已清仓只剩 history_* 时不是当前持仓
+    const accuAmount = num(hit.accu_amount);
+    const accuCost = num(hit.accu_cost);
+    if (accuAmount && accuCost) return (accuCost + nonNegative(hit.accu_fee)) / accuAmount;
+    const direct = num(hit.avg_cost);
     if (direct) return direct;
-    // 没有均价就用「总成本 ÷ 持仓数量」自己算
-    const amount = num(hit.balance) || num(hit.amount_cur) || num(hit.amount);
     const total = num(hit.total_cost) || num(hit.cost) || num(hit.accu_cost);
-    return amount && total ? total / amount : 0;
+    if (total) return total / balance;
+    // 仅兼容仍把当前均价放在 history_avg_cost 的旧构建；上面的 balance 守卫确保
+    // 真正的已清仓历史记录不会进入提醒清单。
+    return num(hit.history_avg_cost);
   }
 
   function readHoldingToken(element) {

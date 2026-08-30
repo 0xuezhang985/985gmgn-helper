@@ -20,19 +20,6 @@
       value = String(value || '').trim();
       return value.length > 20 ? value : '';
     };
-    // 多账号登录时 privy 会把键加上用户命名空间（privy:<userId>:token），所以按模式扫而不是写死键名
-    const readPrivy = () => {
-      const out = { token: '', refresh: '' };
-      try {
-        for (const key of Object.keys(window.localStorage)) {
-          if (!out.token && /^privy:(.+:)?token$/.test(key)) out.token = unwrap(window.localStorage.getItem(key));
-          else if (!out.refresh && /^privy:(.+:)?refresh_token$/.test(key)) out.refresh = unwrap(window.localStorage.getItem(key));
-        }
-      } catch {
-        // localStorage 不可用
-      }
-      return out;
-    };
     const jwtExpMs = (token) => {
       try {
         const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -40,6 +27,27 @@
       } catch {
         return 0;
       }
+    };
+    // 多账号登录时 Privy 会写 privy:<userId>:token。token 与 refresh_token 必须按
+    // 相同前缀成对读取；旧代码各取第一个，枚举顺序不同时会拼出一条不存在的会话链。
+    const readPrivy = () => {
+      const pairs = [];
+      try {
+        for (const tokenKey of Object.keys(window.localStorage).filter((key) => /^privy:(.+:)?token$/.test(key))) {
+          const prefix = tokenKey.slice(0, -'token'.length);
+          const token = unwrap(window.localStorage.getItem(tokenKey));
+          if (!token) continue;
+          pairs.push({
+            token,
+            refresh: unwrap(window.localStorage.getItem(`${prefix}refresh_token`)),
+            exp: jwtExpMs(token),
+          });
+        }
+      } catch {
+        // localStorage 不可用
+      }
+      pairs.sort((a, b) => (b.exp || 0) - (a.exp || 0));
+      return pairs[0] || { token: '', refresh: '', exp: 0 };
     };
     let lastSent = '';
     const syncFomoToken = () => {
@@ -58,8 +66,7 @@
             lastSent = stamp;
             return;
           }
-          // 插件可能刚用 refresh_token 续出了更晚过期的新令牌；网页里的旧令牌不准
-          // 把它盖回去——旧 refresh 已被 privy 轮换作废，盖回去等于"总是要重新登录"。
+          // 抢跑迁移或另一个页面可能已经镜像了更晚过期的新令牌；较旧页面不准盖回去。
           if (cur?.token && cur.token !== token && cur.exp && pageExp && cur.exp >= pageExp) return;
           lastSent = stamp;
           try {
@@ -72,31 +79,6 @@
         // 扩展上下文失效
       }
     };
-    // 后台续期成功后会把新令牌写回本页 localStorage，让网页和插件共用同一条
-    // privy 轮换链，避免网页拿旧 refresh 去续触发复用检测、连坐作废整个会话。
-    try {
-      chrome.runtime.onMessage.addListener((msg) => {
-        if (msg?.type !== 'gdh-privy-writeback' || !msg.token) return;
-        try {
-          const keys = Object.keys(window.localStorage);
-          const tokenKey = keys.find((k) => /^privy:(.+:)?token$/.test(k)) || 'privy:token';
-          const refreshKey = keys.find((k) => /^privy:(.+:)?refresh_token$/.test(k)) || 'privy:refresh_token';
-          const writeKeep = (key, value) => {
-            const raw = window.localStorage.getItem(key);
-            // privy 按 JSON 字符串存（带引号），沿用原格式
-            const asJson = raw == null || /^"/.test(raw);
-            window.localStorage.setItem(key, asJson ? JSON.stringify(value) : value);
-          };
-          writeKeep(tokenKey, msg.token);
-          if (msg.refresh) writeKeep(refreshKey, msg.refresh);
-          lastSent = `${msg.token}|${msg.refresh || ''}`;
-        } catch {
-          // localStorage 不可写
-        }
-      });
-    } catch {
-      // 扩展上下文失效
-    }
     syncFomoToken();
     // 页面开着时它才是 privy 轮换链的主人，插件只镜像。同一个 document 里的
     // localStorage 写入不触发 storage 事件，监听不到，只能轮询——间隔要短，
@@ -110,7 +92,11 @@
     // 续不动，得由插件接管。tabs.query 只能看出标签页在不在，看不出被没被节流。
     const beat = () => {
       try {
-        chrome.storage.local.set({ fomoPage: { at: Date.now(), visible: document.visibilityState === 'visible' } });
+        chrome.runtime.sendMessage({
+          type: 'fomo-page-heartbeat',
+          visible: document.visibilityState === 'visible',
+          keeper: new URLSearchParams(location.search).has('gdh_keeper'),
+        }, () => void chrome.runtime.lastError);
       } catch {
         // 扩展上下文失效
       }
@@ -1319,8 +1305,8 @@ ${flapTooltipText(info)}
       const list = next.get(key);
       if (!list.includes(label)) list.push(label);
     };
-    // ① 优先吃 985 服务器发布的完整持仓（GMGN 官方 API 采集、3 分钟一轮、
-    //    翻页拉全——旧的"每人前 50 条"上限没了）。名字以本地备注为准。
+    // ① 默认公开人物优先吃 985 服务器发布的完整持仓（3 分钟一轮、翻页拉全）。
+    //    用户私有新增人物绝不上报，落到下方浏览器直拉；名字始终以本地备注为准。
     const covered = new Set();
     try {
       const server = await new Promise((resolve) => {
@@ -1346,27 +1332,40 @@ ${flapTooltipText(info)}
     } catch {
       // 服务器数据拿不到就全走直拉
     }
-    // ② 名单里服务器没覆盖的人（用户自己加的）——退回 GMGN 直拉（前 50 条口径）
+    // ② 名单里服务器没覆盖的人（用户自己加的）留在浏览器本地，直拉 GMGN 新持仓
+    // 接口（单钱包服务端硬顶 100 条）。不再把用户的私有标注名单上报成服务器公共名单。
     const rest = people.filter((p2) => !covered.has(p2.address.toLowerCase()));
     const apiQuery = rest.length ? gmgnApiQuery() : '';
+    const accessToken = rest.length ? gmgnAccessToken() : '';
     try {
       let first = true;
       for (const person of rest) {
-        if (apiQuery === '') break; // 页面还没发过带参请求，下一轮再补这部分
+        if (apiQuery === '' || !accessToken) break; // 页面参数/登录态未就绪，下一轮再补
         // 名单可以自己加人；人与人之间垫最小间隔，名单再大也不会突发打接口
         if (!first) await new Promise((resolve) => setTimeout(resolve, 250));
         first = false;
         try {
-          // 契约取自 GMGN 自己的取数代码：eth 链地址要小写
+          // 契约取自 GMGN 当前 _app 分包的 getWalletHoldingApi：数组用 repeat 格式。
           const addr = chain === 'eth' ? person.address.toLowerCase() : person.address;
-          // credentials 带上：接口要登录态（未登录 401 → 本轮静默无数据）
-          const res = await fetch(`https://gmgn.ai/api/v1/wallet_holdings/${chain}/${addr}?limit=50&${apiQuery}`, {
+          const params = new URLSearchParams(apiQuery);
+          params.set('chain', chain);
+          params.delete('wallet_addresses');
+          params.append('wallet_addresses', addr);
+          params.set('hide_abnormal', 'true');
+          params.set('limit', '100');
+          params.set('orderby', 'last_active_timestamp');
+          params.set('direction', 'desc');
+          params.set('show_small', 'true');
+          params.set('sellout', 'false');
+          const res = await fetch(`https://gmgn.ai/td/api/v1/wallets/holdings?${params}`, {
             credentials: 'include',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Cache-Control': 'no-cache' },
           });
           const body = await res.json().catch(() => null);
-          const holdings = body?.data?.holdings || body?.holdings || [];
+          const holdings = res.ok && body?.code === 0 && Array.isArray(body?.data?.holdings)
+            ? body.data.holdings : [];
           for (const h of holdings) {
-            const token = String(h?.token?.address || h?.address || '').toLowerCase();
+            const token = String(h?.token_address || h?.token_basic_stats?.address || '').toLowerCase();
             if (!token) continue;
             const usd = Number(h?.usd_value);
             if (Number.isFinite(usd) && usd < MARKED_MIN_USD) continue;
@@ -3990,8 +3989,9 @@ ${flapTooltipText(info)}
   // 判断「持仓面板确实在页面上」用的锚点：testid 是 GMGN 自己的稳定标记，
   // 另外两个是持仓表所在文件名，部分构建里没有 testid 时兜底。
   const HOLDING_PANEL_PRESENT = '[data-testid="position-table-floating"], [data-sentry-source-file^="PositionTable"], [data-sentry-source-file="Holding.tsx"]';
-  const HOLDING_WATCH_MAX = 80;
+  const HOLDING_WATCH_PER_CHAIN_MAX = 100;
   const HOLDING_POLL_MS = 30000;
+  const HOLDING_API_TTL_MS = 30000;
   /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
   function holdingCooldownMs() {
     const minutes = Number(settings.holdingSurgeCooldown);
@@ -4005,92 +4005,197 @@ ${flapTooltipText(info)}
   const holdingBasePrice = new Map();
   let holdingWatchMap = new Map();
   let holdingSaveTimer = 0;
+  const holdingPendingWrites = new Map();
+  const holdingApiSyncedAt = new Map();
+  const holdingApiInflight = new Map();
   let holdingPollTimer = 0;
   let holdingPolling = false;
+
+  function holdingKey(chain, address) {
+    const normalizedChain = String(chain || '').trim().toLowerCase();
+    const normalizedAddress = normalizeWalletAddress(String(address || ''));
+    return normalizedChain && normalizedAddress ? `${normalizedChain}:${normalizedAddress}` : '';
+  }
 
   function rebuildHoldingWatch() {
     holdingWatchMap = new Map(
       (Array.isArray(settings.holdingWatchList) ? settings.holdingWatchList : [])
-        .filter((item) => item && item.chain && item.address)
-        .map((item) => [
-          `${item.chain}:${item.address}`,
-          {
-            chain: String(item.chain),
-            address: String(item.address),
-            symbol: String(item.symbol || ''),
-            cost: Number(item.cost) > 0 ? Number(item.cost) : 0,
-            at: Number(item.at) || 0,
-          },
-        ]),
+        .map((item) => {
+          const chain = String(item?.chain || '').trim().toLowerCase();
+          const address = normalizeWalletAddress(String(item?.address || ''));
+          const key = holdingKey(chain, address);
+          return key ? [key, {
+            chain,
+            address,
+            symbol: String(item?.symbol || ''),
+            cost: Number(item?.cost) > 0 ? Number(item.cost) : 0,
+            at: Number(item?.at) || 0,
+          }] : null;
+        })
+        .filter(Boolean),
     );
   }
 
-  function scheduleHoldingSave() {
+  function scheduleHoldingSave(chain, replace = false) {
+    const normalizedChain = String(chain || '').trim().toLowerCase();
+    if (!normalizedChain) return;
+    const pending = holdingPendingWrites.get(normalizedChain);
+    holdingPendingWrites.set(normalizedChain, { replace: replace || pending?.replace === true });
     if (holdingSaveTimer) return;
     holdingSaveTimer = window.setTimeout(() => {
       holdingSaveTimer = 0;
-      const list = [...holdingWatchMap.values()]
-        .sort((a, b) => b.at - a.at)
-        .slice(0, HOLDING_WATCH_MAX);
-      settings.holdingWatchList = list;
-      try {
-        chrome.storage.local.set({ holdingWatchList: list });
-      } catch {
-        // context invalidated
+      const writes = [...holdingPendingWrites.entries()];
+      holdingPendingWrites.clear();
+      for (const [writeChain, options] of writes) {
+        const items = [...holdingWatchMap.values()]
+          .filter((item) => item.chain === writeChain)
+          .sort((a, b) => b.at - a.at)
+          .slice(0, HOLDING_WATCH_PER_CHAIN_MAX);
+        try {
+          chrome.runtime.sendMessage({
+            type: 'holding-watch-update',
+            payload: { chain: writeChain, items, replace: options.replace === true },
+          }, () => void chrome.runtime.lastError);
+        } catch {
+          // context invalidated
+        }
       }
     }, 800);
   }
 
+  function holdingCostFromApi(hit) {
+    const positive = (value) => {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const nonNegative = (value) => {
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    };
+    const balance = positive(hit?.balance);
+    const amount = positive(hit?.accu_amount);
+    const cost = positive(hit?.accu_cost);
+    if (!balance || !amount || !cost) return { balance, average: 0 };
+    return { balance, average: (cost + nonNegative(hit?.accu_fee)) / amount };
+  }
+
+  function putHolding(item) {
+    const key = holdingKey(item?.chain, item?.address);
+    if (!key) return false;
+    const prev = holdingWatchMap.get(key);
+    const next = {
+      chain: String(item.chain).toLowerCase(),
+      address: normalizeWalletAddress(String(item.address)),
+      symbol: String(item.symbol || '').slice(0, 24),
+      cost: Number(item.cost) > 0 ? Number(item.cost) : (Number(prev?.cost) || 0),
+      at: Number(item.at) || Date.now(),
+    };
+    const previousCost = Number(prev?.cost) || 0;
+    const costChanged = !!prev && Number(next.cost) > 0
+      && (previousCost <= 0 || Math.abs(previousCost - Number(next.cost)) / previousCost > 0.001);
+    if (costChanged) {
+      holdingAlertedAt.delete(key);
+      holdingAlertLevel.delete(key);
+      holdingBasePrice.delete(key);
+    }
+    holdingWatchMap.set(key, next);
+    return !prev || prev.symbol !== next.symbol || prev.cost !== next.cost;
+  }
+
+  function latestHoldingApiUrl(chain) {
+    try {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const raw = String(entries[i]?.name || '');
+        if (!raw.includes('/td/api/v1/wallets/holdings?')) continue;
+        const url = new URL(raw);
+        if (url.origin !== location.origin || url.pathname !== '/td/api/v1/wallets/holdings') continue;
+        if (String(url.searchParams.get('chain') || '').toLowerCase() !== chain) continue;
+        if (!url.searchParams.getAll('wallet_addresses').length) continue;
+        return url;
+      }
+    } catch {
+      // resource timing 不可用
+    }
+    return null;
+  }
+
+  async function syncHoldingWatchFromApi() {
+    if (!isTabVisibleForHolding()) return;
+    const chain = currentChain();
+    if (!chain || holdingApiInflight.has(chain)) return;
+    if (Date.now() - (holdingApiSyncedAt.get(chain) || 0) < HOLDING_API_TTL_MS) return;
+    const url = latestHoldingApiUrl(chain);
+    const token = gmgnAccessToken();
+    if (!url || !token) return;
+    holdingApiSyncedAt.set(chain, Date.now());
+    const task = (async () => {
+      const response = await fetch(url.toString(), {
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' },
+      });
+      const body = await response.json().catch(() => null);
+      const rows = body?.data?.holdings;
+      if (!response.ok || body?.code !== 0 || !Array.isArray(rows)) return;
+      const grouped = new Map();
+      for (const row of rows) {
+        const address = normalizeWalletAddress(String(row?.token_address || row?.token_basic_stats?.address || ''));
+        if (!address) continue;
+        const { balance, average } = holdingCostFromApi(row);
+        if (!(balance > 0)) continue;
+        const key = holdingKey(chain, address);
+        const hit = grouped.get(key) || { chain, address, symbol: '', weightedCost: 0, balance: 0 };
+        hit.symbol = hit.symbol || String(row?.token_basic_stats?.symbol || row?.symbol || '').slice(0, 24);
+        hit.balance += balance;
+        if (average > 0) hit.weightedCost += average * balance;
+        grouped.set(key, hit);
+      }
+      const seen = new Set();
+      for (const hit of grouped.values()) {
+        const cost = hit.balance > 0 && hit.weightedCost > 0 ? hit.weightedCost / hit.balance : 0;
+        putHolding({ chain, address: hit.address, symbol: hit.symbol, cost, at: Date.now() });
+        seen.add(holdingKey(chain, hit.address));
+      }
+      // GMGN 当前把 limit 硬顶在 100。少于 100 才能证明响应完整、允许删除已清仓；
+      // 刚好 100 时只合并，绝不把服务端截断误判成卖出。
+      const authoritative = rows.length < 100;
+      if (authoritative) {
+        for (const [key, item] of [...holdingWatchMap]) {
+          if (item.chain !== chain || seen.has(key)) continue;
+          holdingWatchMap.delete(key);
+          holdingAlertedAt.delete(key);
+          holdingAlertLevel.delete(key);
+          holdingBasePrice.delete(key);
+        }
+      }
+      scheduleHoldingSave(chain, authoritative);
+    })().catch(() => {}).finally(() => holdingApiInflight.delete(chain));
+    holdingApiInflight.set(chain, task);
+    await task;
+  }
+
   /** 从持仓面板行收集当前链的持仓，合并进缓存清单。 */
   function collectHoldingRows() {
+    if (!isTabVisibleForHolding()) return;
     let changed = false;
     // page-bridge 会给持仓行打 data-gdh-hold-*，这里直接按属性找，
     // 不再依赖构建期的 sentry 标记（那个在部分用户页面上根本不存在）。
     const rows = [...document.querySelectorAll('[data-gdh-hold-addr]')];
-    const seenChains = new Set();
-    const seenKeys = new Set();
+    const changedChains = new Set();
     rows.forEach((row) => {
-      const chain = row.getAttribute('data-gdh-hold-chain') || '';
-      const address = row.getAttribute('data-gdh-hold-addr') || '';
+      const chain = String(row.getAttribute('data-gdh-hold-chain') || '').toLowerCase();
+      const address = normalizeWalletAddress(row.getAttribute('data-gdh-hold-addr') || '');
       if (!chain || !address) return;
       const symbol = row.getAttribute('data-gdh-hold-symbol') || '';
       // 这一仓的每币平均成本（page-bridge 从持仓行的 React props 里读的）。
       // 读不到就保留上一轮的值，别被面板某一帧的空数据擦掉。
       const cost = Number(row.getAttribute('data-gdh-hold-cost')) || 0;
-      const key = `${chain}:${address}`;
-      seenChains.add(chain);
-      seenKeys.add(key);
-      const prev = holdingWatchMap.get(key);
-      if (!prev || prev.symbol !== symbol) changed = true;
-      const nextCost = cost > 0 ? cost : (Number(prev?.cost) || 0);
-      if ((Number(prev?.cost) || 0) !== nextCost) changed = true;
-      holdingWatchMap.set(key, { chain, address, symbol, cost: nextCost, at: Date.now() });
+      if (putHolding({ chain, address, symbol, cost, at: Date.now() })) changed = true;
+      changedChains.add(chain);
     });
-
-    // 面板开着却一行都没有 = 这条链已经清空，同样要对账。
-    // 只看 seenChains 的话，卖掉某条链上最后一个持仓后它就永远为空，
-    // 那个币会一直赖在清单里被查价、被报警——还是"提醒你没有的持仓"。
-    // 面板压根没渲染时下面这句取不到元素，seenChains 保持为空，绝不误删。
-    if (!seenChains.size && document.querySelector(HOLDING_PANEL_PRESENT)) {
-      const chain = currentChain();
-      if (chain) seenChains.add(chain);
-    }
-
-    // 对账：面板本轮渲染了某条链的持仓，那这条链上没出现的币就是已经卖掉的——
-    // 从清单里删掉。否则清单只增不减，清仓后的币一涨还会弹"你没有的持仓"提醒。
-    // 只对本轮真实看到过行的链做对账，面板没打开/没渲染时绝不误删。
-    if (seenChains.size) {
-      for (const [key, item] of [...holdingWatchMap]) {
-        if (!seenChains.has(item.chain)) continue;
-        if (seenKeys.has(key)) continue;
-        holdingWatchMap.delete(key);
-        holdingAlertedAt.delete(key);
-        holdingAlertLevel.delete(key);
-        holdingBasePrice.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) scheduleHoldingSave();
+    // GMGN 是虚拟列表：DOM 只含当前可见的几行，绝不能拿“没渲染”推导“已卖出”。
+    // 完整删除只由上面的 holdings API 成功且未触顶时执行；DOM 路径永远只增量合并。
+    if (changed) changedChains.forEach((chain) => scheduleHoldingSave(chain, false));
   }
 
   function formatPriceShort(value) {
@@ -4134,8 +4239,8 @@ ${flapTooltipText(info)}
             if (!p) return;
             const now = Number(p.price);
             if (!Number.isFinite(now) || now <= 0) return;
-            const address = String(token.address || p.address || '');
-            const key = `${chain}:${address}`;
+            const address = normalizeWalletAddress(String(token.address || p.address || ''));
+            const key = holdingKey(chain, address);
             // 二次确认：一轮查价是异步的，期间清单可能已因对账移除该币（清仓）。
             // 没在清单里就不弹——这是"提醒了自己没有的持仓"的最后一道闸。
             const meta = holdingWatchMap.get(key);
@@ -4203,7 +4308,9 @@ ${flapTooltipText(info)}
       }
       return;
     }
+    if (!isTabVisibleForHolding()) return;
     collectHoldingRows();
+    syncHoldingWatchFromApi().catch(() => {});
     startHoldingPoll();
   }
 
