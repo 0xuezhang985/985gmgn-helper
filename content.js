@@ -4177,7 +4177,7 @@ ${flapTooltipText(info)}
   // 清单：持仓面板开着时从行上读 {chain,address,symbol} 缓存下来（面板只显示当前链，
   // 切链再开一次就把那条链也收进来），之后面板关掉也在。
   // 行情：实时复用 GMGN 页面/App 自己的 token_stat WebSocket；30 秒 REST 轮询仅兜底。
-  // 两条路径都按「现价 vs 5 分钟前价格」算涨幅，不再把累计持仓收益冒充 5 分钟涨幅。
+  // 两条路径都按「现价 vs 当前持仓实际平均成本」算涨幅；成本缺失时宁可不报，也不猜基准。
   const HOLDING_ROW_SELECTOR = '[data-sentry-component="SmToken"]';
   // 判断「持仓面板确实在页面上」用的锚点：testid 是 GMGN 自己的稳定标记，
   // 另外两个是持仓表所在文件名，部分构建里没有 testid 时兜底。
@@ -4200,7 +4200,7 @@ ${flapTooltipText(info)}
   }
   const HOLDING_BATCH = 40;
   const holdingAlertedAt = new Map();
-  // 已播报到的 5 分钟涨幅档位（pct / 阈值 取整）。首轮只建基准不弹。
+  // 已播报到的持仓收益档位（pct / 阈值 取整）。首轮只建基准不弹。
   const holdingAlertLevel = new Map();
   let holdingWatchMap = new Map();
   let holdingSaveTimer = 0;
@@ -4345,7 +4345,8 @@ ${flapTooltipText(info)}
   }
 
   function rebuildHoldingWatch() {
-    holdingWatchMap = new Map(
+    const previous = holdingWatchMap;
+    const next = new Map(
       (Array.isArray(settings.holdingWatchList) ? settings.holdingWatchList : [])
         .map((item) => {
           const chain = String(item?.chain || '').trim().toLowerCase();
@@ -4361,6 +4362,19 @@ ${flapTooltipText(info)}
         })
         .filter(Boolean),
     );
+    for (const [key, item] of next) {
+      const old = previous.get(key);
+      if (!old || holdingCostMateriallyChanged(old.cost, item.cost)) {
+        holdingAlertedAt.delete(key);
+        holdingAlertLevel.delete(key);
+      }
+    }
+    for (const key of previous.keys()) {
+      if (next.has(key)) continue;
+      holdingAlertedAt.delete(key);
+      holdingAlertLevel.delete(key);
+    }
+    holdingWatchMap = next;
   }
 
   function scheduleHoldingSave(chain, replace = false) {
@@ -4406,6 +4420,20 @@ ${flapTooltipText(info)}
     return { balance, average: (cost + nonNegative(hit?.accu_fee)) / amount };
   }
 
+  function holdingCostChange(price, cost) {
+    const now = Number(price);
+    const base = Number(cost);
+    return now > 0 && base > 0 ? ((now - base) / base) * 100 : NaN;
+  }
+
+  function holdingCostMateriallyChanged(previous, next) {
+    const before = Number(previous);
+    const after = Number(next);
+    if (!(after > 0)) return false;
+    if (!(before > 0)) return true;
+    return Math.abs(after - before) / before >= 0.001;
+  }
+
   function putHolding(item) {
     const key = holdingKey(item?.chain, item?.address);
     if (!key) return false;
@@ -4417,6 +4445,12 @@ ${flapTooltipText(info)}
       cost: Number(item.cost) > 0 ? Number(item.cost) : (Number(prev?.cost) || 0),
       at: Number(item.at) || Date.now(),
     };
+    // 新买、加仓或减仓后平均成本会变化。旧档位属于上一仓，必须清掉；
+    // 下一包行情只按新成本建立静默基准，不能刚成交就继承旧档位误报。
+    if (!prev || holdingCostMateriallyChanged(prev.cost, next.cost)) {
+      holdingAlertedAt.delete(key);
+      holdingAlertLevel.delete(key);
+    }
     holdingWatchMap.set(key, next);
     return !prev || prev.symbol !== next.symbol || prev.cost !== next.cost;
   }
@@ -4523,15 +4557,6 @@ ${flapTooltipText(info)}
     return `$${n.toPrecision(4)}`;
   }
 
-  function holdingFiveMinuteChange(raw) {
-    const directRaw = raw?.pct5m ?? raw?.pcp5m ?? raw?.price_change_percent5m;
-    const direct = Number(directRaw);
-    if (directRaw !== null && directRaw !== undefined && directRaw !== '' && Number.isFinite(direct)) return direct;
-    const now = Number(raw?.price ?? raw?.p);
-    const before = Number(raw?.price5m ?? raw?.p5m ?? raw?.price_5m);
-    return now > 0 && before > 0 ? ((now - before) / before) * 100 : NaN;
-  }
-
   function holdingSurgeDecision(previousLevel, pct, threshold, cooldownReady) {
     const level = Math.floor((Number(pct) + 1e-9) / Number(threshold));
     const previous = Number.isFinite(previousLevel) ? previousLevel : null;
@@ -4550,7 +4575,7 @@ ${flapTooltipText(info)}
     const key = holdingKey(chain, address);
     const meta = holdingWatchMap.get(key);
     const price = Number(update?.price ?? update?.p);
-    const pct = holdingFiveMinuteChange(update);
+    const pct = holdingCostChange(price, meta?.cost);
     if (!meta || !(price > 0) || !Number.isFinite(pct)) return;
     const threshold = Math.max(5, Number(settings.holdingSurgeThreshold) || 20);
     const last = holdingAlertedAt.get(key) || 0;
@@ -4569,7 +4594,7 @@ ${flapTooltipText(info)}
       bell: '🚀',
       tagText: '持仓暴涨',
       symbol: meta.symbol || fallbackSymbol || '持仓代币',
-      label: '5分钟涨幅',
+      label: '较购买成本',
       value: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%  ${formatPriceShort(price)}`,
       raw: '',
     });
@@ -4619,10 +4644,9 @@ ${flapTooltipText(info)}
             const p = token?.price;
             if (!p) return;
             const now = Number(p.price);
-            const before = Number(p.price_5m);
-            if (!(now > 0) || !(before > 0)) return;
+            if (!(now > 0)) return;
             const address = normalizeWalletAddress(String(token.address || p.address || ''));
-            handleHoldingPriceUpdate({ chain, address, price: now, price5m: before }, token.symbol);
+            handleHoldingPriceUpdate({ chain, address, price: now }, token.symbol);
           });
         } catch {
           // 网络失败静默跳过，下轮再试

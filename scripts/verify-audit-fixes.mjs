@@ -83,12 +83,29 @@ await test('API 成本聚合函数与页面桥接口径一致', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { balance: 40, average: 1.02 });
 });
 
-await test('持仓暴涨按 GMGN token_stat 的 p/p5m 计算真实 5 分钟涨幅', () => {
-  const fn = extractFunction(content, 'holdingFiveMinuteChange');
-  assert.ok(Math.abs(evaluate([fn], "holdingFiveMinuteChange({ p: '1.2', p5m: '1' })") - 20) < 1e-9);
-  assert.equal(evaluate([fn], "holdingFiveMinuteChange({ price: '2', price_5m: '4' })"), -50);
-  assert.ok(Math.abs(evaluate([fn], "holdingFiveMinuteChange({ pct5m: null, price: '1.1', price5m: '1' })") - 10) < 1e-9);
-  assert.equal(evaluate([fn], "holdingFiveMinuteChange({ pcp5m: '12.5', p: '9', p5m: '1' })"), 12.5);
+await test('持仓暴涨只按现价相对实际购买成本计算', () => {
+  const fn = extractFunction(content, 'holdingCostChange');
+  assert.ok(Math.abs(evaluate([fn], "holdingCostChange('1.2', '1')") - 20) < 1e-9);
+  assert.equal(evaluate([fn], "holdingCostChange('2', '4')"), -50);
+  assert.equal(Number.isNaN(evaluate([fn], "holdingCostChange('2', '0')")), true);
+  assert.equal(Number.isNaN(evaluate([fn], "holdingCostChange('2', null)")), true);
+  const handler = extractFunction(content, 'handleHoldingPriceUpdate');
+  assert.ok(handler.includes('holdingCostChange(price, meta?.cost)'));
+  assert.ok(!handler.includes('price5m'));
+});
+
+await test('购买成本实质变化会重置提醒基准，微小数值抖动不会', () => {
+  const fn = extractFunction(content, 'holdingCostMateriallyChanged');
+  assert.equal(evaluate([fn], 'holdingCostMateriallyChanged(0, 1)'), true);
+  assert.equal(evaluate([fn], 'holdingCostMateriallyChanged(1, 1.0005)'), false);
+  assert.equal(evaluate([fn], 'holdingCostMateriallyChanged(1, 1.002)'), true);
+  assert.equal(evaluate([fn], 'holdingCostMateriallyChanged(1, 0)'), false);
+  const put = extractFunction(content, 'putHolding');
+  assert.ok(put.includes('holdingAlertedAt.delete(key)'));
+  assert.ok(put.includes('holdingAlertLevel.delete(key)'));
+  const rebuild = extractFunction(content, 'rebuildHoldingWatch');
+  assert.ok(rebuild.includes('holdingCostMateriallyChanged(old.cost, item.cost)'));
+  assert.ok(rebuild.includes('if (next.has(key)) continue'));
 });
 
 await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒', () => {
@@ -108,7 +125,7 @@ await test('推送历史清洗危险字段、跨标签去重并限制为 100 条
     extractFunction(background, 'mergeNotificationHistory'),
   ];
   const sanitized = evaluate(functions, `normalizeNotificationHistoryItem({
-    id: 'safe-id', at: 1000, tag: '持仓暴涨\\u0000', symbol: 'TEST', label: '5分钟涨幅',
+    id: 'safe-id', at: 1000, tag: '持仓暴涨\\u0000', symbol: 'TEST', label: '较购买成本',
     value: '+25%', dir: 'sideways', href: 'javascript:alert(1)'
   })`);
   assert.equal(sanitized.tag, '持仓暴涨');
@@ -116,8 +133,8 @@ await test('推送历史清洗危险字段、跨标签去重并限制为 100 条
   assert.equal(sanitized.href, '');
 
   const merged = evaluate(functions, `mergeNotificationHistory([
-    { id: 'old', at: 1000, tag: '持仓暴涨', symbol: 'TEST', label: '5分钟涨幅', value: '+25%', dir: 'up', href: '/sol/token/Abc123' }
-  ], { id: 'new', at: 2000, tag: '持仓暴涨', symbol: 'TEST', label: '5分钟涨幅', value: '+25%', dir: 'up', href: '/sol/token/Abc123' })`, {
+    { id: 'old', at: 1000, tag: '持仓暴涨', symbol: 'TEST', label: '较购买成本', value: '+25%', dir: 'up', href: '/sol/token/Abc123' }
+  ], { id: 'new', at: 2000, tag: '持仓暴涨', symbol: 'TEST', label: '较购买成本', value: '+25%', dir: 'up', href: '/sol/token/Abc123' })`, {
     NOTIFICATION_HISTORY_MAX: 100,
   });
   assert.equal(merged.length, 1);
@@ -316,8 +333,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.7.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.7.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.8.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.8.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

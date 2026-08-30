@@ -99,13 +99,13 @@
           <label class="switch-row">
             <span>
               <strong>持仓暴涨提醒</strong>
-              <small>跟随同一 GMGN 账号的 App「持仓价格提醒」开关，行情达到插件阈值时弹窗</small>
+              <small>跟随同一 GMGN 账号的 App「持仓价格提醒」开关，现价较实际平均成本达到阈值时弹窗</small>
               <small id="gmgn-holding-sync-status" class="sync-status">尚未同步 GMGN App 开关</small>
             </span>
             <input id="enable-holding-surge" type="checkbox" />
           </label>
           <label class="color-row" for="holding-surge-threshold">
-            <span>暴涨阈值（5 分钟）</span>
+            <span>暴涨阈值（较购买成本）</span>
             <select id="holding-surge-threshold">
               <option value="10">+10%</option>
               <option value="20">+20%</option>
