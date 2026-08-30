@@ -53,6 +53,7 @@ const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
+const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
 const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
 const markedEnableInput = document.querySelector('#enable-marked-holders');
 const flapEnableInput = document.querySelector('#enable-flap-tax');
@@ -113,6 +114,23 @@ function setStatus(message, type = '') {
   status.className = type;
 }
 
+function renderGmgnHoldingSyncState(state) {
+  if (!state?.synced) {
+    gmgnHoldingSyncStatus.textContent = state?.reason === 'login-required'
+      ? '未同步：请先在 GMGN 网页登录同一账号'
+      : '暂未同步；读取失败时沿用插件开关，不会误关提醒';
+    gmgnHoldingSyncStatus.className = 'sync-status is-warn';
+    return;
+  }
+  const labels = { sol: 'SOL', bsc: 'BSC', base: 'Base' };
+  const enabled = (Array.isArray(state.enabledChains) ? state.enabledChains : [])
+    .map((chain) => labels[chain] || chain).join('、');
+  gmgnHoldingSyncStatus.textContent = enabled
+    ? `GMGN App 开关已同步：${enabled} 已开启`
+    : 'GMGN App 开关已同步：持仓价格提醒未开启';
+  gmgnHoldingSyncStatus.className = 'sync-status is-ok';
+}
+
 function parseDevList(text) {
   const entries = new Map();
   const errors = [];
@@ -165,6 +183,16 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
     Array.isArray(stored.markedHolders) ? stored.markedHolders : DEFAULTS.markedHolders);
   const count = Array.isArray(stored.watchedDevs) ? stored.watchedDevs.length : 0;
   setStatus(`已配置 ${count} 个重点 Dev`);
+});
+
+chrome.storage.local.get({ gmgnHoldingSignalSyncState: null }, (stored) => {
+  renderGmgnHoldingSyncState(stored.gmgnHoldingSignalSyncState);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.gmgnHoldingSignalSyncState) {
+    renderGmgnHoldingSyncState(changes.gmgnHoldingSignalSyncState.newValue);
+  }
 });
 
 saveButton.addEventListener('click', async () => {

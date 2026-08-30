@@ -146,8 +146,8 @@ footer .sp{flex:1}
   <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
   <p class="sub">所有名单、配置、登录令牌只存你浏览器本地，代码开源。</p>
   <div class="dl">
-      <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.3.exe" download>下载安装器 (.exe)</a>
-      <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.3.zip" download>zip 手动安装</a>
+      <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.4.exe" download>下载安装器 (.exe)</a>
+      <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.4.zip" download>zip 手动安装</a>
     <span class="ver" id="ver">最新版本 <b>加载中…</b></span>
   </div>
   <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
@@ -192,7 +192,7 @@ footer .sp{flex:1}
       <ul>
         <li>战壕、搜索、追踪里的每个币旁标 <b>👤N</b>：几个被标注的人正持有它，悬停看人名和金额</li>
         <li>默认人物由 985 服务器用 <b>GMGN 官方 API 全量采集</b>；你自己添加的人只在本机直查 GMGN，不上传公共名单</li>
-        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人只对你显示</b>，持仓由服务器代为采集</li>
+        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人只对你显示</b>，由插件在 GMGN 站内查询</li>
         <li>$30 以下灰尘仓不算持有，不会满屏误标</li>
       </ul>
     </div>
@@ -238,7 +238,7 @@ footer .sp{flex:1}
         <li><b>屏蔽某个币</b>：币名旁长按 🚫 一秒，这个币的全部推送从追踪里消失，随时恢复</li>
         <li><b>重点 Dev 高亮</b>：自己维护 Dev 名单，这些 Dev 发的币在战壕里带醒目边框；每张战壕卡常显 Dev 战绩（迁移数 / 发币数 / 峰值市值）</li>
         <li><b>喊单黑名单</b>：一键屏蔽喊单人；新宣言画面正中大卡片弹出</li>
-        <li><b>持仓暴涨提醒</b>：持仓币短时急涨弹 🚀 大卡片，阈值与冷却可配；价格提醒也接管为大卡片，涨绿跌红</li>
+        <li><b>持仓暴涨提醒</b>：同步同一账号的 GMGN App 持仓价格提醒开关，持仓币短时急涨弹 🚀 大卡片，阈值与冷却可配</li>
         <li><b>Flap 税收徽章</b>：Flap 币显示税率与分红去向（🪙BNB | 💎→GMEB），数据浏览器直读链上，点徽章跳官方税收详情页</li>
       </ul>
     </div>
@@ -281,7 +281,7 @@ footer .sp{flex:1}
   <div class="priv rv">
     <div><b>配置存哪</b><span>名单、开关、登录令牌全部在浏览器本地 chrome.storage，不上传任何服务器。</span></div>
     <div><b>fomo 令牌</b><span>只从 fomo.family 页面读取，只发给 fomo 官方 API 与 privy 官方续期接口。</span></div>
-    <div><b>行情数据</b><span>走 GMGN 公开接口与 985monitor 公开数据，不带你的登录凭据。</span></div>
+    <div><b>GMGN 数据</b><span>行情流不复制登录态；读取持仓和 App 通知开关时，站点 Bearer 只发回 gmgn.ai，不写入扩展存储。</span></div>
     <div><b>翻译</b><span>浏览器内置本地模型，内容不出你的电脑。</span></div>
     <div><b>开源</b><span>代码全部公开：<a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub 仓库</a>，逐版本 CHANGELOG 与 <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私说明</a>。</span></div>
     <div><b>隐私边界</b><span>你添加的标注人物只保存在浏览器本地，由插件在 GMGN 站内查询；不会上传到 985 服务器共享名单。</span></div>

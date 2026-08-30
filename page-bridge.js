@@ -4,8 +4,9 @@
   if (window.__gdhPageBridgeStarted) return;
   window.__gdhPageBridgeStarted = true;
 
-  // GMGN App/Web 的「Holdings Price Alerts」都吃 token_stat 行情流。桥接层只透出
-  // 当前价、5 分钟前价格和链/地址，不复制登录态，也不新开第二条 WebSocket。
+  // 插件的持仓价格计算复用 GMGN 页面原生 token_stat 行情流。App 通知开关另由
+  // 账户配置接口同步；桥接层只透出当前价、5 分钟前价格和链/地址，不复制登录态，
+  // 也不新开第二条 WebSocket。
   const TOKEN_STAT_ATTRIBUTE = 'data-gdh-token-stat';
   const TOKEN_STAT_EVENT = 'gdh-token-stat';
   const nativeWebSocket = window.WebSocket;

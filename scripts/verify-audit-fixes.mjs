@@ -100,6 +100,24 @@ await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒',
   assert.deepEqual(JSON.parse(JSON.stringify(call('1', 5))), { nextLevel: 0, alert: false });
 });
 
+await test('持仓提醒读取 GMGN App 的逐链 holding_signal 开关', () => {
+  const functions = [
+    extractFunction(content, 'holdingSignalBoolean'),
+    extractFunction(content, 'parseGmgnHoldingSignalConfig'),
+  ];
+  const wrapped = evaluate(functions, `parseGmgnHoldingSignalConfig({ code: 0, data: [
+    { push_chain: 'sol', push_switch_dict: { holding_signal: true, hot_token: false } },
+    { push_chain: 'bsc', push_switch_dict: { holding_signal: 0 } },
+    { push_chain: 'base', push_switch_dict: { holding_signal: '1' } }
+  ] })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(wrapped)), { sol: true, bsc: false, base: true });
+  const direct = evaluate(functions, `parseGmgnHoldingSignalConfig([
+    { push_chain: 'sol', push_switch_dict: { holding_signal: 'false' } }
+  ])`);
+  assert.deepEqual(JSON.parse(JSON.stringify(direct)), { sol: false });
+  assert.equal(evaluate(functions, "parseGmgnHoldingSignalConfig({ data: [{ chain: 'sol', enabled: true }] })"), null);
+});
+
 await test('主世界在页面 WebSocket 创建前桥接 token_stat 且不新开连接', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const mainBridge = manifest.content_scripts.find((item) => item.world === 'MAIN');
@@ -250,8 +268,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.3.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.3.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.4.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.4.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

@@ -3992,6 +3992,13 @@ ${flapTooltipText(info)}
   const HOLDING_WATCH_PER_CHAIN_MAX = 100;
   const HOLDING_POLL_MS = 30000;
   const HOLDING_API_TTL_MS = 30000;
+  // 官方 App 的账户级通知配置：POST /api/v1/notification/user_config_list，
+  // 每条链返回 push_switch_dict.holding_signal。这里只复用开关；移动端消息本身
+  // 走 JPush/FCM 设备令牌，浏览器无法直接订阅，所以触发仍使用页面原生行情流。
+  const GMGN_HOLDING_SIGNAL_CONFIG_URL = 'https://gmgn.ai/api/v1/notification/user_config_list';
+  const GMGN_HOLDING_SIGNAL_CHAINS = 'sol,bsc,base';
+  const GMGN_HOLDING_SIGNAL_SYNC_MS = 5 * 60 * 1000;
+  const GMGN_HOLDING_SIGNAL_RETRY_MS = 60 * 1000;
   /** 同一代币两次播报的最小间隔，单位分钟，可在配置页改（默认 1 小时）。 */
   function holdingCooldownMs() {
     const minutes = Number(settings.holdingSurgeCooldown);
@@ -4008,6 +4015,130 @@ ${flapTooltipText(info)}
   const holdingApiInflight = new Map();
   let holdingPollTimer = 0;
   let holdingPolling = false;
+  let gmgnHoldingSignalConfig = { loaded: false, byChain: new Map(), at: 0 };
+  let gmgnHoldingSignalAttemptAt = 0;
+  let gmgnHoldingSignalInflight = null;
+
+  function holdingSignalBoolean(value) {
+    if (typeof value === 'boolean') return value;
+    if (value === 1 || value === '1' || value === 'true' || value === 'on') return true;
+    if (value === 0 || value === '0' || value === 'false' || value === 'off') return false;
+    return null;
+  }
+
+  /**
+   * App 的 Network 层会把 data 解包后交给业务代码；浏览器 fetch 拿到的则通常仍有
+   * { code, data } 外壳。两种都只接受已验证的 push_chain/push_switch_dict 契约，
+   * 不用模糊递归去“猜”某个布尔值。
+   */
+  function parseGmgnHoldingSignalConfig(payload) {
+    const candidates = [payload, payload?.data, payload?.result];
+    const rows = candidates.find((value) => Array.isArray(value));
+    if (!rows) return null;
+    const byChain = {};
+    for (const row of rows) {
+      const chain = String(row?.push_chain || '').trim().toLowerCase();
+      const dict = row?.push_switch_dict;
+      if (!chain || !dict || typeof dict !== 'object'
+        || !Object.prototype.hasOwnProperty.call(dict, 'holding_signal')) continue;
+      const enabled = holdingSignalBoolean(dict.holding_signal);
+      if (enabled !== null) byChain[chain] = enabled;
+    }
+    return Object.keys(byChain).length ? byChain : null;
+  }
+
+  function holdingSignalAllowed(chain) {
+    if (!gmgnHoldingSignalConfig.loaded) return true;
+    return gmgnHoldingSignalConfig.byChain.get(String(chain || '').toLowerCase()) === true;
+  }
+
+  function saveGmgnHoldingSignalSyncState(state) {
+    try {
+      chrome.storage.local.set({ gmgnHoldingSignalSyncState: state });
+    } catch {
+      // 扩展上下文失效不影响提醒主链路
+    }
+  }
+
+  async function syncGmgnHoldingSignalConfig(force = false) {
+    if (gmgnHoldingSignalInflight) return gmgnHoldingSignalInflight;
+    if (settings.enableHoldingSurge === false || !isTabVisibleForHolding()) return null;
+    const now = Date.now();
+    const waitMs = gmgnHoldingSignalConfig.loaded
+      ? GMGN_HOLDING_SIGNAL_SYNC_MS : GMGN_HOLDING_SIGNAL_RETRY_MS;
+    if (!force && now - gmgnHoldingSignalAttemptAt < waitMs) return null;
+    gmgnHoldingSignalAttemptAt = now;
+    const token = gmgnAccessToken();
+    if (!token) {
+      saveGmgnHoldingSignalSyncState({
+        synced: false,
+        reason: 'login-required',
+        attemptedAt: now,
+        lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
+      });
+      return null;
+    }
+
+    gmgnHoldingSignalInflight = (async () => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 10000);
+      try {
+        const query = gmgnApiQuery() || DEV_ATH_QS;
+        const response = await fetch(`${GMGN_HOLDING_SIGNAL_CONFIG_URL}?${query}`, {
+          method: 'POST',
+          credentials: 'include',
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ push_chains: GMGN_HOLDING_SIGNAL_CHAINS }),
+        });
+        const body = await response.json().catch(() => null);
+        const parsed = response.ok && (body?.code === undefined || body?.code === 0)
+          ? parseGmgnHoldingSignalConfig(body) : null;
+        if (!parsed) {
+          saveGmgnHoldingSignalSyncState({
+            synced: false,
+            reason: response.status === 401 || response.status === 403 ? 'login-required' : 'unavailable',
+            attemptedAt: Date.now(),
+            lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
+          });
+          return null;
+        }
+
+        const previous = gmgnHoldingSignalConfig.byChain;
+        const next = new Map(Object.entries(parsed));
+        gmgnHoldingSignalConfig = { loaded: true, byChain: next, at: Date.now() };
+        // 开关发生变化时重建该链的价格档位，避免刚打开提醒就沿用旧档位误报。
+        for (const key of holdingAlertLevel.keys()) {
+          const chain = key.split(':', 1)[0];
+          if (previous.get(chain) !== next.get(chain)) holdingAlertLevel.delete(key);
+        }
+        saveGmgnHoldingSignalSyncState({
+          synced: true,
+          source: 'gmgn-app',
+          enabledChains: [...next].filter(([, enabled]) => enabled).map(([chain]) => chain),
+          disabledChains: [...next].filter(([, enabled]) => !enabled).map(([chain]) => chain),
+          attemptedAt: gmgnHoldingSignalConfig.at,
+          lastSyncedAt: gmgnHoldingSignalConfig.at,
+        });
+        return parsed;
+      } catch {
+        saveGmgnHoldingSignalSyncState({
+          synced: false,
+          reason: 'unavailable',
+          attemptedAt: Date.now(),
+          lastSyncedAt: gmgnHoldingSignalConfig.at || 0,
+        });
+        return null;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    })().finally(() => { gmgnHoldingSignalInflight = null; });
+    return gmgnHoldingSignalInflight;
+  }
 
   function holdingKey(chain, address) {
     const normalizedChain = String(chain || '').trim().toLowerCase();
@@ -4216,6 +4347,7 @@ ${flapTooltipText(info)}
   function handleHoldingPriceUpdate(update, fallbackSymbol = '') {
     if (settings.enableHoldingSurge === false || !isTabVisibleForHolding()) return;
     const chain = String(update?.chain || '').trim().toLowerCase();
+    if (!holdingSignalAllowed(chain)) return;
     const address = normalizeWalletAddress(String(update?.address || ''));
     const key = holdingKey(chain, address);
     const meta = holdingWatchMap.get(key);
@@ -4260,7 +4392,8 @@ ${flapTooltipText(info)}
     if (holdingPolling) return;
     if (settings.enableHoldingSurge === false) return;
     if (!isTabVisibleForHolding()) return;
-    const entries = [...holdingWatchMap.values()];
+    const entries = [...holdingWatchMap.values()]
+      .filter((item) => holdingSignalAllowed(item.chain));
     if (!entries.length) return;
 
     holdingPolling = true;
@@ -4321,6 +4454,7 @@ ${flapTooltipText(info)}
       return;
     }
     if (!isTabVisibleForHolding()) return;
+    syncGmgnHoldingSignalConfig().catch(() => {});
     collectHoldingRows();
     syncHoldingWatchFromApi().catch(() => {});
     startHoldingPoll();
@@ -5873,6 +6007,7 @@ ${flapTooltipText(info)}
       }
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
+      if (key === 'gmgnHoldingSignalSyncState') continue; // 只读诊断状态，不是设置项
       // 翻译开关切换：混排卡整体重建，译文才会随开关出现/移除
       if (key === 'fomoTranslate') {
         settings[key] = change.newValue;

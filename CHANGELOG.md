@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.4 - 2026-08-31
+
+- **持仓暴涨提醒开始复用 GMGN App 的账户通知配置**。
+  - 从官方 APK 的 Hermes 代码确认：App 通过 `POST /api/v1/notification/user_config_list` 读取逐链配置，持仓价格提醒对应 `push_switch_dict.holding_signal`；插件现在用 GMGN 网页的同一账户登录态读取 SOL / BSC / Base 开关，成功同步后按链决定是否提醒。
+  - 设置页会显示同步状态与已开启链。配置接口暂时不可用或网页未登录时保留原插件开关，不把一次网络失败误判为“用户关闭提醒”。
+  - 移动端实际消息通过 JPush/FCM 设备令牌下发，Chrome 扩展不能直接订阅 Android/iOS 的设备推送；因此本版复用的是**同一账户开关**，触发仍由 v0.46.3 已验证的 GMGN `token_stat` 行情流和 REST 兜底完成，不冒充“直接接收 App 推送事件”。
+- 通知配置解析只接受 App 已验证的 `push_chain / push_switch_dict.holding_signal` 契约，不递归猜字段；登录令牌只在 `gmgn.ai` 页面内读取、只发回 GMGN 自己的通知配置接口、不写入扩展存储。
+- 回归增至 19 项；新增覆盖 `{code,data}` 与 App 解包数组两种响应、逐链 true/false、数字/字符串布尔兼容和无效结构拒绝。
+
 ## 0.46.3 - 2026-08-31
 
 - **持仓暴涨提醒改为直接复用 GMGN 原生 `token_stat` 行情流**。
