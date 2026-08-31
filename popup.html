@@ -25,7 +25,7 @@
           <li><b>追踪流屏蔽某个币</b>：鼠标移到推送卡上，币名旁出现 🚫，<b>长按一秒</b>即屏蔽（防误触）。点 🔔 或在 ★ 面板里恢复。</li>
           <li><b>特别关注</b>：推送卡/钱包行上悬停出现 ☆，点一下加入。追踪面板头部 <b>★N</b> 可管理全部关注与已屏蔽的币。</li>
           <li><b>fomo 浮窗</b>：代币页右下角的 <b>fomo</b> 按钮，看该币在 fomo 上的持仓者与观点。<b>需要你自己的 fomo 登录态</b>，浮窗里有四步引导，之后会自动续期。</li>
-          <li><b>持仓暴涨提醒</b>：需要先打开一次 GMGN 持仓面板，让插件读到持仓清单；成本收益达标且最近 5 分钟仍在上涨才推送。切链后再开一次即可纳入该链。</li>
+          <li><b>持仓暴涨提醒</b>：需要先打开一次 GMGN 持仓面板；成本收益达标、最近 5 分钟上涨且当前余额仍大于 0 才推送。切链后再开一次即可纳入该链。</li>
         </ul>
         <a class="gdh-howto-link" href="https://github.com/0xuezhang985/985gmgn-helper#功能" target="_blank" rel="noreferrer">完整功能说明 →</a>
       </section>
@@ -99,7 +99,7 @@
           <label class="switch-row">
             <span>
               <strong>持仓暴涨提醒</strong>
-              <small>跟随同一 GMGN 账号的 App「持仓价格提醒」开关；较实际平均成本达到阈值且最近 5 分钟仍在上涨时才弹窗</small>
+              <small>跟随同一 GMGN 账号的 App 开关；成本收益达标、最近 5 分钟上涨且当前仍有持仓时才弹窗</small>
               <small id="gmgn-holding-sync-status" class="sync-status">尚未同步 GMGN App 开关</small>
             </span>
             <input id="enable-holding-surge" type="checkbox" />

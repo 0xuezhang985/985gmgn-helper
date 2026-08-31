@@ -4269,6 +4269,7 @@ ${flapTooltipText(info)}
   const holdingPendingWrites = new Map();
   const holdingApiSyncedAt = new Map();
   const holdingApiInflight = new Map();
+  const holdingAlertConfirming = new Set();
   let holdingPollTimer = 0;
   let holdingPolling = false;
   let gmgnHoldingSignalConfig = { loaded: false, byChain: new Map(), at: 0 };
@@ -4543,57 +4544,71 @@ ${flapTooltipText(info)}
     return null;
   }
 
-  async function syncHoldingWatchFromApi() {
+  async function syncHoldingWatchFromApi(targetChain = '', force = false, expectedKey = '') {
     if (!isTabVisibleForHolding()) return;
-    const chain = currentChain();
-    if (!chain || holdingApiInflight.has(chain)) return;
-    if (Date.now() - (holdingApiSyncedAt.get(chain) || 0) < HOLDING_API_TTL_MS) return;
+    const chain = String(targetChain || currentChain() || '').trim().toLowerCase();
+    if (!chain) return { ok: false, reason: 'missing-chain', present: false };
+    if (holdingApiInflight.has(chain)) {
+      const inflight = await holdingApiInflight.get(chain);
+      return { ...inflight, present: expectedKey ? inflight?.seen?.has(expectedKey) === true : null };
+    }
+    if (!force && Date.now() - (holdingApiSyncedAt.get(chain) || 0) < HOLDING_API_TTL_MS) {
+      return { ok: true, reason: 'fresh', present: expectedKey ? holdingWatchMap.has(expectedKey) : null };
+    }
     const url = latestHoldingApiUrl(chain);
     const token = gmgnAccessToken();
-    if (!url || !token) return;
+    if (!url || !token) return { ok: false, reason: !url ? 'missing-url' : 'missing-token', present: false };
     holdingApiSyncedAt.set(chain, Date.now());
     const task = (async () => {
-      const response = await fetch(url.toString(), {
-        credentials: 'include',
-        headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' },
-      });
-      const body = await response.json().catch(() => null);
-      const rows = body?.data?.holdings;
-      if (!response.ok || body?.code !== 0 || !Array.isArray(rows)) return;
-      const grouped = new Map();
-      for (const row of rows) {
-        const address = normalizeWalletAddress(String(row?.token_address || row?.token_basic_stats?.address || ''));
-        if (!address) continue;
-        const { balance, average } = holdingCostFromApi(row);
-        if (!(balance > 0)) continue;
-        const key = holdingKey(chain, address);
-        const hit = grouped.get(key) || { chain, address, symbol: '', weightedCost: 0, balance: 0 };
-        hit.symbol = hit.symbol || String(row?.token_basic_stats?.symbol || row?.symbol || '').slice(0, 24);
-        hit.balance += balance;
-        if (average > 0) hit.weightedCost += average * balance;
-        grouped.set(key, hit);
-      }
-      const seen = new Set();
-      for (const hit of grouped.values()) {
-        const cost = hit.balance > 0 && hit.weightedCost > 0 ? hit.weightedCost / hit.balance : 0;
-        putHolding({ chain, address: hit.address, symbol: hit.symbol, cost, at: Date.now() });
-        seen.add(holdingKey(chain, hit.address));
-      }
-      // GMGN 当前把 limit 硬顶在 100。少于 100 才能证明响应完整、允许删除已清仓；
-      // 刚好 100 时只合并，绝不把服务端截断误判成卖出。
-      const authoritative = rows.length < 100;
-      if (authoritative) {
-        for (const [key, item] of [...holdingWatchMap]) {
-          if (item.chain !== chain || seen.has(key)) continue;
-          holdingWatchMap.delete(key);
-          holdingAlertedAt.delete(key);
-          holdingAlertLevel.delete(key);
+      try {
+        const response = await fetch(url.toString(), {
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' },
+        });
+        const body = await response.json().catch(() => null);
+        const rows = body?.data?.holdings;
+        if (!response.ok || body?.code !== 0 || !Array.isArray(rows)) {
+          return { ok: false, reason: 'bad-response', seen: new Set(), authoritative: false };
         }
+        const grouped = new Map();
+        for (const row of rows) {
+          const address = normalizeWalletAddress(String(row?.token_address || row?.token_basic_stats?.address || ''));
+          if (!address) continue;
+          const { balance, average } = holdingCostFromApi(row);
+          if (!(balance > 0)) continue;
+          const key = holdingKey(chain, address);
+          const hit = grouped.get(key) || { chain, address, symbol: '', weightedCost: 0, balance: 0 };
+          hit.symbol = hit.symbol || String(row?.token_basic_stats?.symbol || row?.symbol || '').slice(0, 24);
+          hit.balance += balance;
+          if (average > 0) hit.weightedCost += average * balance;
+          grouped.set(key, hit);
+        }
+        const seen = new Set();
+        for (const hit of grouped.values()) {
+          const cost = hit.balance > 0 && hit.weightedCost > 0 ? hit.weightedCost / hit.balance : 0;
+          putHolding({ chain, address: hit.address, symbol: hit.symbol, cost, at: Date.now() });
+          seen.add(holdingKey(chain, hit.address));
+        }
+        // GMGN 当前把 limit 硬顶在 100。少于 100 才能证明响应完整、允许删除已清仓；
+        // 刚好 100 时只合并，绝不把服务端截断误判成卖出。
+        const authoritative = rows.length < 100;
+        if (authoritative) {
+          for (const [key, item] of [...holdingWatchMap]) {
+            if (item.chain !== chain || seen.has(key)) continue;
+            holdingWatchMap.delete(key);
+            holdingAlertedAt.delete(key);
+            holdingAlertLevel.delete(key);
+          }
+        }
+        scheduleHoldingSave(chain, authoritative);
+        return { ok: true, seen, authoritative };
+      } catch {
+        return { ok: false, reason: 'fetch-failed', seen: new Set(), authoritative: false };
       }
-      scheduleHoldingSave(chain, authoritative);
-    })().catch(() => {}).finally(() => holdingApiInflight.delete(chain));
+    })().finally(() => holdingApiInflight.delete(chain));
     holdingApiInflight.set(chain, task);
-    await task;
+    const result = await task;
+    return { ...result, present: expectedKey ? result.seen?.has(expectedKey) === true : null };
   }
 
   /** 从持仓面板行收集当前链的持仓，合并进缓存清单。 */
@@ -4642,7 +4657,18 @@ ${flapTooltipText(info)}
     return { nextLevel: level, alert: true };
   }
 
-  function handleHoldingPriceUpdate(update, fallbackSymbol = '') {
+  async function confirmHoldingStillOwned(chain, key) {
+    if (!key || holdingAlertConfirming.has(key)) return false;
+    holdingAlertConfirming.add(key);
+    try {
+      const result = await syncHoldingWatchFromApi(chain, true, key);
+      return result?.ok === true && result.present === true && holdingWatchMap.has(key);
+    } finally {
+      holdingAlertConfirming.delete(key);
+    }
+  }
+
+  async function handleHoldingPriceUpdate(update, fallbackSymbol = '') {
     if (settings.enableHoldingSurge === false || !isTabVisibleForHolding()) return;
     const chain = String(update?.chain || '').trim().toLowerCase();
     if (!holdingSignalAllowed(chain)) return;
@@ -4662,17 +4688,33 @@ ${flapTooltipText(info)}
       Date.now() - last >= holdingCooldownMs(),
       pct5m > 0,
     );
-    holdingAlertLevel.set(key, decision.nextLevel);
-    if (!decision.alert) return;
+    if (!decision.alert) {
+      holdingAlertLevel.set(key, decision.nextLevel);
+      return;
+    }
+    // 行情只能证明价格变化，不能证明仓位还在。真正弹窗前必须强制刷新 GMGN
+    // 持仓接口，并确认这一 CA 的合并余额仍大于 0；接口失败时宁可漏报也不误报。
+    if (!(await confirmHoldingStillOwned(chain, key))) return;
+    const confirmedMeta = holdingWatchMap.get(key);
+    const confirmedPct = holdingCostChange(price, confirmedMeta?.cost);
+    const confirmedDecision = holdingSurgeDecision(
+      holdingAlertLevel.has(key) ? holdingAlertLevel.get(key) : null,
+      confirmedPct,
+      threshold,
+      Date.now() - (holdingAlertedAt.get(key) || 0) >= holdingCooldownMs(),
+      pct5m > 0,
+    );
+    holdingAlertLevel.set(key, confirmedDecision.nextLevel);
+    if (!confirmedDecision.alert || !confirmedMeta) return;
     holdingAlertedAt.set(key, Date.now());
     showRemindCard({
       href: `/${chain}/token/${address}`,
       dir: 'up',
       bell: '🚀',
       tagText: '持仓暴涨',
-      symbol: meta.symbol || fallbackSymbol || '持仓代币',
+      symbol: confirmedMeta.symbol || fallbackSymbol || '持仓代币',
       label: '成本 / 5分钟',
-      value: `成本 ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% · 5m +${pct5m.toFixed(1)}%  ${formatPriceShort(price)}`,
+      value: `成本 ${confirmedPct >= 0 ? '+' : ''}${confirmedPct.toFixed(1)}% · 5m +${pct5m.toFixed(1)}%  ${formatPriceShort(price)}`,
       raw: '',
     });
   }
@@ -4745,8 +4787,10 @@ ${flapTooltipText(info)}
 
   function startHoldingPoll() {
     if (holdingPollTimer) return;
-    holdingPollTimer = window.setInterval(() => {
+    holdingPollTimer = window.setInterval(async () => {
       syncGmgnHoldingSignalConfig().catch(() => {});
+      // 面板关闭后也继续对账当前链，及时把已清仓代币从持仓缓存移除。
+      await syncHoldingWatchFromApi().catch(() => {});
       pollHoldingSurge().catch(() => {});
     }, HOLDING_POLL_MS);
   }

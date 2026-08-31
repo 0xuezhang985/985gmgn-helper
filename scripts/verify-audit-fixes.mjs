@@ -127,6 +127,33 @@ await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒',
   assert.deepEqual(JSON.parse(JSON.stringify(call('1', 5))), { nextLevel: 0, alert: false });
 });
 
+await test('持仓暴涨候选必须经当前正余额确认，清仓或接口失败不提醒', async () => {
+  const confirm = extractFunction(content, 'confirmHoldingStillOwned');
+  const run = (apiResult, stillCached = true) => evaluate(
+    [confirm],
+    "confirmHoldingStillOwned('bsc', 'bsc:0xabc')",
+    {
+      holdingAlertConfirming: new Set(),
+      syncHoldingWatchFromApi: async () => apiResult,
+      holdingWatchMap: new Map(stillCached ? [['bsc:0xabc', { cost: 1 }]] : []),
+    },
+  );
+  assert.equal(await run({ ok: true, present: true }), true);
+  assert.equal(await run({ ok: true, present: false }), false);
+  assert.equal(await run({ ok: false, present: false }), false);
+  assert.equal(await run({ ok: true, present: true }, false), false);
+
+  const handler = extractFunction(content, 'handleHoldingPriceUpdate');
+  assert.ok(handler.startsWith('async function'));
+  assert.ok(handler.includes('await confirmHoldingStillOwned(chain, key)'));
+  assert.ok(handler.indexOf('await confirmHoldingStillOwned') < handler.indexOf('showRemindCard'));
+  const sync = extractFunction(content, 'syncHoldingWatchFromApi');
+  assert.ok(sync.includes('if (!(balance > 0)) continue'));
+  assert.ok(sync.includes('present: expectedKey ? result.seen?.has(expectedKey) === true : null'));
+  const start = extractFunction(content, 'startHoldingPoll');
+  assert.ok(start.includes('await syncHoldingWatchFromApi()'));
+});
+
 await test('FOMO 退款/失败事件不再被未知类型过滤', () => {
   const fn = extractFunction(background, 'slimFomoEvent');
   const raw = {
@@ -495,8 +522,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.11.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.11.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.12.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.12.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
