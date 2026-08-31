@@ -268,7 +268,7 @@ await test('Pump 成交按已验证字段瘦身并映射到 GMGN 链', () => {
       wallet: 'BY58Z7N5Adarkx5ed78AzKvR7Kxrq795aa1boZsYyVBT', username: 'QuantJB',
       side: 'buy', mint: 'HbF1o9Mgwibv9JcQzEVUs52d9z1ibYQpdx8bY8Ntpump', symbol: 'DUVAL',
       amountUsd: 25, marketCapUsd: 7354, chainName: 'Solana', avatar: '/pump-avatars/a.png',
-      image: 'https://ipfs.io/ipfs/token', tradeTime: '2026-08-31T00:00:01Z',
+      image: 'https://ipfs.io/ipfs/token', tradeTime: '2026-08-31T00:00:01Z', tx: 'TxSignature1',
     } },
   };
   const result = evaluate(functions, `slimPumpEvent(${JSON.stringify(event)})`, { Date, encodeURIComponent });
@@ -278,7 +278,79 @@ await test('Pump 成交按已验证字段瘦身并映射到 GMGN 链', () => {
   assert.equal(result.usd, 25);
   assert.equal(result.avatar, 'https://www.985monitor.xyz/pump-avatars/a.png');
   assert.equal(result.pumpWallet, event.content.pumpTrade.wallet);
+  assert.equal(result.tx, 'TxSignature1');
   assert.equal(evaluate(functions, `slimPumpEvent(${JSON.stringify({ ...event, eventType: 'NEW_TWEET' })})`, { Date, encodeURIComponent }), null);
+});
+
+await test('FOMO 与 Pump 同一链上交易只保留一个语义身份', () => {
+  const functions = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'trackingFeedNormalizedTx'),
+    extractFunction(content, 'trackingFeedEventIdentity'),
+  ];
+  const tx = '0xABCDEF1234';
+  const fomo = { key: 'fomo:a', source: 'fomo', type: 'buy', tx };
+  const pump = { key: 'pump:b', source: 'pump', type: 'buy', tx: tx.toLowerCase() };
+  const fomoId = evaluate(functions, `trackingFeedEventIdentity(${JSON.stringify(fomo)})`);
+  const pumpId = evaluate(functions, `trackingFeedEventIdentity(${JSON.stringify(pump)})`);
+  assert.equal(fomoId, pumpId);
+  assert.equal(fomoId, 'tx:0xabcdef1234');
+});
+
+await test('SSE 重放同一交易即使换 key 也只通知一次', () => {
+  const functions = [
+    extractFunction(background, 'slimFomoEvent'),
+    extractFunction(background, 'trackingFeedComparableId'),
+    extractFunction(background, 'fomoSseIngest'),
+  ];
+  const raw = {
+    key: 'fomo:first', eventType: 'FOMO_BUY', ts: 1770000000000,
+    chainName: 'BSC', tokenAddress: '0x1111111111111111111111111111111111111111',
+    handle: 'alice', usd: 100, txHash: '0xABCDEF',
+  };
+  const state = { calls: 0 };
+  const result = evaluate(functions, `(() => {
+    fomoSseIngest(${JSON.stringify(raw)});
+    fomoSseIngest(${JSON.stringify({ ...raw, key: 'fomo:replayed' })});
+    return { calls: state.calls, length: fomoFeedCache.events.length, key: fomoFeedCache.events[0].key };
+  })()`, {
+    Date,
+    FOMO_FEED_TYPE: { FOMO_BUY: 'buy' },
+    FOMO_CHAIN_SLUG: { bsc: 'bsc' },
+    FOMO_FEED_KEEP: 150,
+    fomoFeedCache: { events: [], updatedAt: 0, fetchedAt: 0 },
+    state,
+    fomoSseNotifyTabs: () => { state.calls += 1; },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { calls: 1, length: 1, key: 'fomo:replayed' });
+});
+
+await test('插入事件会与 GMGN 原生追踪交易去重且不误伤观点事件', () => {
+  const functions = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'trackingFeedNormalizedTx'),
+    extractFunction(content, 'trackingFeedIsNativeDuplicate'),
+  ];
+  const exact = { source: 'pump', type: 'buy', tx: '0xABC' };
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify(exact)}, { tx: '0xabc' })`), true);
+
+  const fomo = { source: 'fomo', type: 'buy', addr: '0xABCDEF', chain: 'bsc', ts: 100000, usd: 100 };
+  const row = { addr: '0xabcdef', chain: 'bsc', side: 'buy', ts: 110000, usd: 103 };
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify(fomo)}, ${JSON.stringify(row)})`), true);
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify({ ...fomo, type: 'thesis' })}, ${JSON.stringify(row)})`), false);
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify({ ...fomo, usd: 130 })}, ${JSON.stringify(row)})`), false);
+
+  const pump = { source: 'pump', type: 'sell', addr: 'SolMint', chain: 'sol', ts: 100000, usd: 50, pumpWallet: 'Maker1' };
+  const pumpRow = { addr: 'SolMint', chain: 'sol', side: 'sell', ts: 101000, usd: 50, maker: 'Maker1' };
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify(pump)}, ${JSON.stringify(pumpRow)})`), true);
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify({ ...pump, pumpWallet: 'Maker2' })}, ${JSON.stringify(pumpRow)})`), false);
+});
+
+await test('页面桥透出原生交易指纹并在虚拟行回收时清掉旧值', () => {
+  for (const field of ['transaction_hash', 'amount_usd', 'data-gdh-track-tx', 'data-gdh-track-side', 'data-gdh-track-usd']) {
+    assert.ok(bridge.includes(field), `missing tracker field ${field}`);
+  }
+  assert.match(bridge, /'data-gdh-track-usd', 'data-gdh-track-ts',[\s\S]*element\.removeAttribute\(attr\)/);
 });
 
 await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', () => {
@@ -394,8 +466,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.9.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.9.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.10.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.10.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

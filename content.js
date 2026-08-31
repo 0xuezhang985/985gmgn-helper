@@ -5442,7 +5442,62 @@ ${flapTooltipText(info)}
     return true;
   }
 
-  function visibleTrackingFeedEvents() {
+  function trackingFeedNormalizedAddress(raw) {
+    const value = String(raw || '').trim();
+    return /^0x[a-fA-F0-9]+$/.test(value) ? value.toLowerCase() : value;
+  }
+
+  function trackingFeedNormalizedTx(raw) {
+    const value = String(raw || '').trim();
+    return value.startsWith('0x') ? value.toLowerCase() : value;
+  }
+
+  function trackingFeedEventIdentity(ev) {
+    const tx = trackingFeedNormalizedTx(ev?.tx);
+    if (tx) return `tx:${tx}`;
+    const source = String(ev?.source || 'fomo');
+    const addr = trackingFeedNormalizedAddress(ev?.addr);
+    const side = String(ev?.type || '');
+    const principal = trackingFeedNormalizedAddress(ev?.pumpWallet || ev?.handle);
+    const ts = Math.round((Number(ev?.ts) || 0) / 1000);
+    const usd = Math.round((Number(ev?.usd) || 0) * 100);
+    if (addr && side && principal && ts) return `event:${source}:${addr}:${side}:${principal}:${ts}:${usd}`;
+    return `key:${String(ev?.key || '')}`;
+  }
+
+  function nativeTrackingFeedRows(cards) {
+    return cards.map((card) => ({
+      tx: trackingFeedNormalizedTx(card.getAttribute('data-gdh-track-tx')),
+      addr: trackingFeedNormalizedAddress(card.getAttribute('data-gdh-track-addr')),
+      chain: String(card.getAttribute('data-gdh-track-chain') || '').trim().toLowerCase(),
+      side: String(card.getAttribute('data-gdh-track-side') || '').trim().toLowerCase(),
+      maker: trackingFeedNormalizedAddress(card.getAttribute('data-gdh-track-maker')),
+      ts: Number(card.getAttribute('data-gdh-track-ts')) || 0,
+      usd: Number(card.getAttribute('data-gdh-track-usd')) || 0,
+    })).filter((row) => row.tx || (row.addr && row.side && row.ts));
+  }
+
+  function trackingFeedIsNativeDuplicate(ev, row) {
+    const side = String(ev?.type || '').trim().toLowerCase();
+    if (side !== 'buy' && side !== 'sell') return false;
+    const tx = trackingFeedNormalizedTx(ev?.tx);
+    if (tx && row?.tx && tx === row.tx) return true;
+    const addr = trackingFeedNormalizedAddress(ev?.addr);
+    if (!addr || !row?.addr || addr !== row.addr || !row.side || side !== row.side) return false;
+    const chain = String(ev?.chain || '').trim().toLowerCase();
+    if (chain && row.chain && chain !== row.chain) return false;
+    const ts = Number(ev?.ts) || 0;
+    if (!ts || !row.ts || Math.abs(ts - row.ts) > 15000) return false;
+    if (ev?.source === 'pump') {
+      const wallet = trackingFeedNormalizedAddress(ev?.pumpWallet);
+      if (!wallet || !row.maker || wallet !== row.maker) return false;
+    }
+    const usd = Number(ev?.usd) || 0;
+    if (!usd || !row.usd) return false;
+    return Math.abs(usd - row.usd) <= Math.max(1, Math.max(usd, row.usd) * 0.05);
+  }
+
+  function visibleTrackingFeedEvents(nativeRows = []) {
     // 追踪侧栏本身是全链混合的，默认不按页面链过滤（实测某时段 88 条事件仅 3 条在当前链）
     const chain = settings.fomoFeedChainOnly === true ? currentChainSlug() : '';
     const out = [];
@@ -5459,7 +5514,13 @@ ${flapTooltipText(info)}
         out.push(ev);
       }
     }
-    return out.sort((a, b) => b.ts - a.ts).slice(0, FOMO_FEED_RENDER_CAP);
+    const seen = new Set();
+    return out.sort((a, b) => b.ts - a.ts).filter((ev) => {
+      const identity = trackingFeedEventIdentity(ev);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return !nativeRows.some((row) => trackingFeedIsNativeDuplicate(ev, row));
+    }).slice(0, FOMO_FEED_RENDER_CAP);
   }
 
   function pollFomoFeed() {
@@ -5930,8 +5991,8 @@ ${flapTooltipText(info)}
     if (settings.enableFomoFeed !== false && Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
     if (settings.enablePumpFeed !== false && Date.now() - pumpFeedLastPollAt > FOMO_FEED_POLL_MS) pollPumpFeed();
 
-    const events = visibleTrackingFeedEvents();
     const cards = trackerCards().filter((c) => c.isConnected);
+    const events = visibleTrackingFeedEvents(nativeTrackingFeedRows(cards));
     if (!events.length || !cards.length) {
       teardownFomoFeed();
       // 没有 fomo 卡要插，但被屏蔽的行仍要折叠——否则屏蔽完就是一排空白

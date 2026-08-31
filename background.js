@@ -749,6 +749,7 @@ function slimFomoEvent(raw) {
   const content = raw.content && typeof raw.content === 'object' ? raw.content : {};
   return {
     key: String(raw.key || '').slice(0, 120),
+    source: 'fomo',
     type,
     handle: String(raw.handle || '').toLowerCase().slice(0, 64),
     name: String(raw.userName || raw.handle || '').slice(0, 48),
@@ -762,6 +763,8 @@ function slimFomoEvent(raw) {
     img: String(raw.tokenImage || '').slice(0, 300),
     mc: Number(raw.marketCap) || 0,
     ts,
+    tx: String(raw.txHash || raw.transactionHash || raw.transaction_hash
+      || content.txHash || content.transactionHash || content.transaction_hash || '').trim().slice(0, 180),
   };
 }
 
@@ -874,6 +877,7 @@ function slimPumpEvent(raw) {
     img: pumpFeedHttpsUrl(trade.image),
     mc: Number(trade.marketCapUsd) || 0,
     ts,
+    tx: String(trade.tx || '').trim().slice(0, 180),
     pumpWallet: wallet.slice(0, 48),
     profileUrl: `https://pump.fun/profile/${encodeURIComponent(wallet)}`,
   };
@@ -950,6 +954,13 @@ const FOMO_SSE_URL = 'https://www.985monitor.xyz/api/events-stream';
 let fomoSseAbort = null;
 let fomoSseBackoff = 5000;
 
+function trackingFeedComparableId(ev) {
+  const tx = String(ev?.tx || '').trim();
+  if (tx) return `tx:${tx.startsWith('0x') ? tx.toLowerCase() : tx}`;
+  const key = String(ev?.key || '').trim();
+  return key ? `key:${key}` : '';
+}
+
 function fomoSseNotifyTabs() {
   try {
     chrome.tabs.query({ url: 'https://gmgn.ai/*' }, (tabs) => {
@@ -966,11 +977,15 @@ function fomoSseNotifyTabs() {
 function fomoSseIngest(raw) {
   const ev = slimFomoEvent(raw);
   if (!ev) return;
-  const rest = fomoFeedCache.events.filter((e) => e.key !== ev.key);
+  const comparableId = trackingFeedComparableId(ev);
+  const duplicate = fomoFeedCache.events.some((item) => item.key === ev.key
+    || (comparableId && trackingFeedComparableId(item) === comparableId));
+  const rest = fomoFeedCache.events.filter((item) => item.key !== ev.key
+    && (!comparableId || trackingFeedComparableId(item) !== comparableId));
   rest.unshift(ev);
   rest.sort((a, b) => b.ts - a.ts);
   fomoFeedCache = { ...fomoFeedCache, events: rest.slice(0, FOMO_FEED_KEEP), updatedAt: Date.now() };
-  fomoSseNotifyTabs();
+  if (!duplicate) fomoSseNotifyTabs();
 }
 
 function pumpSseNotifyTabs() {
@@ -989,11 +1004,15 @@ function pumpSseNotifyTabs() {
 function pumpSseIngest(raw) {
   const ev = slimPumpEvent(raw);
   if (!ev) return;
-  const rest = pumpFeedCache.events.filter((item) => item.key !== ev.key);
+  const comparableId = trackingFeedComparableId(ev);
+  const duplicate = pumpFeedCache.events.some((item) => item.key === ev.key
+    || (comparableId && trackingFeedComparableId(item) === comparableId));
+  const rest = pumpFeedCache.events.filter((item) => item.key !== ev.key
+    && (!comparableId || trackingFeedComparableId(item) !== comparableId));
   rest.unshift(ev);
   rest.sort((a, b) => b.ts - a.ts);
   pumpFeedCache = { ...pumpFeedCache, events: rest.slice(0, PUMP_FEED_KEEP), updatedAt: Date.now() };
-  pumpSseNotifyTabs();
+  if (!duplicate) pumpSseNotifyTabs();
 }
 
 async function connectFomoSse() {

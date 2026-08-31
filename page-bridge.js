@@ -582,6 +582,14 @@
               // <a href="/address/0x..."> 了，只靠 DOM 取地址会整段失效。
               maker: String(hit.maker || '').slice(0, 64),
               nick: String(hit.nick_name || hit.maker_info?.name || '').slice(0, 32),
+              side: String(hit.side || '').trim().toLowerCase().slice(0, 12),
+              tx: String(hit.transaction_hash || hit.tx_hash || '').trim().slice(0, 180),
+              usd: (() => {
+                const amount = Number(hit.amount_usd);
+                if (Number.isFinite(amount) && amount > 0) return amount;
+                const cost = Number(hit.cost_usd);
+                return Number.isFinite(cost) && cost > 0 ? cost : 0;
+              })(),
               // 事件时间。链上记录里是秒（前端拿它 +86400 秒当过期线），这里统一成毫秒；
               // 数值不在合理区间就当没有，锚定逻辑会整体降级，不会拿脏数据乱摆。
               ts: (() => {
@@ -609,6 +617,14 @@
       else element.removeAttribute('data-gdh-track-maker');
       if (data.nick) setAttribute(element, 'data-gdh-track-nick', data.nick);
       else element.removeAttribute('data-gdh-track-nick');
+      if (data.chain) setAttribute(element, 'data-gdh-track-chain', data.chain);
+      else element.removeAttribute('data-gdh-track-chain');
+      if (data.side) setAttribute(element, 'data-gdh-track-side', data.side);
+      else element.removeAttribute('data-gdh-track-side');
+      if (data.tx) setAttribute(element, 'data-gdh-track-tx', data.tx);
+      else element.removeAttribute('data-gdh-track-tx');
+      if (data.usd) setAttribute(element, 'data-gdh-track-usd', String(data.usd));
+      else element.removeAttribute('data-gdh-track-usd');
       if (data.ts) setAttribute(element, 'data-gdh-track-ts', String(data.ts));
       else element.removeAttribute('data-gdh-track-ts');
       return;
@@ -618,7 +634,11 @@
     const match = href.match(/\/([a-z0-9]+)\/token\/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})/);
     if (match) setAttribute(element, 'data-gdh-track-addr', match[2]);
     else element.removeAttribute('data-gdh-track-addr');
-    element.removeAttribute('data-gdh-track-symbol');
+    for (const attr of [
+      'data-gdh-track-symbol', 'data-gdh-track-maker', 'data-gdh-track-nick',
+      'data-gdh-track-chain', 'data-gdh-track-side', 'data-gdh-track-tx',
+      'data-gdh-track-usd', 'data-gdh-track-ts',
+    ]) element.removeAttribute(attr);
   }
 
   function scanHoldingRow(element) {
