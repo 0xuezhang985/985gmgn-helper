@@ -522,12 +522,41 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.12.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.12.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.13.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.13.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
   assert.ok(background.includes("const normalizedAddress = looksEvm ? String(address).toLowerCase() : String(address);"));
+});
+
+await test('FOMO 持仓占比在 GMGN 同源页面取全链供应量', async () => {
+  const fn = extractFunction(content, 'loadFomoSupply');
+  assert.ok(fn.includes('https://gmgn.ai/api/v1/mutil_window_token_info?'));
+  assert.ok(fn.includes("body: JSON.stringify({ chain: route.chain, addresses: [route.address] })"));
+  assert.ok(fn.includes('item?.total_supply ?? item?.max_supply ?? item?.circulating_supply'));
+  assert.ok(fn.indexOf('await fetch(') < fn.indexOf("type: 'token-supply'"));
+  assert.ok(fn.includes('fomoStats.key === statKey'));
+
+  const address = '0xfdae23ce76018da62507bb5ef20e6ef5450e8312';
+  const stats = { key: `robinhood|${address}`, holders: null, thesisCount: null, supply: 0 };
+  let backgroundCalls = 0;
+  let renders = 0;
+  await evaluate([fn], `loadFomoSupply({ chain: 'robinhood', address: '${address}' })`, {
+    fomoStats: stats,
+    fomoSupplyLoadingKey: '',
+    gmgnApiQuery: () => 'device_id=live-page',
+    settings: {},
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ code: 0, data: [{ total_supply: '1000000000' }] }),
+    }),
+    chrome: { runtime: { sendMessage: async () => { backgroundCalls += 1; return { ok: false }; } } },
+    renderFomoStats: () => { renders += 1; },
+  });
+  assert.equal(stats.supply, 1_000_000_000);
+  assert.equal(backgroundCalls, 0);
+  assert.equal(renders, 1);
 });
 
 process.stdout.write(`1..${passed}\n`);

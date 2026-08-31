@@ -3844,6 +3844,7 @@ ${flapTooltipText(info)}
   // 持有人数 / thesis 条数来自两个接口的总数；持仓占比 = 已加载持仓量之和 ÷ 链上总供应量。
   // 只能看到前 N 名持仓者，所以占比标「≥」——这是下界，不是精确值。
   let fomoStats = { key: '', holders: null, thesisCount: null, supply: 0 };
+  let fomoSupplyLoadingKey = '';
   let fomoSelfHealTried = false;
 
   function fomoStatBlock(label, value, sub, accent) {
@@ -3909,20 +3910,49 @@ ${flapTooltipText(info)}
     );
   }
 
-  function loadFomoSupply(route) {
-    if (fomoStats.supply > 0) return;
-    chrome.runtime.sendMessage({
-      type: 'token-supply',
-      // apiQuery：页面自身请求的客户端参数，后台拿它去打 GMGN 接口（全链取供应量）
-      payload: { chain: route.chain, address: route.address, rpc: settings.flapRpc || '', apiQuery: gmgnApiQuery() },
-    })
-      .then((res) => {
-        if (res?.ok && res.supply > 0) {
-          fomoStats.supply = res.supply;
-          renderFomoStats();
+  async function loadFomoSupply(route) {
+    const statKey = `${route.chain}|${route.address}`;
+    if (fomoStats.supply > 0 || fomoSupplyLoadingKey === statKey) return;
+    fomoSupplyLoadingKey = statKey;
+    try {
+      let supply = 0;
+      const apiQuery = gmgnApiQuery();
+      if (apiQuery) {
+        try {
+          // 必须在 gmgn.ai 页面上下文请求：同一接口从扩展后台跨源访问会被
+          // Cloudflare 拦截，Robinhood / Solana 又没有可用的 RPC 总量兜底。
+          const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chain: route.chain, addresses: [route.address] }),
+          });
+          const body = await res.json().catch(() => null);
+          const item = body?.data?.[0];
+          const raw = item?.total_supply ?? item?.max_supply ?? item?.circulating_supply;
+          const value = Number(raw);
+          if (res.ok && body?.code === 0 && Number.isFinite(value) && value > 0) supply = value;
+        } catch {
+          // 交给后台 RPC 兜底
         }
-      })
-      .catch(() => {});
+      }
+
+      if (!supply) {
+        const fallback = await chrome.runtime.sendMessage({
+          type: 'token-supply',
+          payload: { chain: route.chain, address: route.address, rpc: settings.flapRpc || '', apiQuery },
+        }).catch(() => null);
+        if (fallback?.ok && fallback.supply > 0) supply = Number(fallback.supply);
+      }
+
+      // SPA 可能已切到另一枚代币，旧请求不能回写新面板。
+      if (supply > 0 && fomoStats.key === statKey) {
+        fomoStats.supply = supply;
+        renderFomoStats();
+      }
+    } finally {
+      if (fomoSupplyLoadingKey === statKey) fomoSupplyLoadingKey = '';
+    }
   }
 
   async function loadFomoData(force) {
