@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.15 - 2026-09-01
+
+- 修复部分 GMGN 账号的追踪流始终不插入 FOMO/Pump：这些账号命中的 A/B 构建会同时缺少 `TrackerListItem`、`TableItem` 和 `follow-tracking-row-*`，v0.46.14 的布局兜底仍会得到 0 行并停止取数。
+- 当所有常规选择器都失效时，page bridge 现在从已挂载的绝对定位虚拟行反查 React Fiber；只接受同时包含代币地址、maker、buy/sell 和 timestamp 的完整成交记录，避免把战壕或搜索代币误认成追踪行。
+- 真实页面复现旧版从 12 行/6 卡降为 0/0；修复后无标记卡片布局恢复 12 行/4 卡，无标记表格布局恢复 16 行/6 卡，快速上下滚动时几何重叠数为 0。回归测试增至 36 项。
+
 ## 0.46.14 - 2026-08-31
 
 - 修复用户一键升级后已打开的 GMGN 页面不再正常插入 FOMO/Pump 卡片：旧版只重载扩展本身，页面里的旧 content script 随后处于 `Extension context invalidated`，又不会自动注入新版。

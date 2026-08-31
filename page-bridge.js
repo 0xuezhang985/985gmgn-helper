@@ -554,7 +554,15 @@
     if (!fiberKey) return null;
     const pick = (value, depth) => {
       if (!value || typeof value !== 'object' || depth > 4) return null;
-      if (typeof value.base_address === 'string' && value.base_address) return value;
+      // 无 sentry/testid 的 A/B 构建只能从虚拟行反查 Fiber。这里必须用追踪成交
+      // 独有的 maker + side + timestamp 组合收紧，不能只凭 base_address；战壕、
+      // 搜索等普通代币对象同样有 base_address，会被误认成追踪行。
+      const address = value.token_address || value.base_address || value.base_token?.address;
+      const maker = value.maker || value.maker_info_address || value.maker_info?.address;
+      const side = String(value.side || '').trim().toLowerCase();
+      const timestamp = Number(value.timestamp);
+      if (typeof address === 'string' && address && typeof maker === 'string' && maker
+        && (side === 'buy' || side === 'sell') && timestamp > 0) return value;
       let keys;
       try { keys = Object.keys(value); } catch { return null; }
       for (const key of keys.slice(0, 50)) {
@@ -576,12 +584,12 @@
           const hit = pick(props, 0);
           if (hit) {
             return {
-              address: String(hit.token_address || hit.base_address || '').slice(0, 64),
-              symbol: String(hit.base_symbol || '').slice(0, 24),
+              address: String(hit.token_address || hit.base_address || hit.base_token?.address || '').slice(0, 64),
+              symbol: String(hit.base_symbol || hit.base_token?.symbol || '').slice(0, 24),
               chain: String(hit.chain || '').slice(0, 16),
               // maker = 这条推送的钱包地址。GMGN 改版后卡片里的钱包名不一定还是
               // <a href="/address/0x..."> 了，只靠 DOM 取地址会整段失效。
-              maker: String(hit.maker || '').slice(0, 64),
+              maker: String(hit.maker || hit.maker_info_address || hit.maker_info?.address || '').slice(0, 64),
               nick: String(hit.nick_name || hit.maker_info?.name || '').slice(0, 32),
               side: String(hit.side || '').trim().toLowerCase().slice(0, 12),
               tx: String(hit.transaction_hash || hit.tx_hash || '').trim().slice(0, 180),
@@ -608,8 +616,8 @@
     return null;
   }
 
-  function scanTrackerCard(element) {
-    const data = readTrackerRecord(element);
+  function scanTrackerCard(element, suppliedData = null) {
+    const data = suppliedData || readTrackerRecord(element);
     if (data && data.address) {
         setAttribute(element, 'data-gdh-track-addr', data.address);
       if (data.symbol) setAttribute(element, 'data-gdh-track-symbol', data.symbol);
@@ -640,6 +648,43 @@
       'data-gdh-track-chain', 'data-gdh-track-side', 'data-gdh-track-tx',
       'data-gdh-track-usd', 'data-gdh-track-ts',
     ]) element.removeAttribute(attr);
+  }
+
+  /**
+   * 某些账号命中的 GMGN A/B 包会同时去掉 TrackerListItem、TableItem 和
+   * follow-tracking-row-*，旧选择器因此得到 0 行，连数据轮询都不会开始。
+   * 只在正常选择器完全失效时扫描已经挂载的虚拟行；严格的 readTrackerRecord
+   * 会排除战壕/搜索等其它虚拟列表。标记统一挂到 absolute 外壳的直接内容根，
+   * 卡片和表格两种布局都能在一层内找到固定行外壳。
+   */
+  function scanUnmarkedTrackerRows(trackerSeen, trackerData) {
+    const scoped = document.querySelectorAll(
+      '.virtual-list-container [data-index], .virtual-list-container [data-item-index]',
+    );
+    const wrappers = scoped.length
+      ? scoped : document.querySelectorAll('[data-index], [data-item-index]');
+    let examined = 0;
+    for (const wrap of wrappers) {
+      if (!(wrap instanceof HTMLElement) || examined >= 240) break;
+      if ((wrap.style.position || '') !== 'absolute') continue;
+      const root = wrap.firstElementChild;
+      if (!(root instanceof HTMLElement)) continue;
+      examined += 1;
+      const candidates = [
+        root,
+        root.firstElementChild,
+        root.querySelector('[data-testid="follow-tracking-row-symbol"]')?.parentElement,
+        root.querySelector('a[href*="/token/"]'),
+      ].filter((item, index, list) => item instanceof HTMLElement && list.indexOf(item) === index);
+      let data = null;
+      for (const candidate of candidates) {
+        data = readTrackerRecord(candidate);
+        if (data) break;
+      }
+      if (!data) continue;
+      trackerSeen.add(root);
+      trackerData.set(root, data);
+    }
   }
 
   function scanHoldingRow(element) {
@@ -732,6 +777,7 @@
     holdingRows.forEach(scanHoldingRow);
     // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
     const trackerSeen = new Set();
+    const trackerData = new Map();
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => trackerSeen.add(el));
     // 表格外层 TableItem 的 Fiber 没有交易记录；实际数据在第一个内层行。
     // 无 testid 的 A/B 布局也能因此被扫到，而不是把无数据的外层误标。
@@ -749,7 +795,8 @@
         el = el.parentElement;
       }
     });
-    trackerSeen.forEach(scanTrackerCard);
+    if (!trackerSeen.size) scanUnmarkedTrackerRows(trackerSeen, trackerData);
+    trackerSeen.forEach((element) => scanTrackerCard(element, trackerData.get(element)));
     document.querySelectorAll(HOLDER_ROW_SELECTOR).forEach(scanHolderRow);
     document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
     document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {

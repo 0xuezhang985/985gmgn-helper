@@ -406,12 +406,34 @@ await test('页面桥透出原生交易指纹并在虚拟行回收时清掉旧�
   assert.match(bridge, /'data-gdh-track-usd', 'data-gdh-track-ts',[\s\S]*element\.removeAttribute\(attr\)/);
 });
 
+await test('页面桥只把完整成交记录识别为追踪行并兼容 token_address 变体', () => {
+  const fn = extractFunction(bridge, 'readTrackerRecord');
+  const run = (record) => evaluate([fn], `(() => {
+    const element = {};
+    element['__reactFiber$test'] = { memoizedProps: { record: ${JSON.stringify(record)} } };
+    return readTrackerRecord(element);
+  })()`);
+  assert.equal(run({ base_address: '0xdead', symbol: 'NOT_A_TRADE' }), null);
+  const result = run({
+    token_address: '0xabc', base_token: { symbol: 'ABC' }, chain: 'bsc',
+    maker_info_address: '0xmaker', side: 'buy', timestamp: 1700000000,
+    transaction_hash: '0xtx', amount_usd: 12.5,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    address: '0xabc', symbol: 'ABC', chain: 'bsc', maker: '0xmaker', nick: '',
+    side: 'buy', tx: '0xtx', usd: 12.5, ts: 1700000000000,
+  });
+});
+
 await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.ok(content.includes('TRACKER_TABLE_ITEM_SELECTOR'));
   assert.ok(content.includes('TRACKER_DATA_SELECTOR'));
   assert.ok(content.includes('fixed.h <= 50'));
   assert.ok(bridge.includes("row.firstElementChild"));
   assert.match(bridge, /querySelectorAll\(TRACKER_TABLE_ITEM_SELECTOR\)[\s\S]*trackerSeen\.add\(candidate\)/);
+  assert.ok(bridge.includes('scanUnmarkedTrackerRows'));
+  assert.match(bridge, /if \(!trackerSeen\.size\) scanUnmarkedTrackerRows\(trackerSeen, trackerData\)/);
+  assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
 });
 
 await test('版本变更后只刷新一次已打开的 GMGN 标签页', async () => {
@@ -421,9 +443,9 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.14' }) },
+      runtime: { getManifest: () => ({ version: '0.46.15' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.13' }),
+        get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
       } },
       tabs: {
@@ -434,15 +456,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.14');
+  assert.equal(saved.gdhRunningVersion, '0.46.15');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.14' }) },
+      runtime: { getManifest: () => ({ version: '0.46.15' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.14' }),
+        get: async () => ({ gdhRunningVersion: '0.46.15' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -568,8 +590,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.14.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.14.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.15.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.15.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
