@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.14 - 2026-08-31
+
+- 修复用户一键升级后已打开的 GMGN 页面不再正常插入 FOMO/Pump 卡片：旧版只重载扩展本身，页面里的旧 content script 随后处于 `Extension context invalidated`，又不会自动注入新版。
+- 新后台在检测到版本变更时，只刷新一次已打开的 `gmgn.ai` 标签页，随后写入版本标记，service worker 再唤醒不会重复刷新。
+- 追踪流布局探测补齐 GMGN 卡片、表格 `TableItem` 和无 `follow-tracking-row-*` testid 的 A/B 布局；表格外层只做布局锚点，仍从真正持有 React 交易数据的内层行取时间与地址。
+- 真实页面已验证卡片和表格两种布局；表格中连续上下滚动后 2 张 FOMO 卡与 19 条原生虚拟行重叠数为 0。回归测试增至 35 项。
+
 ## 0.46.13 - 2026-08-31
 
 - 修复 Robinhood 代币的 FOMO 持仓占比一直显示「—」：旧版虽然调用了 GMGN 全链总供应量接口，但请求从扩展后台发出，会被 Cloudflare 跨源风控拦截；Robinhood 又没有 RPC 总量兜底，所以分母始终为 0。

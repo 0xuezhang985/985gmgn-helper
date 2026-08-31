@@ -4,6 +4,29 @@ const NATIVE_HOST = 'com.xuezhang985.gmgn_helper';
 const RELEASES_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
 const UPDATE_ALARM = '985gmgn-update-check';
 const CHECK_INTERVAL_MINUTES = 360;
+const RUNNING_VERSION_KEY = 'gdhRunningVersion';
+
+/**
+ * 一键升级会先替换扩展文件，再 chrome.runtime.reload()。已打开的 GMGN
+ * 页里还是旧 content script，扩展重载后它的 runtime 上下文已失效，不会
+ * 自己变成新版。新后台首次启动时只刷新一次 GMGN 标签页，让新脚本真正注入。
+ */
+async function refreshGmgnTabsAfterVersionChange() {
+  try {
+    const version = chrome.runtime.getManifest().version;
+    const stored = await chrome.storage.local.get(RUNNING_VERSION_KEY);
+    if (stored?.[RUNNING_VERSION_KEY] === version) return;
+    const tabs = await chrome.tabs.query({ url: 'https://gmgn.ai/*' });
+    await Promise.allSettled(
+      tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.tabs.reload(tab.id)),
+    );
+    await chrome.storage.local.set({ [RUNNING_VERSION_KEY]: version });
+  } catch {
+    // 下次 service worker 唤醒时重试；不影响其它功能
+  }
+}
+
+refreshGmgnTabsAfterVersionChange();
 
 function sendNativeMessage(message) {
   return new Promise((resolve, reject) => {

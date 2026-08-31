@@ -318,7 +318,7 @@ checkUpdateButton.addEventListener('click', async () => {
       updateStatus.textContent = '正在下载并安装新版…';
       const result = await sendRuntimeMessage({ type: 'install-update' });
       if (!result?.ok) throw new Error(result?.error || '升级失败');
-      updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载…`;
+      updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载扩展并刷新 GMGN 页面…`;
       setTimeout(() => chrome.runtime.reload(), 350);
       return;
     }

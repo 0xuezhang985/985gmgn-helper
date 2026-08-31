@@ -406,6 +406,52 @@ await test('页面桥透出原生交易指纹并在虚拟行回收时清掉旧�
   assert.match(bridge, /'data-gdh-track-usd', 'data-gdh-track-ts',[\s\S]*element\.removeAttribute\(attr\)/);
 });
 
+await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
+  assert.ok(content.includes('TRACKER_TABLE_ITEM_SELECTOR'));
+  assert.ok(content.includes('TRACKER_DATA_SELECTOR'));
+  assert.ok(content.includes('fixed.h <= 50'));
+  assert.ok(bridge.includes("row.firstElementChild"));
+  assert.match(bridge, /querySelectorAll\(TRACKER_TABLE_ITEM_SELECTOR\)[\s\S]*trackerSeen\.add\(candidate\)/);
+});
+
+await test('版本变更后只刷新一次已打开的 GMGN 标签页', async () => {
+  const fn = extractFunction(background, 'refreshGmgnTabsAfterVersionChange');
+  const reloaded = [];
+  const saved = {};
+  await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
+    RUNNING_VERSION_KEY: 'gdhRunningVersion',
+    chrome: {
+      runtime: { getManifest: () => ({ version: '0.46.14' }) },
+      storage: { local: {
+        get: async () => ({ gdhRunningVersion: '0.46.13' }),
+        set: async (value) => Object.assign(saved, value),
+      } },
+      tabs: {
+        query: async () => [{ id: 7 }, { id: 9 }, { id: null }],
+        reload: async (id) => { reloaded.push(id); },
+      },
+    },
+    Promise,
+  });
+  assert.deepEqual(reloaded, [7, 9]);
+  assert.equal(saved.gdhRunningVersion, '0.46.14');
+
+  reloaded.length = 0;
+  await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
+    RUNNING_VERSION_KEY: 'gdhRunningVersion',
+    chrome: {
+      runtime: { getManifest: () => ({ version: '0.46.14' }) },
+      storage: { local: {
+        get: async () => ({ gdhRunningVersion: '0.46.14' }),
+        set: async () => {},
+      } },
+      tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
+    },
+    Promise,
+  });
+  assert.deepEqual(reloaded, []);
+});
+
 await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', () => {
   const functions = [extractFunction(content, 'pumpFeedTokenKey'), extractFunction(content, 'pumpFeedEventAllowed')];
   const wallet = 'BY58Z7N5Adarkx5ed78AzKvR7Kxrq795aa1boZsYyVBT';
@@ -522,8 +568,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.13.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.13.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.14.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.14.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

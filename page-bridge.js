@@ -193,6 +193,7 @@
   const HOLDING_PANEL_SELECTOR = '[data-sentry-source-file^="PositionTable"], [data-sentry-source-file="Holding.tsx"]';
   const HOLDING_ROW_FALLBACK = 'a[href*="/token/"]';
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
+  const TRACKER_TABLE_ITEM_SELECTOR = '[data-sentry-component="TrackingBody"] [data-sentry-component="TableItem"][href*="/token/"]';
   // 代币页「持有者」表格的行（实测自线上 DOM，不是紧凑列表的 HolderItemView）
   const HOLDER_ROW_SELECTOR = '[data-testid="token-detail-holders-row"]';
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -732,6 +733,13 @@
     // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
     const trackerSeen = new Set();
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => trackerSeen.add(el));
+    // 表格外层 TableItem 的 Fiber 没有交易记录；实际数据在第一个内层行。
+    // 无 testid 的 A/B 布局也能因此被扫到，而不是把无数据的外层误标。
+    document.querySelectorAll(TRACKER_TABLE_ITEM_SELECTOR).forEach((row) => {
+      const candidate = row.querySelector('[data-testid="follow-tracking-row-symbol"]')?.parentElement
+        || row.firstElementChild;
+      if (candidate instanceof HTMLElement) trackerSeen.add(candidate);
+    });
     document.querySelectorAll('[data-testid="follow-tracking-row-symbol"]').forEach((cell) => {
       const tagged = cell.closest(TRACKER_ITEM_SELECTOR);
       if (tagged) return void trackerSeen.add(tagged);

@@ -1717,13 +1717,22 @@ ${flapTooltipText(info)}
 
   // ---- 钱包追踪"特别关注"高亮 ----
   const TRACKER_ITEM_SELECTOR = '[data-sentry-component="TrackerListItem"]';
+  // 表格布局外层是 TableItem，交易数据则在它的内层行 Fiber 上。有些用户的
+  // 构建不带 follow-tracking-row-* testid，所以同时保留这个已实测的布局锚点。
+  const TRACKER_TABLE_ITEM_SELECTOR = '[data-sentry-component="TrackingBody"] [data-sentry-component="TableItem"][href*="/token/"]';
+  const TRACKER_DATA_SELECTOR = '[data-gdh-track-addr][data-gdh-track-ts]';
   const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
   const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
   // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
   // 表格模式下币种列只有 120px 且 overflow-hidden，徽章塞进去会盖住币名。
   const TRACKER_TABLE_HEADER = '[data-testid="follow-tracking-table-header"]';
   function isTrackerTableMode() {
-    return !!document.querySelector(TRACKER_TABLE_HEADER);
+    if (document.querySelector(`${TRACKER_TABLE_HEADER}, ${TRACKER_TABLE_ITEM_SELECTOR}`)) return true;
+    // 某些 A/B 布局同时去掉表头 testid 和 sentry 标记；固定行高 44px 仍是
+    // 表格的布局事实，卡片布局实测为 64.5px。
+    const first = trackerCards()[0];
+    const fixed = first ? fomoFeedFixedRow(first) : null;
+    return !!(fixed && fixed.h > 0 && fixed.h <= 50);
   }
 
   /**
@@ -1736,6 +1745,8 @@ ${flapTooltipText(info)}
   function trackerCards() {
     const found = new Set();
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => found.add(el));
+    // page-bridge 已读到 Fiber 的行是最稳的锚点，不再依赖任何 GMGN 类名/testid。
+    document.querySelectorAll(TRACKER_DATA_SELECTOR).forEach((el) => found.add(el));
     document.querySelectorAll(TRACKER_SYMBOL_CELL).forEach((cell) => {
       const tagged = cell.closest(TRACKER_ITEM_SELECTOR);
       if (tagged) return void found.add(tagged);
