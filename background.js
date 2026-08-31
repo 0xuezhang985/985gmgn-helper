@@ -734,6 +734,8 @@ const FOMO_FEED_TYPE = {
   // 转入不是买入：链上腿只看得到代币进账那一条腿，空投 / 税收分红 / 别人打款
   // 形状和买入一模一样。采集端判出「不是交易」的，这边单独成一类，别混进买入。
   FOMO_TRANSFER_IN: 'transferIn',
+  // Relay 回滚 / 交易执行失败也是用户刚发起的链上动作，不能因未知类型被静默丢掉。
+  FOMO_REFUND: 'refund',
 };
 
 // fomo 的链名 → GMGN 的路径段
@@ -755,7 +757,8 @@ function slimFomoEvent(raw) {
     name: String(raw.userName || raw.handle || '').slice(0, 48),
     avatar: String(raw.avatar || '').slice(0, 300),
     usd: Number(raw.usd) || 0,
-    comment: String(raw.comment || content.comment || content.text || '').slice(0, 600),
+    comment: String(raw.comment || content.comment || content.text
+      || (type === 'refund' ? `链上交易失败 · ${String(raw.failReason || '已退款')}` : '')).slice(0, 600),
     addr: String(raw.tokenAddress || '').slice(0, 64),
     chain: FOMO_CHAIN_SLUG[chainName.toLowerCase()] || chainName.toLowerCase(),
     chainName,

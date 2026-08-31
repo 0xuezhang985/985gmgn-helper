@@ -85,15 +85,20 @@ await test('API 成本聚合函数与页面桥接口径一致', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { balance: 40, average: 1.02 });
 });
 
-await test('持仓暴涨只按现价相对实际购买成本计算', () => {
-  const fn = extractFunction(content, 'holdingCostChange');
-  assert.ok(Math.abs(evaluate([fn], "holdingCostChange('1.2', '1')") - 20) < 1e-9);
-  assert.equal(evaluate([fn], "holdingCostChange('2', '4')"), -50);
-  assert.equal(Number.isNaN(evaluate([fn], "holdingCostChange('2', '0')")), true);
-  assert.equal(Number.isNaN(evaluate([fn], "holdingCostChange('2', null)")), true);
+await test('持仓暴涨同时校验购买成本收益和最近 5 分钟涨幅', () => {
+  const costFn = extractFunction(content, 'holdingCostChange');
+  const fiveMinuteFn = extractFunction(content, 'holdingFiveMinuteChange');
+  assert.ok(Math.abs(evaluate([costFn], "holdingCostChange('1.2', '1')") - 20) < 1e-9);
+  assert.equal(evaluate([costFn], "holdingCostChange('2', '4')"), -50);
+  assert.equal(Number.isNaN(evaluate([costFn], "holdingCostChange('2', '0')")), true);
+  assert.ok(Math.abs(evaluate([fiveMinuteFn], "holdingFiveMinuteChange({ price5m: 1 }, 1.05)") - 5) < 1e-9);
+  assert.equal(evaluate([fiveMinuteFn], "holdingFiveMinuteChange({ pct5m: -2 }, 1.05)"), -2);
+  assert.equal(Number.isNaN(evaluate([fiveMinuteFn], "holdingFiveMinuteChange({}, 1.05)")), true);
   const handler = extractFunction(content, 'handleHoldingPriceUpdate');
   assert.ok(handler.includes('holdingCostChange(price, meta?.cost)'));
-  assert.ok(!handler.includes('price5m'));
+  assert.ok(handler.includes('holdingFiveMinuteChange(update, price)'));
+  assert.ok(handler.includes('pct5m > 0'));
+  assert.ok(content.includes('price5m: Number(p.price_5m)'));
 });
 
 await test('购买成本实质变化会重置提醒基准，微小数值抖动不会', () => {
@@ -112,11 +117,32 @@ await test('购买成本实质变化会重置提醒基准，微小数值抖动�
 
 await test('持仓暴涨首包静默、越档提醒、回落后可再次提醒', () => {
   const fn = extractFunction(content, 'holdingSurgeDecision');
-  const call = (previous, pct, ready = true) => evaluate([fn], `holdingSurgeDecision(${previous}, ${pct}, 20, ${ready})`);
+  const call = (previous, pct, ready = true, rising = true) => evaluate([fn], `holdingSurgeDecision(${previous}, ${pct}, 20, ${ready}, ${rising})`);
   assert.deepEqual(JSON.parse(JSON.stringify(call('null', 25))), { nextLevel: 1, alert: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('null', 25, true, false))), { nextLevel: 0, alert: false });
   assert.deepEqual(JSON.parse(JSON.stringify(call('0', 21))), { nextLevel: 1, alert: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('0', 21, true, false))), { nextLevel: 0, alert: false });
   assert.deepEqual(JSON.parse(JSON.stringify(call('1', 45, false))), { nextLevel: 1, alert: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(call('1', 45, true, false))), { nextLevel: 1, alert: false });
   assert.deepEqual(JSON.parse(JSON.stringify(call('1', 5))), { nextLevel: 0, alert: false });
+});
+
+await test('FOMO 退款/失败事件不再被未知类型过滤', () => {
+  const fn = extractFunction(background, 'slimFomoEvent');
+  const raw = {
+    key: 'refund:1', eventType: 'FOMO_REFUND', ts: 1770000000000,
+    handle: 'alice', chainName: 'BSC', tokenAddress: '0xabc', symbol: 'ABC',
+    failReason: 'TRANSACTION_REVERTED',
+  };
+  const result = evaluate([fn], `slimFomoEvent(${JSON.stringify(raw)})`, {
+    FOMO_FEED_TYPE: { FOMO_REFUND: 'refund' },
+    FOMO_CHAIN_SLUG: { bsc: 'bsc' },
+  });
+  assert.equal(result.type, 'refund');
+  assert.equal(result.comment, '链上交易失败 · TRANSACTION_REVERTED');
+  assert.ok(background.includes("FOMO_REFUND: 'refund'"));
+  assert.ok(content.includes("refund: { label: '退款/失败'"));
+  assert.ok(popupHtml.includes('id="fomo-feed-refund"'));
 });
 
 await test('推送历史清洗危险字段、跨标签去重并限制为 100 条', () => {
@@ -466,8 +492,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.10.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.10.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.11.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.11.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

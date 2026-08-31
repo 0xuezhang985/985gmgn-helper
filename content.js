@@ -251,7 +251,7 @@
     enableFomoFeed: true,
     enablePumpFeed: true,
     fomoFeedChainOnly: false,
-    fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true },
+    fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
   };
@@ -4488,6 +4488,14 @@ ${flapTooltipText(info)}
     return now > 0 && base > 0 ? ((now - base) / base) * 100 : NaN;
   }
 
+  function holdingFiveMinuteChange(update, price) {
+    const now = Number(price);
+    const base = Number(update?.price5m ?? update?.p5m ?? update?.price_5m);
+    if (now > 0 && base > 0) return ((now - base) / base) * 100;
+    const fallback = Number(update?.pct5m ?? update?.pcp5m ?? update?.price_change_percent5m);
+    return Number.isFinite(fallback) ? fallback : NaN;
+  }
+
   function holdingCostMateriallyChanged(previous, next) {
     const before = Number(previous);
     const after = Number(next);
@@ -4619,12 +4627,17 @@ ${flapTooltipText(info)}
     return `$${n.toPrecision(4)}`;
   }
 
-  function holdingSurgeDecision(previousLevel, pct, threshold, cooldownReady) {
+  function holdingSurgeDecision(previousLevel, pct, threshold, cooldownReady, fiveMinuteRising) {
     const level = Math.floor((Number(pct) + 1e-9) / Number(threshold));
     const previous = Number.isFinite(previousLevel) ? previousLevel : null;
     if (!Number.isFinite(level)) return { nextLevel: previous ?? 0, alert: false };
-    if (previous === null) return { nextLevel: Math.max(level, 0), alert: false };
+    if (previous === null) {
+      return { nextLevel: fiveMinuteRising ? Math.max(level, 0) : 0, alert: false };
+    }
     if (level <= 0) return { nextLevel: 0, alert: false };
+    // 成本收益已达标但最近 5 分钟没涨时不推送，也不消耗新档位；
+    // 之后重新转涨且仍在该档位，才允许补发一次。
+    if (!fiveMinuteRising) return { nextLevel: previous, alert: false };
     if (level <= previous || !cooldownReady) return { nextLevel: previous, alert: false };
     return { nextLevel: level, alert: true };
   }
@@ -4638,7 +4651,8 @@ ${flapTooltipText(info)}
     const meta = holdingWatchMap.get(key);
     const price = Number(update?.price ?? update?.p);
     const pct = holdingCostChange(price, meta?.cost);
-    if (!meta || !(price > 0) || !Number.isFinite(pct)) return;
+    const pct5m = holdingFiveMinuteChange(update, price);
+    if (!meta || !(price > 0) || !Number.isFinite(pct) || !Number.isFinite(pct5m)) return;
     const threshold = Math.max(5, Number(settings.holdingSurgeThreshold) || 20);
     const last = holdingAlertedAt.get(key) || 0;
     const decision = holdingSurgeDecision(
@@ -4646,6 +4660,7 @@ ${flapTooltipText(info)}
       pct,
       threshold,
       Date.now() - last >= holdingCooldownMs(),
+      pct5m > 0,
     );
     holdingAlertLevel.set(key, decision.nextLevel);
     if (!decision.alert) return;
@@ -4656,8 +4671,8 @@ ${flapTooltipText(info)}
       bell: '🚀',
       tagText: '持仓暴涨',
       symbol: meta.symbol || fallbackSymbol || '持仓代币',
-      label: '较购买成本',
-      value: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%  ${formatPriceShort(price)}`,
+      label: '成本 / 5分钟',
+      value: `成本 ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% · 5m +${pct5m.toFixed(1)}%  ${formatPriceShort(price)}`,
       raw: '',
     });
   }
@@ -4708,7 +4723,13 @@ ${flapTooltipText(info)}
             const now = Number(p.price);
             if (!(now > 0)) return;
             const address = normalizeWalletAddress(String(token.address || p.address || ''));
-            handleHoldingPriceUpdate({ chain, address, price: now }, token.symbol);
+            handleHoldingPriceUpdate({
+              chain,
+              address,
+              price: now,
+              price5m: Number(p.price_5m),
+              pct5m: Number(p.price_change_percent5m),
+            }, token.symbol);
           });
         } catch {
           // 网络失败静默跳过，下轮再试
@@ -5340,6 +5361,7 @@ ${flapTooltipText(info)}
     swap: { label: '换仓', cls: 'is-swap' },
     thesis: { label: '观点', cls: 'is-thesis' },
     transferIn: { label: '转入', cls: 'is-transfer' },
+    refund: { label: '退款/失败', cls: 'is-refund' },
   };
   const PUMP_FEED_DEFAULT_TOKEN_FILTERS = new Set([
     'SPCXB', 'SKHYB', 'SPYB', 'XAUT', 'QQQB', 'NVDAB', 'AAPLB', 'TSLAB',
@@ -5647,13 +5669,13 @@ ${flapTooltipText(info)}
     row.append(time, who, sym, amt, mc);
     card.appendChild(row);
 
-    // 观点正文在表格模式下另起一行（表格行放不下），带译文
-    if (ev.type === 'thesis' && ev.comment) {
+    // 观点/失败原因在表格模式下另起一行；只有观点正文需要翻译。
+    if ((ev.type === 'thesis' || ev.type === 'refund') && ev.comment) {
       const text = document.createElement('div');
       text.className = 'gdh-fomofeed__thesis';
       text.textContent = ev.comment;
       card.appendChild(text);
-      queueFomoTranslate(text, ev.comment);
+      if (ev.type === 'thesis') queueFomoTranslate(text, ev.comment);
     }
   }
 
@@ -5763,14 +5785,14 @@ ${flapTooltipText(info)}
     }
     card.appendChild(r2);
 
-    if (ev.type === 'thesis' && ev.comment) {
+    if ((ev.type === 'thesis' || ev.type === 'refund') && ev.comment) {
       // 观点正文完整显示（卡片放开定高），译文走面板同一条本地翻译链路，
       // 原文不动、译文补一行在下面
       const text = document.createElement('div');
       text.className = 'gdh-fomofeed__thesis';
       text.textContent = ev.comment;
       card.appendChild(text);
-      queueFomoTranslate(text, ev.comment);
+      if (ev.type === 'thesis') queueFomoTranslate(text, ev.comment);
     }
 
     attachFomoFeedCardBehavior(ev, card);
