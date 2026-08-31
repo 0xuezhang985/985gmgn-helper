@@ -14,13 +14,14 @@ if not re.fullmatch(r'\d+\.\d+\.\d+', V):
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = f'985gmgn-helper-setup-v{V}.exe'
 ZIP = f'985gmgn-helper-v{V}.zip'
+RELEASE_FILES = (EXE, f'{EXE}.sha256', ZIP, f'{ZIP}.sha256')
 SITE = os.path.join(HERE, 'site', 'index.html')
 
 # /bgm/ 必须与公开 Release 同字节，不能上传本机另一时刻重打包的 dist。
 release_tmp = tempfile.TemporaryDirectory(prefix=f'985gmgn-v{V}-')
 ASSET_DIR = release_tmp.name
 release_base = f'https://github.com/0xuezhang985/985gmgn-helper/releases/download/v{V}'
-for fn in (EXE, f'{EXE}.sha256', ZIP, f'{ZIP}.sha256'):
+for fn in RELEASE_FILES:
     request = urllib.request.Request(f'{release_base}/{fn}', headers={'User-Agent': '985gmgn-bgm-sync'})
     try:
         with urllib.request.urlopen(request, timeout=60) as response, open(os.path.join(ASSET_DIR, fn), 'wb') as output:
@@ -35,6 +36,10 @@ for fn in (EXE, ZIP):
     if expected != actual:
         print('Release SHA256 不一致:', fn); sys.exit(1)
     asset_hashes[fn] = actual
+release_file_hashes = {
+    fn: hashlib.sha256(open(os.path.join(ASSET_DIR, fn), 'rb').read()).hexdigest()
+    for fn in RELEASE_FILES
+}
 
 # 服务器凭据从 985monitor 部署器读，不写死
 src = io.open(r'F:/xuhuohua/_deploy_widget_stage2.py', encoding='utf-8').read()
@@ -54,13 +59,14 @@ stamp = time.strftime('%Y%m%d-%H%M%S')
 backup = f'/opt/x-monitor-widget/web/bgm/backup-{stamp}'
 run(f'mkdir -p /opt/x-monitor-widget/web/bgm/dl {backup}')
 run(f"for f in index.html version.json; do if [ -f /opt/x-monitor-widget/web/bgm/$f ]; then cp -a /opt/x-monitor-widget/web/bgm/$f {backup}/$f; fi; done")
-run(f"for f in {shlex.quote(EXE)} {shlex.quote(ZIP)}; do if [ -f /opt/x-monitor-widget/web/bgm/dl/$f ]; then cp -a /opt/x-monitor-widget/web/bgm/dl/$f {backup}/$f; fi; done")
+release_names = ' '.join(shlex.quote(fn) for fn in RELEASE_FILES)
+run(f"for f in {release_names}; do if [ -f /opt/x-monitor-widget/web/bgm/dl/$f ]; then cp -a /opt/x-monitor-widget/web/bgm/dl/$f {backup}/$f; fi; done")
 sftp = ssh.open_sftp()
-for fn in (EXE, ZIP):
+for fn in RELEASE_FILES:
     remote_tmp = f'/opt/x-monitor-widget/web/bgm/dl/.{fn}.{stamp}.tmp'
     sftp.put(os.path.join(ASSET_DIR, fn), remote_tmp)
     remote_hash = run(f"sha256sum {shlex.quote(remote_tmp)} | cut -d' ' -f1").strip()
-    if remote_hash != asset_hashes[fn]:
+    if remote_hash != release_file_hashes[fn]:
         run(f'rm -f {shlex.quote(remote_tmp)}')
         print('远端 SHA256 不一致:', fn); sys.exit(1)
     run(f'mv -f {shlex.quote(remote_tmp)} /opt/x-monitor-widget/web/bgm/dl/{shlex.quote(fn)}')
@@ -82,9 +88,9 @@ local_site_sha = hashlib.sha256(open(SITE, 'rb').read()).hexdigest()
 remote_site_sha = run("sha256sum /opt/x-monitor-widget/web/bgm/index.html | cut -d' ' -f1").strip()
 if remote_site_sha != local_site_sha:
     print('site/index.html SHA256 不一致'); sys.exit(1)
-for fn in (EXE, ZIP):
+for fn in RELEASE_FILES:
     remote_hash = run(f"sha256sum /opt/x-monitor-widget/web/bgm/dl/{shlex.quote(fn)} | cut -d' ' -f1").strip()
-    if remote_hash != asset_hashes[fn]:
+    if remote_hash != release_file_hashes[fn]:
         print('最终远端 SHA256 不一致:', fn); sys.exit(1)
 print('backup ->', backup)
 print('site_sha256 ->', remote_site_sha)

@@ -489,7 +489,10 @@ await test('下载同步脚本拒绝恶意版本参数', () => {
 
 await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', () => {
   assert.ok(bgmSync.includes("releases/download/v{V}"));
-  assert.ok(bgmSync.includes("f'{fn}.sha256'"));
+  assert.ok(bgmSync.includes("f'{EXE}.sha256'"));
+  assert.ok(bgmSync.includes("f'{ZIP}.sha256'"));
+  assert.ok(bgmSync.includes('for fn in RELEASE_FILES'));
+  assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
   assert.ok(site.includes('985gmgn-helper-setup-v0.46.11.exe'));

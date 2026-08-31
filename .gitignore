@@ -1,5 +1,7 @@
 dist/
 native-updater/extension.zip
 .uv-cache/
+__pycache__/
+*.pyc
 .*-preview.*
 .*-test.*
