@@ -108,9 +108,8 @@
   }
 
 
-  // 在 985monitor 上只做一件事：把网站本地的 fomo 配置（屏蔽名单/每人的事件开关/备注）
-  // 和钱包登录地址同步给插件，供 GMGN 追踪流里的 fomo 推送沿用同一套过滤规则。
-  // 这些配置存在 985monitor 页面的 localStorage（网站注明"仅本机生效"），不在服务端。
+  // 在 985monitor 上只做配置同步：fomo 本地偏好，以及 Pump 的关注/屏蔽/金额过滤。
+  // 钱包令牌只用于同源读取 /api/watch-config，绝不写入扩展存储或离开 985monitor。
   if (/(^|\.)985monitor\.xyz$/.test(location.hostname)) {
     const readJson = (key, fallback) => {
       try {
@@ -121,24 +120,86 @@
       }
     };
     let lastSent = '';
+    let pumpAccountCfg = null;
+    let pumpAccountInflight = null;
+    const pumpWatchIds = (rows) => (Array.isArray(rows) ? rows : [])
+      .filter((item) => item?.enabled !== false)
+      .map((item) => String(item?.userId || '').trim())
+      .filter(Boolean);
+    const guestPumpOverlay = () => {
+      const guest = readJson('xMonitorGuestConfigV1', '{}');
+      return guest?.overlay && typeof guest.overlay === 'object' ? guest.overlay : {};
+    };
+    const refreshPumpAccountCfg = async () => {
+      if (pumpAccountInflight) return pumpAccountInflight;
+      pumpAccountInflight = (async () => {
+        let wallet = '';
+        let token = '';
+        try {
+          wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || '');
+          token = String(window.localStorage.getItem('xMonitorWalletToken') || '');
+        } catch {}
+        const headers = wallet && token
+          ? { 'X-User-Id': wallet, 'X-User-Token': token, 'X-Wallet-Address': wallet }
+          : {};
+        try {
+          const response = await fetch('/api/watch-config', { cache: 'no-store', headers });
+          const body = await response.json().catch(() => null);
+          if (!response.ok || body?.ok !== true) return;
+          const overlay = wallet && token && body?.overlay && typeof body.overlay === 'object'
+            ? body.overlay : guestPumpOverlay();
+          pumpAccountCfg = {
+            watch: [...new Set([...pumpWatchIds(body.pumpDefaultRules), ...pumpWatchIds(overlay?.pump)])],
+            filters: overlay?.pumpFilters && typeof overlay.pumpFilters === 'object' ? overlay.pumpFilters : {},
+            tokenFilters: Array.isArray(overlay?.pumpTokenFilters) ? overlay.pumpTokenFilters : null,
+            globalTradeMinUsd: Number.isFinite(Number(overlay?.globalTradeMinUsd))
+              ? Math.max(0, Number(overlay.globalTradeMinUsd)) : 10,
+          };
+        } catch {
+          // 页面离线时保留上一次已同步配置
+        }
+      })().finally(() => { pumpAccountInflight = null; });
+      await pumpAccountInflight;
+      syncMonitorCfg();
+    };
     const syncMonitorCfg = () => {
       let muted = readJson('xMonitorFomoMutedV1', '[]');
       let prefs = readJson('xMonitorFomoPrefsV1', '{}');
       if (!Array.isArray(muted)) muted = [];
       if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) prefs = {};
+      let pumpMuted = readJson('xMonitorPumpMutedV1', '[]');
+      let pumpPrefs = readJson('xMonitorPumpPrefsV1', '{}');
+      if (!Array.isArray(pumpMuted)) pumpMuted = [];
+      if (!pumpPrefs || typeof pumpPrefs !== 'object' || Array.isArray(pumpPrefs)) pumpPrefs = {};
+      let pumpOnlyMine = true;
+      try { pumpOnlyMine = window.localStorage.getItem('xMonitorPumpOnlyMineV1') !== 'false'; } catch {}
       let wallet = '';
       try { wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || ''); } catch {}
-      const stamp = JSON.stringify([muted, prefs, wallet]);
+      const guestOverlay = guestPumpOverlay();
+      const pump = pumpAccountCfg || {
+        watch: pumpWatchIds(guestOverlay?.pump),
+        filters: guestOverlay?.pumpFilters && typeof guestOverlay.pumpFilters === 'object' ? guestOverlay.pumpFilters : {},
+        tokenFilters: Array.isArray(guestOverlay?.pumpTokenFilters) ? guestOverlay.pumpTokenFilters : null,
+        globalTradeMinUsd: Number.isFinite(Number(guestOverlay?.globalTradeMinUsd))
+          ? Math.max(0, Number(guestOverlay.globalTradeMinUsd)) : 10,
+      };
+      const monitorPumpConfig = { ...pump, muted: pumpMuted, prefs: pumpPrefs, onlyMine: pumpOnlyMine };
+      const stamp = JSON.stringify([muted, prefs, wallet, monitorPumpConfig]);
       if (stamp === lastSent) return;
       lastSent = stamp;
       try {
-        chrome.storage.local.set({ monitorFomoConfig: { muted, prefs, wallet, at: Date.now() } });
+        chrome.storage.local.set({
+          monitorFomoConfig: { muted, prefs, wallet, at: Date.now() },
+          monitorPumpConfig: { ...monitorPumpConfig, at: Date.now() },
+        });
       } catch {
         // 扩展上下文失效
       }
     };
     syncMonitorCfg();
+    refreshPumpAccountCfg();
     window.setInterval(syncMonitorCfg, 15000);
+    window.setInterval(refreshPumpAccountCfg, 3 * 60 * 1000);
     window.addEventListener('focus', syncMonitorCfg);
     // storage 事件只对别的标签页的写入触发；本页的改动靠 15 秒轮询兜住
     window.addEventListener('storage', syncMonitorCfg);
@@ -188,6 +249,7 @@
     enableFlapTax: true,
     flapRpc: '',
     enableFomoFeed: true,
+    enablePumpFeed: true,
     fomoFeedChainOnly: false,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true },
     specialWallets: [],
@@ -5279,12 +5341,24 @@ ${flapTooltipText(info)}
     thesis: { label: '观点', cls: 'is-thesis' },
     transferIn: { label: '转入', cls: 'is-transfer' },
   };
+  const PUMP_FEED_DEFAULT_TOKEN_FILTERS = new Set([
+    'SPCXB', 'SKHYB', 'SPYB', 'XAUT', 'QQQB', 'NVDAB', 'AAPLB', 'TSLAB',
+    'MSFTB', 'GOOGLB', 'HOODB', 'BABAB', 'GMEB', 'NFLXB', 'MSTRB', 'DJTB',
+  ]);
   let fomoFeedEvents = [];
+  let pumpFeedEvents = [];
   const fomoFeedCards = new Map();
   const fomoFeedSeen = new Set();
   let fomoFeedPinEl = null;
   let fomoFeedLastPollAt = 0;
+  let pumpFeedLastPollAt = 0;
+  let pumpDefaultWallets = new Set();
   let monitorFomoCfg = { muted: new Set(), prefs: {}, wallet: '', at: 0 };
+  let monitorPumpCfg = {
+    muted: new Set(), prefs: {}, watch: new Set(), filters: {},
+    tokenFilters: new Set(PUMP_FEED_DEFAULT_TOKEN_FILTERS), onlyMine: true,
+    globalTradeMinUsd: 10, at: 0,
+  };
 
   function loadMonitorFomoCfg(raw) {
     const muted = new Set(
@@ -5292,6 +5366,40 @@ ${flapTooltipText(info)}
     );
     const prefs = raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {};
     monitorFomoCfg = { muted, prefs, wallet: String(raw?.wallet || ''), at: Number(raw?.at) || 0 };
+  }
+
+  function pumpFeedTokenKey(raw) {
+    const value = String(raw || '').trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(value)) return value.toLowerCase();
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) return value;
+    const symbol = value.replace(/^\$+/, '').toUpperCase();
+    return /^[A-Z0-9._-]{1,20}$/.test(symbol) ? symbol : '';
+  }
+
+  function loadMonitorPumpCfg(raw) {
+    const muted = new Set(
+      (Array.isArray(raw?.muted) ? raw.muted : []).map((item) => String(item || '')).filter(Boolean),
+    );
+    const prefs = raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {};
+    const watch = new Set(
+      (Array.isArray(raw?.watch) ? raw.watch : []).map((item) => String(item || '')).filter(Boolean),
+    );
+    const filters = raw?.filters && typeof raw.filters === 'object' && !Array.isArray(raw.filters) ? raw.filters : {};
+    // 985monitor 明确保存 [] 时表示“不屏蔽任何代币”；只有字段缺失/无效才套默认股票过滤。
+    const tokenValues = Array.isArray(raw?.tokenFilters)
+      ? raw.tokenFilters : [...PUMP_FEED_DEFAULT_TOKEN_FILTERS];
+    const tokenFilters = new Set(tokenValues.map(pumpFeedTokenKey).filter(Boolean));
+    const globalTradeMinUsd = Number(raw?.globalTradeMinUsd);
+    monitorPumpCfg = {
+      muted,
+      prefs,
+      watch,
+      filters,
+      tokenFilters,
+      onlyMine: raw?.onlyMine !== false,
+      globalTradeMinUsd: Number.isFinite(globalTradeMinUsd) && globalTradeMinUsd >= 0 ? globalTradeMinUsd : 10,
+      at: Number(raw?.at) || 0,
+    };
   }
 
   function currentChainSlug() {
@@ -5312,18 +5420,46 @@ ${flapTooltipText(info)}
     return true;
   }
 
-  function visibleFomoFeedEvents() {
+  function pumpFeedEventAllowed(ev) {
+    const wallet = String(ev?.pumpWallet || '');
+    if (!wallet || monitorPumpCfg.muted.has(wallet)) return false;
+    if (monitorPumpCfg.prefs?.[wallet]?.types?.[ev.type] === false) return false;
+    if (ev.addr && isTokenBlocked(ev.addr)) return false;
+    const symbolKey = pumpFeedTokenKey(ev.symbol);
+    const addressKey = pumpFeedTokenKey(ev.addr);
+    if ((symbolKey && monitorPumpCfg.tokenFilters.has(symbolKey))
+      || (addressKey && monitorPumpCfg.tokenFilters.has(addressKey))) return false;
+    const personal = Number(monitorPumpCfg.filters?.[wallet]?.minTradeUsd
+      ?? monitorPumpCfg.filters?.[wallet]);
+    const minUsd = Math.max(
+      monitorPumpCfg.globalTradeMinUsd,
+      Number.isFinite(personal) && personal > 0 ? personal : 0,
+    );
+    if (minUsd > 0 && Number(ev.usd) > 0 && Number(ev.usd) < minUsd) return false;
+    if (monitorPumpCfg.onlyMine) {
+      return monitorPumpCfg.watch.has(wallet) || pumpDefaultWallets.has(wallet);
+    }
+    return true;
+  }
+
+  function visibleTrackingFeedEvents() {
     // 追踪侧栏本身是全链混合的，默认不按页面链过滤（实测某时段 88 条事件仅 3 条在当前链）
     const chain = settings.fomoFeedChainOnly === true ? currentChainSlug() : '';
     const out = [];
-    for (const ev of fomoFeedEvents) {
-      if (!ev?.key || !ev.ts) continue;
-      if (!fomoFeedEventAllowed(ev)) continue;
-      if (chain && ev.chain && ev.chain !== chain) continue;
-      out.push(ev);
-      if (out.length >= FOMO_FEED_RENDER_CAP) break;
+    if (settings.enableFomoFeed !== false) {
+      for (const ev of fomoFeedEvents) {
+        if (!ev?.key || !ev.ts || !fomoFeedEventAllowed(ev)) continue;
+        if (chain && ev.chain && ev.chain !== chain) continue;
+        out.push(ev);
+      }
     }
-    return out;
+    if (settings.enablePumpFeed !== false) {
+      for (const ev of pumpFeedEvents) {
+        if (!ev?.key || !ev.ts || !pumpFeedEventAllowed(ev)) continue;
+        out.push(ev);
+      }
+    }
+    return out.sort((a, b) => b.ts - a.ts).slice(0, FOMO_FEED_RENDER_CAP);
   }
 
   function pollFomoFeed() {
@@ -5368,8 +5504,20 @@ ${flapTooltipText(info)}
     }, 450);
   }
 
+  function trackingFeedProfileMeta(ev) {
+    if (ev?.source === 'pump') {
+      return { source: 'Pump', title: '打开 Pump 主页', url: String(ev.profileUrl || '') };
+    }
+    return {
+      source: 'fomo',
+      title: `@${ev?.handle || ''} · 打开 fomo 主页`,
+      url: ev?.handle ? `https://fomo.family/profile/${encodeURIComponent(ev.handle)}` : '',
+    };
+  }
+
   /** 表格模式的一行:列结构与 GMGN 对齐(时间 | 名称 | 币种 | 金额 | 市值)。 */
   function buildFomoFeedTableRow(ev, card, tag) {
+    const profile = trackingFeedProfileMeta(ev);
     const row = document.createElement('div');
     row.className = 'gdh-fomofeed__trow';
 
@@ -5393,16 +5541,16 @@ ${flapTooltipText(info)}
     const name = document.createElement('span');
     name.className = 'gdh-fomofeed__name';
     name.textContent = ev.name || ev.handle || '?';
-    name.title = `@${ev.handle} · 打开 fomo 主页`;
+    name.title = profile.title;
     const openProfile = (event) => {
       event.preventDefault(); event.stopPropagation();
-      if (ev.handle) window.open(`https://fomo.family/profile/${encodeURIComponent(ev.handle)}`, '_blank', 'noopener,noreferrer');
+      if (profile.url) window.open(profile.url, '_blank', 'noopener,noreferrer');
     };
     av.addEventListener('click', openProfile);
     name.addEventListener('click', openProfile);
     const src = document.createElement('span');
     src.className = 'gdh-fomofeed__src';
-    src.textContent = 'fomo';
+    src.textContent = profile.source;
     who.append(av, name, src);
 
     // 币种列：币 logo + 符号 + 动作词（买入/卖出，代替 GMGN 的持币时长）
@@ -5450,9 +5598,11 @@ ${flapTooltipText(info)}
 
   function buildFomoFeedCard(ev) {
     const tag = FOMO_FEED_TAGS[ev.type] || { label: 'fomo', cls: '' };
+    const profile = trackingFeedProfileMeta(ev);
     const card = document.createElement('div');
-    card.className = `gdh-fomofeed ${tag.cls}`;
+    card.className = `gdh-fomofeed ${tag.cls}${ev.source === 'pump' ? ' is-pump' : ''}`;
     card.dataset.gdhFomoKey = ev.key;
+    card.dataset.gdhFeedSource = ev.source || 'fomo';
 
     // 链条色竖条：对齐原生（5px、绝对定位盖在左缘）
     if (ev.chain) {
@@ -5491,11 +5641,11 @@ ${flapTooltipText(info)}
     const name = document.createElement('span');
     name.className = 'gdh-fomofeed__name';
     name.textContent = ev.name || ev.handle || '?';
-    name.title = `@${ev.handle} · 打开 fomo 主页`;
+    name.title = profile.title;
     const openProfile = (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (ev.handle) window.open(`https://fomo.family/profile/${encodeURIComponent(ev.handle)}`, '_blank', 'noopener,noreferrer');
+      if (profile.url) window.open(profile.url, '_blank', 'noopener,noreferrer');
     };
     av.addEventListener('click', openProfile);
     name.addEventListener('click', openProfile);
@@ -5506,7 +5656,7 @@ ${flapTooltipText(info)}
 
     const src = document.createElement('span');
     src.className = 'gdh-fomofeed__src';
-    src.textContent = 'fomo';
+    src.textContent = profile.source;
 
     const time = document.createElement('span');
     time.className = 'gdh-fomofeed__time';
@@ -5635,7 +5785,7 @@ ${flapTooltipText(info)}
     pin.className = 'gdh-fomofeed-pin';
     const head = document.createElement('div');
     head.className = 'gdh-fomofeed-pin__head';
-    head.textContent = 'fomo 推送';
+    head.textContent = 'fomo / Pump 推送';
     pin.appendChild(head);
     host.parentElement?.insertBefore(pin, host);
     fomoFeedPinEl = pin;
@@ -5653,6 +5803,25 @@ ${flapTooltipText(info)}
       if (el.isConnected) el.style.transform = '';
     }
     fomoFeedShifted.clear();
+  }
+
+  function pollPumpFeed() {
+    if (!settings.enabled || settings.enablePumpFeed === false) return;
+    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
+    pumpFeedLastPollAt = Date.now();
+    try {
+      chrome.runtime.sendMessage({ type: 'pump-feed' }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) return;
+        pumpFeedEvents = Array.isArray(resp.events) ? resp.events : [];
+        pumpDefaultWallets = new Set(
+          (Array.isArray(resp.defaultWallets) ? resp.defaultWallets : [])
+            .map((item) => String(item || '')).filter(Boolean),
+        );
+        scheduleScan();
+      });
+    } catch {
+      // 扩展上下文失效
+    }
   }
 
   /** 一条原生虚拟行应继承多少插卡位移。afterTop 使用未位移的列表坐标。 */
@@ -5748,7 +5917,7 @@ ${flapTooltipText(info)}
       return;
     }
     // 屏蔽折叠和 fomo 混排是两件事：就算关掉了 fomo 推送，被屏蔽的行照样得折叠掉
-    if (settings.enableFomoFeed === false) {
+    if (settings.enableFomoFeed === false && settings.enablePumpFeed === false) {
       teardownFomoFeed();
       collapseBlockedTrackerRows();
       return;
@@ -5758,9 +5927,10 @@ ${flapTooltipText(info)}
     if (fomoFeedLastMode !== null && fomoFeedLastMode !== mode) teardownFomoFeed();
     fomoFeedLastMode = mode;
     // 追踪流在页面上才拉取；到点自动补一轮（setInterval 之外的即时首拉）
-    if (Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
+    if (settings.enableFomoFeed !== false && Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
+    if (settings.enablePumpFeed !== false && Date.now() - pumpFeedLastPollAt > FOMO_FEED_POLL_MS) pollPumpFeed();
 
-    const events = visibleFomoFeedEvents();
+    const events = visibleTrackingFeedEvents();
     const cards = trackerCards().filter((c) => c.isConnected);
     if (!events.length || !cards.length) {
       teardownFomoFeed();
@@ -6175,8 +6345,9 @@ ${flapTooltipText(info)}
     scheduleScan();
   });
 
-  chrome.storage.local.get({ monitorFomoConfig: null }, (stored) => {
+  chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null }, (stored) => {
     if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
+    if (stored?.monitorPumpConfig) loadMonitorPumpCfg(stored.monitorPumpConfig);
   });
 
   chrome.storage.local.get({
@@ -6237,6 +6408,10 @@ ${flapTooltipText(info)}
         loadMonitorFomoCfg(change.newValue);
         continue;
       }
+      if (key === 'monitorPumpConfig') {
+        loadMonitorPumpCfg(change.newValue);
+        continue;
+      }
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
       if (key === 'gmgnHoldingSignalSyncState') continue; // 只读诊断状态，不是设置项
@@ -6270,13 +6445,17 @@ ${flapTooltipText(info)}
     scheduleScan();
   });
 
-  // 后台 SSE 收到新 fomo 事件时的即时通知：立刻取一次缓存（命中控频内的
+  // 后台 SSE 收到新 fomo / Pump 事件时的即时通知：立刻取一次缓存（命中控频内的
   // stale 分支，零额外 HTTP），把新事件在下一拍摆进追踪流
   try {
     chrome.runtime.onMessage.addListener((msg) => {
       if (msg?.type === 'gdh-fomo-push') {
         fomoFeedLastPollAt = 0;
         pollFomoFeed();
+      }
+      if (msg?.type === 'gdh-pump-push') {
+        pumpFeedLastPollAt = 0;
+        pollPumpFeed();
       }
     });
   } catch {

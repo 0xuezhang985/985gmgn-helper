@@ -10,6 +10,8 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const background = read('background.js');
 const content = read('content.js');
 const bridge = read('page-bridge.js');
+const popup = read('popup.js');
+const popupHtml = read('popup.html');
 const site = read('site/index.html');
 const bgmSync = read('scripts/sync-bgm-download.py');
 
@@ -254,6 +256,65 @@ await test('追踪流新挂载虚拟行会继承已有插卡位移', () => {
   assert.match(content, /scheduleFomoFeedRowReflow\(\);\s*\n\s*}\s*\n\s*if \(\!\(target instanceof Element\)/);
 });
 
+await test('Pump 成交按已验证字段瘦身并映射到 GMGN 链', () => {
+  const functions = [
+    extractFunction(background, 'pumpFeedHttpsUrl'),
+    extractFunction(background, 'pumpFeedChainSlug'),
+    extractFunction(background, 'slimPumpEvent'),
+  ];
+  const event = {
+    key: 'pump:trade:tx1', eventType: 'PUMP_TRADE', createdAt: '2026-08-31T00:00:00Z',
+    content: { pumpTrade: {
+      wallet: 'BY58Z7N5Adarkx5ed78AzKvR7Kxrq795aa1boZsYyVBT', username: 'QuantJB',
+      side: 'buy', mint: 'HbF1o9Mgwibv9JcQzEVUs52d9z1ibYQpdx8bY8Ntpump', symbol: 'DUVAL',
+      amountUsd: 25, marketCapUsd: 7354, chainName: 'Solana', avatar: '/pump-avatars/a.png',
+      image: 'https://ipfs.io/ipfs/token', tradeTime: '2026-08-31T00:00:01Z',
+    } },
+  };
+  const result = evaluate(functions, `slimPumpEvent(${JSON.stringify(event)})`, { Date, encodeURIComponent });
+  assert.equal(result.source, 'pump');
+  assert.equal(result.chain, 'sol');
+  assert.equal(result.type, 'buy');
+  assert.equal(result.usd, 25);
+  assert.equal(result.avatar, 'https://www.985monitor.xyz/pump-avatars/a.png');
+  assert.equal(result.pumpWallet, event.content.pumpTrade.wallet);
+  assert.equal(evaluate(functions, `slimPumpEvent(${JSON.stringify({ ...event, eventType: 'NEW_TWEET' })})`, { Date, encodeURIComponent }), null);
+});
+
+await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', () => {
+  const functions = [extractFunction(content, 'pumpFeedTokenKey'), extractFunction(content, 'pumpFeedEventAllowed')];
+  const wallet = 'BY58Z7N5Adarkx5ed78AzKvR7Kxrq795aa1boZsYyVBT';
+  const base = { pumpWallet: wallet, type: 'buy', usd: 25, symbol: 'DUVAL', addr: 'HbF1o9Mgwibv9JcQzEVUs52d9z1ibYQpdx8bY8Ntpump' };
+  const run = (cfg, defaults = [wallet], ev = base) => evaluate(functions, `pumpFeedEventAllowed(${JSON.stringify(ev)})`, {
+    monitorPumpCfg: cfg,
+    pumpDefaultWallets: new Set(defaults),
+    isTokenBlocked: () => false,
+  });
+  const cfg = { muted: new Set(), prefs: {}, watch: new Set(), filters: {}, tokenFilters: new Set(), onlyMine: true, globalTradeMinUsd: 10 };
+  assert.equal(run(cfg), true);
+  assert.equal(run({ ...cfg, globalTradeMinUsd: 30 }), false);
+  assert.equal(run({ ...cfg, muted: new Set([wallet]) }), false);
+  assert.equal(run({ ...cfg, prefs: { [wallet]: { types: { buy: false } } } }), false);
+  assert.equal(run({ ...cfg, tokenFilters: new Set(['DUVAL']) }), false);
+  assert.equal(run(cfg, []), false);
+  assert.equal(run({ ...cfg, onlyMine: false }, []), true);
+});
+
+await test('Pump 明确的空代币过滤不会错误回退默认股票名单', () => {
+  assert.match(content, /const tokenValues = Array\.isArray\(raw\?\.tokenFilters\)\s*\? raw\.tokenFilters\s*: \[\.\.\.PUMP_FEED_DEFAULT_TOKEN_FILTERS\]/);
+  assert.ok(!content.includes('Array.isArray(raw?.tokenFilters) && raw.tokenFilters.length'));
+  assert.match(content, /tokenFilters: Array\.isArray\(overlay\?\.pumpTokenFilters\) \? overlay\.pumpTokenFilters : null/);
+});
+
+await test('Pump 推送有独立设置项并复用同一 SSE 连接', () => {
+  assert.ok(popupHtml.includes('id="enable-pump-feed"'));
+  assert.ok(popup.includes('enablePumpFeed: true'));
+  assert.ok(content.includes("chrome.runtime.sendMessage({ type: 'pump-feed' }"));
+  assert.ok(background.includes("eventType === 'pump-trade'"));
+  assert.ok(background.includes("type: 'gdh-pump-push'"));
+  assert.equal((background.match(/api\/events-stream/g) || []).length, 1);
+});
+
 await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async () => {
   const calls = [];
   const chrome = { tabs: {
@@ -333,8 +394,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes("f'{fn}.sha256'"));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.8.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.8.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.9.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.9.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

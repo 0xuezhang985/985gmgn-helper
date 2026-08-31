@@ -20,6 +20,7 @@ const DEFAULTS = {
   enableFlapTax: true,
   flapRpc: '',
   enableFomoFeed: true,
+  enablePumpFeed: true,
   fomoFeedChainOnly: false,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true },
   markedHolders: [
@@ -59,6 +60,7 @@ const markedEnableInput = document.querySelector('#enable-marked-holders');
 const flapEnableInput = document.querySelector('#enable-flap-tax');
 const flapRpcInput = document.querySelector('#flap-rpc');
 const fomoFeedEnableInput = document.querySelector('#enable-fomo-feed');
+const pumpFeedEnableInput = document.querySelector('#enable-pump-feed');
 const fomoFeedChainOnlyInput = document.querySelector('#fomo-feed-chain-only');
 const fomoFeedTypeInputs = {
   buy: document.querySelector('#fomo-feed-buy'),
@@ -173,6 +175,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   flapEnableInput.checked = stored.enableFlapTax !== false;
   flapRpcInput.value = String(stored.flapRpc || '');
   fomoFeedEnableInput.checked = stored.enableFomoFeed !== false;
+  pumpFeedEnableInput.checked = stored.enablePumpFeed !== false;
   fomoFeedChainOnlyInput.checked = stored.fomoFeedChainOnly === true;
   const storedFomoTypes = stored.fomoFeedTypes && typeof stored.fomoFeedTypes === 'object'
     ? stored.fomoFeedTypes : DEFAULTS.fomoFeedTypes;
@@ -228,6 +231,7 @@ saveButton.addEventListener('click', async () => {
     enableFlapTax: flapEnableInput.checked,
     flapRpc: flapRpcInput.value.trim(),
     enableFomoFeed: fomoFeedEnableInput.checked,
+    enablePumpFeed: pumpFeedEnableInput.checked,
     fomoFeedChainOnly: fomoFeedChainOnlyInput.checked,
     fomoFeedTypes: Object.fromEntries(
       Object.entries(fomoFeedTypeInputs).map(([key, input]) => [key, input.checked]),

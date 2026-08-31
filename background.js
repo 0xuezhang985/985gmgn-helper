@@ -812,9 +812,138 @@ async function fetchFomoFeed() {
 }
 
 
-// ---- 985monitor SSE 实时订阅（fomo 事件秒级到达）----
-// MV3 service worker 没有 EventSource，用 fetch 流手工解析。收到 fomo 事件直接
-// 更新 fomoFeedCache 并通知 GMGN 标签页；标签页照旧用 'fomo-feed' 拿缓存（命中
+// ---- 985monitor Pump 成交事件源 ----
+// /api/pump-trade-events 公开返回全量实时成交；前台再按用户同步过来的关注和过滤设置裁剪。
+const PUMP_FEED_URL = 'https://www.985monitor.xyz/api/pump-trade-events?limit=150';
+const PUMP_DEFAULT_WATCH_URL = 'https://www.985monitor.xyz/api/pump-watch/default';
+const PUMP_FEED_MIN_INTERVAL_MS = 15000;
+const PUMP_FEED_KEEP = 150;
+const PUMP_DEFAULT_WATCH_TTL_MS = 5 * 60 * 1000;
+let pumpFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
+let pumpFeedFailCount = 0;
+let pumpFeedBackoffUntil = 0;
+let pumpFeedInflight = null;
+let pumpDefaultWatchCache = { wallets: [], fetchedAt: 0 };
+
+function pumpFeedHttpsUrl(raw, allowLocalAvatar = false) {
+  const value = String(raw || '').trim();
+  if (allowLocalAvatar && value.startsWith('/pump-avatars/')) {
+    return `https://www.985monitor.xyz${value}`.slice(0, 400);
+  }
+  return /^https:\/\//i.test(value) ? value.slice(0, 400) : '';
+}
+
+function pumpFeedChainSlug(trade) {
+  const direct = String(trade?.chainSlug || trade?.chain || '').trim().toLowerCase();
+  if (/^(sol|bsc|base|eth|robinhood|hyperevm)$/.test(direct)) return direct;
+  const byName = {
+    sol: 'sol', solana: 'sol', bnb: 'bsc', bsc: 'bsc', binance: 'bsc',
+    base: 'base', eth: 'eth', ethereum: 'eth', robinhood: 'robinhood',
+    hyperliquid: 'hyperevm', hyperevm: 'hyperevm',
+  };
+  const named = byName[String(trade?.chainName || '').trim().toLowerCase()];
+  if (named) return named;
+  return ({ 1: 'eth', 56: 'bsc', 8453: 'base', 1399811149: 'sol' })[Number(trade?.chainId)] || '';
+}
+
+function slimPumpEvent(raw) {
+  if (!raw || String(raw.eventType || '').toUpperCase() !== 'PUMP_TRADE') return null;
+  const trade = raw?.content?.pumpTrade;
+  if (!trade || typeof trade !== 'object') return null;
+  const type = String(trade.side || '').trim().toLowerCase();
+  if (type !== 'buy' && type !== 'sell') return null;
+  const ts = Date.parse(trade.tradeTime || raw.createdAt || '') || Number(raw.ts) || 0;
+  const chain = pumpFeedChainSlug(trade);
+  const addr = String(trade.mint || trade.tokenAddress || trade.contractAddress || '').trim();
+  const wallet = String(trade.wallet || '').trim();
+  const key = String(raw.key || (trade.tx ? `pump:trade:${trade.tx}` : '')).slice(0, 180);
+  if (!key || !ts || !chain || !addr || !wallet) return null;
+  return {
+    key,
+    source: 'pump',
+    type,
+    handle: String(trade.username || trade.watchName || trade.walletName || '').trim().toLowerCase().slice(0, 64),
+    name: String(trade.watchName || trade.walletName || trade.username || wallet).slice(0, 48),
+    avatar: pumpFeedHttpsUrl(trade.avatar, true),
+    usd: Number(trade.amountUsd) || 0,
+    comment: '',
+    addr: addr.slice(0, 80),
+    chain,
+    chainName: String(trade.chainName || '').slice(0, 32),
+    symbol: String(trade.symbol || '').slice(0, 24),
+    img: pumpFeedHttpsUrl(trade.image),
+    mc: Number(trade.marketCapUsd) || 0,
+    ts,
+    pumpWallet: wallet.slice(0, 48),
+    profileUrl: `https://pump.fun/profile/${encodeURIComponent(wallet)}`,
+  };
+}
+
+async function fetchPumpDefaultWallets() {
+  if (Date.now() - pumpDefaultWatchCache.fetchedAt < PUMP_DEFAULT_WATCH_TTL_MS) {
+    return pumpDefaultWatchCache.wallets;
+  }
+  try {
+    const response = await fetch(PUMP_DEFAULT_WATCH_URL, { cache: 'no-store' });
+    const body = await response.json();
+    if (!response.ok || body?.ok !== true || !Array.isArray(body.rules)) throw new Error(`HTTP ${response.status}`);
+    const wallets = body.rules
+      .filter((item) => item?.enabled !== false)
+      .map((item) => String(item?.userId || '').trim())
+      .filter(Boolean)
+      .slice(0, 500);
+    pumpDefaultWatchCache = { wallets: [...new Set(wallets)], fetchedAt: Date.now() };
+  } catch {
+    // 保留上一次默认名单，事件主链路仍可继续
+  }
+  return pumpDefaultWatchCache.wallets;
+}
+
+async function fetchPumpFeed() {
+  if (pumpFeedInflight) return pumpFeedInflight;
+  const now = Date.now();
+  if (now - pumpFeedCache.fetchedAt < PUMP_FEED_MIN_INTERVAL_MS || now < pumpFeedBackoffUntil) {
+    return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets(), stale: true };
+  }
+  pumpFeedInflight = (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 25000);
+      let response;
+      try {
+        response = await fetch(PUMP_FEED_URL, { cache: 'no-store', signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json();
+      const events = (Array.isArray(body?.events) ? body.events : [])
+        .map(slimPumpEvent)
+        .filter(Boolean)
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, PUMP_FEED_KEEP);
+      pumpFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
+      pumpFeedFailCount = 0;
+      pumpFeedBackoffUntil = 0;
+      return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets() };
+    } catch (error) {
+      pumpFeedFailCount += 1;
+      pumpFeedBackoffUntil = Date.now() + Math.min(15 * 60000, 60000 * Math.pow(2, pumpFeedFailCount - 1));
+      if (pumpFeedCache.events.length) {
+        return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets(), stale: true };
+      }
+      return { ok: false, reason: 'fetch-failed', message: String(error?.message || '').slice(0, 120) };
+    } finally {
+      pumpFeedInflight = null;
+    }
+  })();
+  return pumpFeedInflight;
+}
+
+
+// ---- 985monitor SSE 实时订阅（fomo / Pump 事件秒级到达）----
+// MV3 service worker 没有 EventSource，用 fetch 流手工解析。收到事件直接
+// 更新对应缓存并通知 GMGN 标签页；标签页照旧用消息拿缓存（命中
 // 控频间隔内的 stale 分支，零额外 HTTP）。SW 被挂起时连接自然断，content 侧
 // 18 秒轮询一到就会唤醒 SW 触发重连——轮询同时也是 SSE 断档期的兜底。
 const FOMO_SSE_URL = 'https://www.985monitor.xyz/api/events-stream';
@@ -844,6 +973,29 @@ function fomoSseIngest(raw) {
   fomoSseNotifyTabs();
 }
 
+function pumpSseNotifyTabs() {
+  try {
+    chrome.tabs.query({ url: 'https://gmgn.ai/*' }, (tabs) => {
+      if (chrome.runtime.lastError || !Array.isArray(tabs)) return;
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'gdh-pump-push' }, () => void chrome.runtime.lastError);
+      }
+    });
+  } catch {
+    // tabs 不可用
+  }
+}
+
+function pumpSseIngest(raw) {
+  const ev = slimPumpEvent(raw);
+  if (!ev) return;
+  const rest = pumpFeedCache.events.filter((item) => item.key !== ev.key);
+  rest.unshift(ev);
+  rest.sort((a, b) => b.ts - a.ts);
+  pumpFeedCache = { ...pumpFeedCache, events: rest.slice(0, PUMP_FEED_KEEP), updatedAt: Date.now() };
+  pumpSseNotifyTabs();
+}
+
 async function connectFomoSse() {
   if (fomoSseAbort) return;
   const controller = new AbortController();
@@ -870,10 +1022,11 @@ async function connectFomoSse() {
         const line = buffer.slice(0, idx).replace(/\r$/, '');
         buffer = buffer.slice(idx + 1);
         if (line === '') {
-          if (eventType === 'fomo' && dataLines.length) {
+          if ((eventType === 'fomo' || eventType === 'pump-trade') && dataLines.length) {
             try {
               const payload = JSON.parse(dataLines.join('\n'));
-              if (payload?.event) fomoSseIngest(payload.event);
+              if (payload?.event && eventType === 'fomo') fomoSseIngest(payload.event);
+              if (payload?.event && eventType === 'pump-trade') pumpSseIngest(payload.event);
             } catch {
               // 单帧坏数据不断流
             }
@@ -1177,6 +1330,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'fomo-feed') {
     connectFomoSse(); // SW 被唤醒时顺手把实时流接回来（已连着则立即返回）
     fetchFomoFeed()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'pump-feed') {
+    connectFomoSse(); // fomo 与 Pump 共用 985monitor 的同一条 SSE
+    fetchPumpFeed()
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

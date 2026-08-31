@@ -2252,6 +2252,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   font-size: 9px; line-height: 12px; color: #6b7280;
   border: 1px solid #374151; border-radius: 3px; padding: 0 3px;
 }
+.gdh-fomofeed.is-pump .gdh-fomofeed__src { color: #55d98b; border-color: rgba(85, 217, 139, 0.35); }
 .gdh-fomofeed__time { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed__usd { font-weight: 600; flex: none; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__usd { color: #22c55e; }
