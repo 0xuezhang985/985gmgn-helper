@@ -2219,14 +2219,14 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   padding: 6px 12px;
   box-sizing: border-box;
   overflow: hidden;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
   background: transparent;
   cursor: pointer;
   font-size: 13px;
   line-height: 18px;
-  color: #e8ecf3;
+  color: inherit;
 }
-.gdh-fomofeed:hover { background: rgba(255, 255, 255, 0.04); }
+.gdh-fomofeed:hover { background: color-mix(in srgb, currentColor 4%, transparent); }
 .gdh-fomofeed__r1,
 .gdh-fomofeed__r2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .gdh-fomofeed__av {
@@ -2236,7 +2236,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 .gdh-fomofeed__av img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gdh-fomofeed__name {
-  font-weight: 600; color: #f5f5f5; max-width: 110px;
+  font-weight: 600; color: inherit; max-width: 110px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none;
 }
 .gdh-fomofeed__name:hover { text-decoration: underline; }
@@ -2266,21 +2266,21 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 .gdh-fomofeed__logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .gdh-fomofeed__sym {
-  color: #e8ecf3; max-width: 100px;
+  color: inherit; max-width: 100px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gdh-fomofeed.is-thesis,
 .gdh-fomofeed.is-refund { height: auto; min-height: 64.5px; }
 .gdh-fomofeed__thesis {
-  color: #cbd5e1; font-size: 12px; line-height: 1.5;
+  color: color-mix(in srgb, currentColor 78%, transparent); font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word;
 }
 .gdh-fomofeed .gdh-fomo__zh { margin: 2px 0 0; }
 .gdh-fomofeed__mc { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed.is-new { animation: gdh-fomofeed-flash 1.2s ease-out 1; }
 @keyframes gdh-fomofeed-flash {
-  0% { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.10); }
-  100% { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0); }
+  0% { box-shadow: inset 0 0 0 999px color-mix(in srgb, currentColor 10%, transparent); }
+  100% { box-shadow: inset 0 0 0 999px transparent; }
 }
 
 /* 兜底条：比所有已挂载行都新的事件，钉在滚动容器上方（不参与虚拟化） */
@@ -2348,7 +2348,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomofeed__twho { width: 120px; }
 .gdh-fomofeed__twho .gdh-fomofeed__name { max-width: 62px; }
 .gdh-fomofeed__tsym { width: 120px; }
-.gdh-fomofeed__symtext { overflow: hidden; text-overflow: ellipsis; max-width: 62px; color: #e8ecf3; }
+.gdh-fomofeed__symtext { overflow: hidden; text-overflow: ellipsis; max-width: 62px; color: inherit; }
 .gdh-fomofeed__tamt { width: 84px; font-weight: 600; justify-content: flex-end; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__tamt { color: #22c55e; }
 .gdh-fomofeed.is-sell .gdh-fomofeed__tamt { color: #f87171; }

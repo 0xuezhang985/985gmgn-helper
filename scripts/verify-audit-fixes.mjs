@@ -12,6 +12,7 @@ const content = read('content.js');
 const bridge = read('page-bridge.js');
 const popup = read('popup.js');
 const popupHtml = read('popup.html');
+const styles = read('styles.css');
 const site = read('site/index.html');
 const bgmSync = read('scripts/sync-bgm-download.py');
 
@@ -371,6 +372,16 @@ await test('追踪流 mutation 重排合帧且隐藏标签不全量扫描', () =
   assert.ok(content.includes("if (document.visibilityState !== 'hidden') scanVisibleCards();"));
 });
 
+await test('FOMO/Pump 插卡主文字继承 GMGN 明暗主题', () => {
+  assert.match(styles, /\.gdh-fomofeed\s*\{[\s\S]*?color:\s*inherit;/);
+  assert.match(styles, /\.gdh-fomofeed__name\s*\{[\s\S]*?color:\s*inherit;/);
+  assert.match(styles, /\.gdh-fomofeed__sym\s*\{[\s\S]*?color:\s*inherit;/);
+  assert.match(styles, /\.gdh-fomofeed__symtext\s*\{[^}]*color:\s*inherit;/);
+  assert.match(styles, /\.gdh-fomofeed:hover\s*\{\s*background:\s*color-mix\(in srgb, currentColor 4%, transparent\);\s*\}/);
+  assert.ok(!styles.includes('.gdh-fomofeed__name {\n  font-weight: 600; color: #f5f5f5;'));
+  assert.ok(!styles.includes('.gdh-fomofeed__sym {\n  color: #e8ecf3;'));
+});
+
 await test('Pump 成交按已验证字段瘦身并映射到 GMGN 链', () => {
   const functions = [
     extractFunction(background, 'pumpFeedHttpsUrl'),
@@ -505,7 +516,7 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.17' }) },
+      runtime: { getManifest: () => ({ version: '0.46.18' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -518,15 +529,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.17');
+  assert.equal(saved.gdhRunningVersion, '0.46.18');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.17' }) },
+      runtime: { getManifest: () => ({ version: '0.46.18' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.17' }),
+        get: async () => ({ gdhRunningVersion: '0.46.18' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -660,8 +671,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.17.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.17.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.18.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.18.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
