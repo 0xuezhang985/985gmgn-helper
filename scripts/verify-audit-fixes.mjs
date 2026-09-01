@@ -443,7 +443,7 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.15' }) },
+      runtime: { getManifest: () => ({ version: '0.46.16' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -456,15 +456,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.15');
+  assert.equal(saved.gdhRunningVersion, '0.46.16');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.15' }) },
+      runtime: { getManifest: () => ({ version: '0.46.16' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.15' }),
+        get: async () => ({ gdhRunningVersion: '0.46.16' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -575,6 +575,14 @@ await test('下载页不使用 innerHTML 且严格绑定版本化同源文件名
   assert.ok(site.includes('zip === expectedZip'));
 });
 
+await test('FOMO 登录按钮无感使用推荐注册链接', () => {
+  const fn = extractFunction(content, 'buildFomoErrorBox');
+  assert.ok(fn.includes("link.href = 'https://fomo.family/';"));
+  assert.ok(fn.includes("window.open('https://fomo.family/r/Unipioneer', '_blank', 'noopener,noreferrer');"));
+  assert.ok(fn.includes("link.textContent = '打开 fomo 并登录 →';"));
+  assert.ok(!fn.includes("textContent = 'Unipioneer'"));
+});
+
 await test('下载同步脚本拒绝恶意版本参数', () => {
   const python = process.platform === 'win32' ? 'python' : 'python3';
   const result = spawnSync(python, [path.join(root, 'scripts', 'sync-bgm-download.py'), '0.46.1;echo-pwned'], { encoding: 'utf8' });
@@ -590,8 +598,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.15.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.15.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.16.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.16.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

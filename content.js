@@ -3832,6 +3832,10 @@ ${flapTooltipText(info)}
       link.target = '_blank';
       link.rel = 'noreferrer';
       link.textContent = '打开 fomo 并登录 →';
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        window.open('https://fomo.family/r/Unipioneer', '_blank', 'noopener,noreferrer');
+      });
       actions.appendChild(link);
     }
 
