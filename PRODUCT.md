@@ -4,7 +4,7 @@
 
 ## Product Purpose
 
-better gmgn 是一个 Chrome MV3 扩展，给 GMGN.ai 叠加一层交易辅助：重点 Dev 高亮、fomo.family 的观点与持仓者搬进 GMGN、fomo 买卖事件秒级混排进追踪流、标注人物完整持仓徽章、持仓异动大卡片提醒、追踪流降噪。它不替代 GMGN，是长在 GMGN 上的外挂层。
+better gmgn 是一个 Chrome MV3 扩展，主要给 GMGN.ai 叠加一层交易辅助：重点 Dev 高亮、fomo.family 的观点与持仓者、fomo/Pump 事件混排、标注人物持仓徽章、持仓异动提醒和追踪流降噪。DeBot 只适配 FOMO/Pump 追踪插卡与 FOMO 小窗，不扩散其他 GMGN 专属功能。
 
 ## Users
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>better gmgn — 给 GMGN 加一层交易辅助</title>
-<meta name="description" content="better gmgn：Chrome 扩展。fomo 与 Pump 买卖事件秒级混排进 GMGN 追踪流、标注人物完整持仓徽章、重点 Dev 高亮、持仓异动大卡片提醒。">
+<title>better gmgn — 给 GMGN 与 DeBot 加一层交易辅助</title>
+<meta name="description" content="better gmgn：Chrome 扩展。fomo 与 Pump 买卖事件秒级混排进 GMGN / DeBot 追踪流，并提供 FOMO 小窗、重点 Dev 高亮与持仓异动提醒。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -143,11 +143,11 @@ footer .sp{flex:1}
   <img class="logo" src="icon128.png" alt="better gmgn 图标" width="64" height="64">
   <div class="kicker">CHROME / EDGE 扩展 · 985monitor 出品</div>
   <h1>better gmgn</h1>
-  <p class="tagline">给 GMGN 加一层交易辅助。<b>fomo 与 Pump 买卖秒级混进追踪流</b>，标注人物的完整持仓打在每个币旁边，重点 Dev 一眼认出。</p>
+  <p class="tagline">给 GMGN 与 DeBot 加一层交易辅助。<b>fomo 与 Pump 买卖秒级混进追踪流</b>；GMGN 继续提供标注人物持仓、重点 Dev 与持仓提醒。</p>
   <p class="sub">所有名单、配置、登录令牌只存你浏览器本地，代码开源。</p>
   <div class="dl">
-      <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.19.exe" download>下载安装器 (.exe)</a>
-      <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.19.zip" download>zip 手动安装</a>
+      <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.20.exe" download>下载安装器 (.exe)</a>
+      <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.20.zip" download>zip 手动安装</a>
     <span class="ver" id="ver">最新版本 <b>加载中…</b></span>
   </div>
   <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
@@ -161,13 +161,13 @@ footer .sp{flex:1}
     <div>
       <h3>fomo 与 Pump 买卖，<em>秒级</em>混进追踪流</h3>
       <ul>
-        <li><b>按真实时间戳</b>插在你钱包追踪推送之间，和原生卡同样式同高，用 <b>[fomo]</b> / <b>[Pump]</b> 小标区分来源</li>
+        <li><b>按真实时间戳</b>插在 GMGN / DeBot 的钱包追踪推送之间，贴合各站原生行高，用 <b>[fomo]</b> / <b>[Pump]</b> 小标区分来源</li>
         <li>走 985monitor 的 SSE 实时通道，事件发生到上屏<b>秒级</b></li>
         <li>观点卡完整显示正文，非中文<b>自动补本机译文</b>（原文保留）</li>
         <li>左缘链条色与 GMGN Fusion 一致：BSC 黄、Solana 紫、Robinhood 绿，你自定义过的链色自动跟随</li>
         <li>点卡片站内无刷新跳代币页；屏蔽的人、关掉的事件类型，直接沿用你在 985monitor 网页上的配置</li>
       </ul>
-      <p class="how">插卡不会打乱 GMGN 自己的列表布局。</p>
+      <p class="how">DeBot 只启用追踪插卡与 FOMO 小窗，不注入 GMGN 专属的其它功能。</p>
     </div>
     <div class="demo" aria-hidden="true">
       <div class="demo-cap">追踪流 · 混排实景</div>
@@ -209,7 +209,7 @@ footer .sp{flex:1}
     <div>
       <h3>fomo 浮窗：<em>谁在持有，他最近行不行</em></h3>
       <ul>
-        <li>GMGN 代币页右下角 <b>fomo</b> 按钮：该币在 fomo 上的持仓者、盈亏、平均入场、观点、成交流水</li>
+        <li>GMGN / DeBot 代币页右下角 <b>fomo</b> 按钮：该币在 fomo 上的持仓者、盈亏、平均入场、观点、成交流水</li>
         <li>每个人带 <b>7 天盈亏标记</b>（🔥顶级 / 🟢盈利 / 🔴亏损 / 💀重亏），金额和收益率取低档，大户小赚不算高手</li>
         <li>标出他按持仓量在<b>链上持有者表排第几</b>；榜上的人带 🏆 名次与 🧠聪明钱 / ⭐KOL 标</li>
         <li>英文观点自动翻中文，原文保留；顶部 fomo 持有人数与持仓占比统计</li>
@@ -268,7 +268,7 @@ footer .sp{flex:1}
   <div class="sec-head rv"><span class="sec-no">03</span><h2>初次配置</h2></div>
   <p class="sec-lede rv">装好后把下面三个网页各打开一次就行。</p>
   <div class="steps rv">
-    <div class="step"><div><h4>登录 gmgn.ai</h4><p>你平时怎么用就怎么用。战壕高亮、追踪流增强、混排立即生效。</p></div></div>
+    <div class="step"><div><h4>打开 gmgn.ai 或 debot.ai</h4><p>GMGN 保留全部功能；DeBot 进入追踪记录页可用 FOMO/Pump 插卡，进入代币页可用 FOMO 小窗。</p></div></div>
     <div class="step"><div><h4>登录一次 fomo.family</h4><p>fomo 浮窗和混排需要你自己的 fomo 登录态。登录后插件自动接管令牌并<b>永续续期</b>（含页面加载抢跑同步，不会再反复要求重登）。没账号也不影响其它功能。</p></div></div>
     <div class="step"><div><h4>打开一次 985monitor</h4><p>你在 <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a> 网页上的 fomo/Pump 屏蔽名单、每个人的事件开关和 Pump 过滤，自动同步给插件。之后每次改动都会跟过来。</p></div></div>
   </div>
@@ -284,7 +284,7 @@ footer .sp{flex:1}
     <div><b>GMGN 数据</b><span>行情流不复制登录态；读取持仓和 App 通知开关时，站点 Bearer 只发回 gmgn.ai，不写入扩展存储。</span></div>
     <div><b>翻译</b><span>浏览器内置本地模型，内容不出你的电脑。</span></div>
     <div><b>开源</b><span>代码全部公开：<a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub 仓库</a>，逐版本 CHANGELOG 与 <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私说明</a>。</span></div>
-    <div><b>隐私边界</b><span>你添加的标注人物只保存在浏览器本地，由插件在 GMGN 站内查询；不会上传到 985 服务器共享名单。</span></div>
+    <div><b>隐私边界</b><span>DeBot 适配不读取登录凭据、不接管 WebSocket、不执行交易；你添加的标注人物仍只在 GMGN 站内查询。</span></div>
   </div>
 </section>
 
@@ -293,7 +293,7 @@ footer .sp{flex:1}
   <div class="rv">
     <details><summary>装好了但页面上什么都没出现</summary><div class="a">先刷新 GMGN 页面。仍没有就到 <code>chrome://extensions</code> 确认插件已启用，点一下刷新按钮 ⟳ 再回来。</div></details>
     <details><summary>fomo 浮窗提示登录态过期</summary><div class="a">按浮窗里的引导去 fomo.family 登录一次即可。v0.46.1 起由真实 FOMO 页面 SDK 单独续期，扩展会保留一个不抢焦点的守护页；服务端主动撤销会话时仍需重新登录。</div></details>
-    <details><summary>混排里怎么没有 fomo 卡片</summary><div class="a">混排只在追踪流所在页面工作，且需要 985monitor 数据源可达。检查插件配置页里「fomo 推送混排」总开关；刚打开页面等几秒，事件是按真实时间锚定的，比当前可见推送更老的事件会随滚动补位。</div></details>
+    <details><summary>混排里怎么没有 fomo 卡片</summary><div class="a">混排只在追踪流所在页面工作：GMGN 打开追踪流，DeBot 打开「追踪记录」（URL 中为 <code>tab=track</code>）。还要确保 985monitor 数据源可达且插件里的「fomo 推送混排」已开启；比当前可见推送更老的事件会随滚动补位。</div></details>
     <details><summary>👤 徽章不显示</summary><div class="a">确认浏览器已登录 GMGN。持仓数据 2~3 分钟一轮更新；$30 以下的灰尘仓不计为持有。</div></details>
     <details><summary>升级会丢配置吗</summary><div class="a">不会。扩展 ID 固定，名单与配置都在原地；安装器升级前自动备份，失败回滚，保留最近 3 份备份。</div></details>
     <details><summary>和 985monitor 是什么关系</summary><div class="a">同一个作者的两件东西：985monitor 是网页端多源监控台，插件把其中 fomo/Pump 数据流和你的配置接进 GMGN 页面内。插件可独立使用，配置同步是可选增强。</div></details>

@@ -10,11 +10,17 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const background = read('background.js');
 const content = read('content.js');
 const bridge = read('page-bridge.js');
+const debotContent = read('debot-content.js');
+const debotBridge = read('debot-bridge.js');
+const debotStyles = read('debot-styles.css');
+const manifest = JSON.parse(read('manifest.json'));
+const releaseBuild = read('scripts/build-release.ps1');
 const popup = read('popup.js');
 const popupHtml = read('popup.html');
 const styles = read('styles.css');
 const site = read('site/index.html');
 const bgmSync = read('scripts/sync-bgm-download.py');
+const privacy = read('PRIVACY.md');
 
 function extractFunction(source, name) {
   const functionStart = source.indexOf(`function ${name}(`);
@@ -522,14 +528,145 @@ await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
 });
 
-await test('版本变更后只刷新一次已打开的 GMGN 标签页', async () => {
-  const fn = extractFunction(background, 'refreshGmgnTabsAfterVersionChange');
+await test('DeBot 只注入追踪桥、混排脚本和 FOMO 小窗样式', () => {
+  assert.ok(manifest.host_permissions.includes('https://debot.ai/*'));
+  const debotScripts = manifest.content_scripts.filter((entry) => entry.matches.includes('https://debot.ai/*'));
+  assert.equal(debotScripts.length, 2);
+  const main = debotScripts.find((entry) => entry.world === 'MAIN');
+  const isolated = debotScripts.find((entry) => entry.world !== 'MAIN');
+  assert.deepEqual(main.js, ['debot-bridge.js']);
+  assert.deepEqual(isolated.js, ['debot-content.js']);
+  assert.deepEqual(isolated.css, ['debot-styles.css']);
+  assert.ok(!isolated.js.includes('content.js'));
+  for (const file of ['debot-bridge.js', 'debot-content.js', 'debot-styles.css']) {
+    assert.ok(releaseBuild.includes(`'${file}'`), `release missing ${file}`);
+  }
+});
+
+await test('DeBot 登录与未登录代币路由都能提取真实地址', () => {
+  const fn = extractFunction(debotContent, 'debotTokenRoute');
+  const evm = '0xfdae23ce76018da62507bb5ef20e6ef5450e8312';
+  const base = { FOMO_NETWORK_ID: { robinhood: 4663, sol: 1399811149 } };
+  const direct = evaluate([fn], 'debotTokenRoute()', {
+    ...base, location: { pathname: `/token/robinhood/${evm}` }, decodeURIComponent,
+  });
+  const invited = evaluate([fn], 'debotTokenRoute()', {
+    ...base, location: { pathname: `/token/robinhood/invite985_${evm}` }, decodeURIComponent,
+  });
+  const sol = 'HbF1o9Mgwibv9JcQzEVUs52d9z1ibYQpdx8bY8Ntpump';
+  const solRoute = evaluate([fn], 'debotTokenRoute()', {
+    ...base, location: { pathname: `/token/sol/invite985_${sol}` }, decodeURIComponent,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(direct)), { chain: 'robinhood', address: evm, networkId: 4663 });
+  assert.deepEqual(JSON.parse(JSON.stringify(invited)), { chain: 'robinhood', address: evm, networkId: 4663 });
+  assert.deepEqual(JSON.parse(JSON.stringify(solRoute)), { chain: 'sol', address: sol, networkId: 1399811149 });
+});
+
+await test('DeBot 主世界桥只接受完整追踪成交字段', () => {
+  const functions = [
+    extractFunction(debotBridge, 'safeString'),
+    extractFunction(debotBridge, 'eventTimeMs'),
+    extractFunction(debotBridge, 'normalizeTrackRecord'),
+  ];
+  const record = {
+    token: '0xfdae23ce76018da62507bb5ef20e6ef5450e8312',
+    chain: 'robinhood', trader: '0x1111111111111111111111111111111111111111',
+    time: 1788220800, op: 'buy', volume: 123.45, tx: '0xabc', mc: 8_100_000,
+  };
+  const result = evaluate(functions, `normalizeTrackRecord(${JSON.stringify(record)})`);
+  assert.equal(result.chain, 'robinhood');
+  assert.equal(result.side, 'buy');
+  assert.equal(result.ts, 1788220800000);
+  assert.equal(result.usd, 123.45);
+  assert.equal(evaluate(functions, `normalizeTrackRecord(${JSON.stringify({ ...record, trader: '' })})`), null);
+  assert.equal(evaluate(functions, `normalizeTrackRecord(${JSON.stringify({ ...record, op: 'transfer' })})`), null);
+  assert.match(debotBridge, /TrackContent[\s\S]*\{ token, chain, trader, time, op, volume, tx, mc \}/);
+});
+
+await test('DeBot 混排不向 React tbody 插未知节点且沿用单一后台事件流', () => {
+  const layout = extractFunction(debotContent, 'layoutFeed');
+  assert.ok(layout.includes("scroller.appendChild(card)"));
+  assert.ok(layout.includes('row.style.translate'));
+  assert.ok(layout.includes('table.style.marginBottom'));
+  assert.ok(!layout.includes('tbody.appendChild'));
+  assert.ok(debotContent.includes("type: 'fomo-feed'"));
+  assert.ok(debotContent.includes("type: 'pump-feed'"));
+  assert.ok(!debotContent.includes('new WebSocket'));
+  assert.ok(!debotContent.includes('EventSource'));
+  assert.ok(!debotContent.includes('/api/events-stream'));
+  assert.equal((background.match(/api\/events-stream/g) || []).length, 1);
+  assert.match(background, /\['https:\/\/gmgn\.ai\/\*', 'https:\/\/debot\.ai\/\*'\]/);
+  assert.ok(debotStyles.includes('.gdh-debot-feed__row.is-absolute'));
+});
+
+await test('DeBot FOMO/Pump 事件按时间锚定原生行并限制顶部数量', () => {
+  const fn = extractFunction(debotContent, 'debotFeedPlacementPlan');
+  const rowTimes = [100_000, 80_000, 60_000, 40_000];
+  const events = [
+    ...Array.from({ length: 8 }, (_, index) => ({ key: `head-${index}`, ts: 110_000 - index })),
+    { key: 'middle-a', ts: 90_000 },
+    { key: 'middle-b', ts: 70_000 },
+    { key: 'old', ts: 20_000 },
+  ];
+  const plan = evaluate([fn], `debotFeedPlacementPlan(${JSON.stringify(rowTimes)}, ${JSON.stringify(events)})`, {
+    FEED_HEAD_CAP: 6,
+    FEED_VISIBLE_CAP: 12,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(plan.map((item) => [item.event.key, item.anchor]))), [
+    ['head-0', 0], ['head-1', 0], ['head-2', 0], ['head-3', 0], ['head-4', 0], ['head-5', 0],
+    ['middle-a', 1], ['middle-b', 2],
+  ]);
+});
+
+await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码', () => {
+  assert.ok(debotContent.includes("type: 'fomo-token-feed'"));
+  assert.ok(debotContent.includes("type: 'fomo-user-pnl'"));
+  assert.ok(debotContent.includes("type: 'token-supply'"));
+  assert.ok(debotContent.includes("open.href = 'https://fomo.family/';"));
+  assert.ok(debotContent.includes("window.open('https://fomo.family/r/Unipioneer'"));
+  assert.ok(!debotContent.includes("textContent = 'Unipioneer'"));
+  assert.ok(debotContent.includes("['holders', '持仓者']"));
+  assert.ok(debotContent.includes("['thesis', '观点']"));
+  assert.ok(debotContent.includes("['swaps', '交易']"));
+});
+
+await test('DeBot FOMO 持仓占比优先读取同源代币详情总供应量', async () => {
+  const fn = extractFunction(debotContent, 'loadDebotTokenSupply');
+  const address = '0xfdae23ce76018da62507bb5ef20e6ef5450e8312';
+  const cache = new Map();
+  const supply = await evaluate([fn], `loadDebotTokenSupply({ chain: 'robinhood', address: '${address}' })`, {
+    debotSupplyCache: cache,
+    location: { origin: 'https://debot.ai' },
+    normalizeAddress: (value) => String(value || '').toLowerCase(),
+    fetch: async (url, options) => {
+      assert.equal(url.origin, 'https://debot.ai');
+      assert.equal(url.pathname, '/api/dashboard/token/detail');
+      assert.equal(url.searchParams.get('chain'), 'robinhood');
+      assert.equal(url.searchParams.get('token'), address);
+      assert.match(url.searchParams.get('request_id'), /^gdh_/);
+      assert.equal(options.credentials, 'include');
+      return {
+        ok: true,
+        json: async () => ({ code: 0, data: { pair: { chain: 'robinhood', tokenAddress: address, totalSupply: 1_000_000_000 } } }),
+      };
+    },
+    URL,
+    Date,
+    Math,
+  });
+  assert.equal(supply, 1_000_000_000);
+  assert.equal(cache.get(`robinhood|${address}`).supply, 1_000_000_000);
+  assert.match(privacy, /DeBot 已公开展示的代币详情总供应量/);
+});
+
+await test('版本变更后只刷新一次已打开的支持站点标签页', async () => {
+  const fn = extractFunction(background, 'refreshSupportedTabsAfterVersionChange');
   const reloaded = [];
   const saved = {};
-  await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
+  await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.19' }) },
+      runtime: { getManifest: () => ({ version: '0.46.20' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -542,15 +679,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.19');
+  assert.equal(saved.gdhRunningVersion, '0.46.20');
 
   reloaded.length = 0;
-  await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
+  await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.19' }) },
+      runtime: { getManifest: () => ({ version: '0.46.20' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.19' }),
+        get: async () => ({ gdhRunningVersion: '0.46.20' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -684,8 +821,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.19.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.19.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.20.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.20.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

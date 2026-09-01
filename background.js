@@ -7,16 +7,16 @@ const CHECK_INTERVAL_MINUTES = 360;
 const RUNNING_VERSION_KEY = 'gdhRunningVersion';
 
 /**
- * 一键升级会先替换扩展文件，再 chrome.runtime.reload()。已打开的 GMGN
+ * 一键升级会先替换扩展文件，再 chrome.runtime.reload()。已打开的支持站点
  * 页里还是旧 content script，扩展重载后它的 runtime 上下文已失效，不会
- * 自己变成新版。新后台首次启动时只刷新一次 GMGN 标签页，让新脚本真正注入。
+ * 自己变成新版。新后台首次启动时只刷新一次标签页，让新脚本真正注入。
  */
-async function refreshGmgnTabsAfterVersionChange() {
+async function refreshSupportedTabsAfterVersionChange() {
   try {
     const version = chrome.runtime.getManifest().version;
     const stored = await chrome.storage.local.get(RUNNING_VERSION_KEY);
     if (stored?.[RUNNING_VERSION_KEY] === version) return;
-    const tabs = await chrome.tabs.query({ url: 'https://gmgn.ai/*' });
+    const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
     await Promise.allSettled(
       tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.tabs.reload(tab.id)),
     );
@@ -26,7 +26,7 @@ async function refreshGmgnTabsAfterVersionChange() {
   }
 }
 
-refreshGmgnTabsAfterVersionChange();
+refreshSupportedTabsAfterVersionChange();
 
 function sendNativeMessage(message) {
   return new Promise((resolve, reject) => {
@@ -984,7 +984,7 @@ async function fetchPumpFeed() {
 
 // ---- 985monitor SSE 实时订阅（fomo / Pump 事件秒级到达）----
 // MV3 service worker 没有 EventSource，用 fetch 流手工解析。收到事件直接
-// 更新对应缓存并通知 GMGN 标签页；标签页照旧用消息拿缓存（命中
+// 更新对应缓存并通知 GMGN / DeBot 标签页；标签页照旧用消息拿缓存（命中
 // 控频间隔内的 stale 分支，零额外 HTTP）。SW 被挂起时连接自然断，content 侧
 // 18 秒轮询一到就会唤醒 SW 触发重连——轮询同时也是 SSE 断档期的兜底。
 const FOMO_SSE_URL = 'https://www.985monitor.xyz/api/events-stream';
@@ -1000,7 +1000,7 @@ function trackingFeedComparableId(ev) {
 
 function fomoSseNotifyTabs() {
   try {
-    chrome.tabs.query({ url: 'https://gmgn.ai/*' }, (tabs) => {
+    chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] }, (tabs) => {
       if (chrome.runtime.lastError || !Array.isArray(tabs)) return;
       for (const tab of tabs) {
         chrome.tabs.sendMessage(tab.id, { type: 'gdh-fomo-push' }, () => void chrome.runtime.lastError);
@@ -1027,7 +1027,7 @@ function fomoSseIngest(raw) {
 
 function pumpSseNotifyTabs() {
   try {
-    chrome.tabs.query({ url: 'https://gmgn.ai/*' }, (tabs) => {
+    chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] }, (tabs) => {
       if (chrome.runtime.lastError || !Array.isArray(tabs)) return;
       for (const tab of tabs) {
         chrome.tabs.sendMessage(tab.id, { type: 'gdh-pump-push' }, () => void chrome.runtime.lastError);
