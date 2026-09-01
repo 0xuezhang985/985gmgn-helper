@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.21 - 2026-09-01
+
+- 修复 DeBot 适配目标错位：v0.46.20 只在中间的 `/track?tab=track` 表格插卡，用户给出的 `/track?tab=manager` 页面左侧常驻追踪面板不会显示 FOMO/Pump；新版在管理、追踪等 `/track` 标签中都向左侧追踪面板按时间混排。
+- 左侧面板按 DeBot 实际的 `data-edge-dock-panel="track"` 与 67px TableVirtuoso 行定位，不向 React 的 `virtuoso-item-list` 插入子节点；卡片放在同一滚动坐标系，原生行单独让位并在虚拟行回收后重算，避免上下滚动错位。
+- 左侧卡片复用现有单条 985monitor SSE、关注/屏蔽/金额过滤、链过滤和去重逻辑；顶部最多插入 3 条、当前可见区最多 8 条，不恢复顶部暂存条。GMGN 核心脚本未改，Chrome 登录态实测 GMGN 仍有 6 张混排卡、12 条追踪行和正常 FOMO/通知入口。
+- Chrome 登录态实测 DeBot 代币页 FOMO 小窗正常加载：持有人数 456、已加载 48 条持仓、持仓占比不低于 16.1%。语法检查通过，自动化回归增至 50 项。
+
 ## 0.46.20 - 2026-09-01
 
 - 新增 DeBot 定向适配：只在 `/track?tab=track` 追踪记录页按真实时间插入 FOMO/Pump 事件，并在 `/token/<chain>/<token>` 代币页提供独立的 FOMO 小窗；Dev 高亮、持仓提醒、黑名单等 GMGN 专属功能不会注入 DeBot。

@@ -618,6 +618,36 @@ await test('DeBot FOMO/Pump 事件按时间锚定原生行并限制顶部数量'
   ]);
 });
 
+await test('DeBot 左侧追踪面板在管理标签页也会混排且不写入 React 列表', () => {
+  const routeFn = extractFunction(debotContent, 'isTrackShellPage');
+  assert.equal(evaluate([routeFn], 'isTrackShellPage()', { location: { pathname: '/track' } }), true);
+  assert.equal(evaluate([routeFn], 'isTrackShellPage()', { location: { pathname: '/token/robinhood/0x1' } }), false);
+
+  const planFn = extractFunction(debotContent, 'sidebarFeedPlacementPlan');
+  const rowTimes = [100_000, 80_000, 60_000];
+  const events = [
+    ...Array.from({ length: 5 }, (_, index) => ({ key: `head-${index}`, ts: 110_000 - index })),
+    { key: 'middle', ts: 70_000 },
+  ];
+  const plan = evaluate([planFn], `sidebarFeedPlacementPlan(${JSON.stringify(rowTimes)}, ${JSON.stringify(events)})`, {
+    SIDEBAR_FEED_HEAD_CAP: 3,
+    SIDEBAR_FEED_VISIBLE_CAP: 8,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(plan.map((item) => [item.event.key, item.anchor]))), [
+    ['head-0', 0], ['head-1', 0], ['head-2', 0], ['middle', 2],
+  ]);
+  const layout = extractFunction(debotContent, 'layoutSidebarFeed');
+  assert.ok(debotContent.includes('[data-edge-dock-panel="track"]'));
+  assert.ok(debotContent.includes('[data-testid="virtuoso-item-list"]'));
+  assert.ok(layout.includes('layout.scroller.appendChild(card)'));
+  assert.ok(layout.includes('row.style.translate'));
+  assert.ok(layout.includes('layout.list.style.marginBottom'));
+  assert.ok(!layout.includes('layout.list.appendChild'));
+  assert.match(debotContent, /async function pollFomo[\s\S]*if \(!isTrackShellPage\(\)/);
+  assert.match(debotContent, /async function pollPump[\s\S]*if \(!isTrackShellPage\(\)/);
+  assert.ok(debotStyles.includes('.gdh-debot-sidefeed__row'));
+});
+
 await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码', () => {
   assert.ok(debotContent.includes("type: 'fomo-token-feed'"));
   assert.ok(debotContent.includes("type: 'fomo-user-pnl'"));
@@ -666,7 +696,7 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
   await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.20' }) },
+      runtime: { getManifest: () => ({ version: '0.46.21' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -679,15 +709,15 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.20');
+  assert.equal(saved.gdhRunningVersion, '0.46.21');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.20' }) },
+      runtime: { getManifest: () => ({ version: '0.46.21' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.20' }),
+        get: async () => ({ gdhRunningVersion: '0.46.21' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -821,8 +851,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.20.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.20.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.21.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.21.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

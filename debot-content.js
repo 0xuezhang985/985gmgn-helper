@@ -46,6 +46,9 @@
   const FEED_RENDER_CAP = 40;
   const FEED_VISIBLE_CAP = 12;
   const FEED_HEAD_CAP = 6;
+  const SIDEBAR_FEED_ROW_HEIGHT = 67;
+  const SIDEBAR_FEED_VISIBLE_CAP = 8;
+  const SIDEBAR_FEED_HEAD_CAP = 3;
   const PANEL_REFRESH_MS = 30000;
 
   let settings = { ...DEFAULTS };
@@ -62,8 +65,8 @@
   let feedRenderRaf = 0;
   let feedPollTimer = 0;
   let feedObserver = null;
-  let feedScrollTarget = null;
   const feedCards = new Map();
+  const sidebarFeedCards = new Map();
   const feedSeen = new Set();
 
   let panel = null;
@@ -142,6 +145,10 @@
   function isTrackPage() {
     return location.pathname === '/track'
       && new URLSearchParams(location.search).get('tab') === 'track';
+  }
+
+  function isTrackShellPage() {
+    return location.pathname === '/track';
   }
 
   /** DeBot 登录后会把 inviteCode 拼成 /token/chain/invite_address。 */
@@ -258,6 +265,7 @@
     if (event.chain && row.chain && safeText(event.chain, 24).toLowerCase() !== row.chain) return false;
     if (!event.ts || !row.ts || Math.abs(Number(event.ts) - row.ts) > 15000) return false;
     if (event.source === 'pump' && normalizeAddress(event.pumpWallet) !== row.maker) return false;
+    if (row.sidebar && event.source === 'pump') return true;
     const usd = Number(event.usd) || 0;
     return !!(usd && row.usd && Math.abs(usd - row.usd) <= Math.max(1, Math.max(usd, row.usd) * 0.05));
   }
@@ -479,12 +487,159 @@
     return plan;
   }
 
+  function sidebarFeedPlacementPlan(rowTimes, events) {
+    if (!rowTimes.length) return [];
+    const plan = [];
+    let headCount = 0;
+    for (const event of events) {
+      let anchor = -1;
+      if (Number(event.ts) >= Number(rowTimes[0])) {
+        if (headCount >= SIDEBAR_FEED_HEAD_CAP) continue;
+        anchor = 0;
+        headCount += 1;
+      } else {
+        anchor = rowTimes.findIndex((time) => Number(event.ts) >= Number(time));
+        if (anchor < 0) continue;
+      }
+      plan.push({ event, anchor });
+      if (plan.length >= SIDEBAR_FEED_VISIBLE_CAP) break;
+    }
+    return plan;
+  }
+
+  function sidebarTrackLayout() {
+    const panelRoot = document.querySelector('[data-edge-dock-panel="track"]');
+    const scroller = panelRoot?.querySelector('[data-testid="virtuoso-scroller"][data-virtuoso-scroller]');
+    const list = scroller?.querySelector('[data-testid="virtuoso-item-list"]');
+    return scroller instanceof HTMLElement && list instanceof HTMLElement ? { scroller, list } : null;
+  }
+
+  function sidebarTrackRows(list) {
+    return [...list.querySelectorAll(':scope > div[data-index][data-known-size]')]
+      .filter((row) => row instanceof HTMLElement && !row.hasAttribute('data-gdh-debot-fomo-key'));
+  }
+
+  function sidebarRowTime(row, now = Date.now()) {
+    const rowRect = row.getBoundingClientRect();
+    const candidates = [...row.querySelectorAll('span, div')].filter((node) => {
+      if (node.children.length) return false;
+      const text = safeText(node.textContent, 12);
+      if (!/^\d+(?:s|m|h|d)$/.test(text)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.right >= rowRect.right - 64 && rect.top < rowRect.top + 34;
+    });
+    const text = safeText(candidates.at(-1)?.textContent, 12);
+    const match = text.match(/^(\d+)(s|m|h|d)$/);
+    if (!match) return 0;
+    const multiplier = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]];
+    return now - Number(match[1]) * multiplier;
+  }
+
+  function sidebarNativeFingerprint(row, now = Date.now()) {
+    const tokenLink = row.querySelector('a[href*="/token/"]');
+    const walletLink = row.querySelector('a[href*="/address/"]');
+    let tokenPath = '';
+    let walletPath = '';
+    try { tokenPath = new URL(tokenLink?.href || '', location.origin).pathname; } catch {}
+    try { walletPath = new URL(walletLink?.href || '', location.origin).pathname; } catch {}
+    const tokenMatch = tokenPath.match(/^\/token\/([a-z0-9_-]+)\/([^/?#]+)/i);
+    const walletMatch = walletPath.match(/^\/address\/[a-z0-9_-]+\/([^/?#]+)/i);
+    let addr = tokenMatch?.[2] || '';
+    try { addr = decodeURIComponent(addr); } catch {}
+    addr = addr.slice(addr.lastIndexOf('_') + 1);
+    const text = safeText(row.innerText, 500);
+    const side = /买入|建仓|加仓|转入/.test(text) ? 'buy'
+      : /卖出|清仓|减仓/.test(text) ? 'sell' : '';
+    return {
+      tx: '',
+      addr: normalizeAddress(addr),
+      chain: safeText(tokenMatch?.[1], 24).toLowerCase(),
+      side,
+      maker: normalizeAddress(walletMatch?.[1]),
+      ts: sidebarRowTime(row, now),
+      usd: 0,
+      sidebar: true,
+    };
+  }
+
+  function sidebarFeedCard(event) {
+    let card = sidebarFeedCards.get(event.key);
+    if (!card) {
+      const tag = FEED_TAGS[event.type] || { label: '事件', cls: '' };
+      const profile = profileMeta(event);
+      card = document.createElement('div');
+      card.className = `gdh-debot-sidefeed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
+      card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+
+      const stripe = document.createElement('span');
+      stripe.className = 'gdh-debot-sidefeed__stripe';
+      stripe.style.backgroundColor = CHAIN_COLORS[event.chain] || '#8a93a6';
+      const avatar = document.createElement('span');
+      avatar.className = 'gdh-debot-sidefeed__avatar';
+      const avatarUrl = validImageUrl(event.avatar);
+      if (avatarUrl) {
+        const image = document.createElement('img');
+        image.src = avatarUrl;
+        image.alt = '';
+        image.loading = 'lazy';
+        image.referrerPolicy = 'no-referrer';
+        image.addEventListener('error', () => image.remove(), { once: true });
+        avatar.appendChild(image);
+      } else {
+        avatar.textContent = safeText(profile.name, 1).toUpperCase() || '?';
+      }
+      const name = document.createElement('strong');
+      name.className = 'gdh-debot-sidefeed__name';
+      name.textContent = safeText(profile.name, 28);
+      const action = document.createElement('span');
+      action.className = `gdh-debot-sidefeed__action ${tag.cls}`;
+      action.textContent = tag.label;
+      const source = document.createElement('span');
+      source.className = 'gdh-debot-sidefeed__source';
+      source.textContent = profile.source;
+      const time = document.createElement('span');
+      time.className = 'gdh-debot-sidefeed__time';
+      time.dataset.gdhTs = String(event.ts);
+      time.textContent = relativeTime(event.ts);
+
+      const amount = document.createElement('strong');
+      amount.className = 'gdh-debot-sidefeed__amount';
+      amount.textContent = Number(event.usd) > 0 ? fomoUsd(event.usd) : '—';
+      const symbol = document.createElement('span');
+      symbol.className = 'gdh-debot-sidefeed__symbol';
+      symbol.textContent = safeText(event.symbol, 24) || safeText(event.addr, 8);
+      const mc = document.createElement('span');
+      mc.className = 'gdh-debot-sidefeed__mc';
+      mc.textContent = Number(event.mc) > 0 ? `MC ${fomoUsd(event.mc)}` : '';
+      card.append(stripe, avatar, name, action, source, time, amount, symbol, mc);
+
+      const openToken = () => {
+        const href = debotTokenHref(event.chain, event.addr);
+        if (href) location.assign(href);
+      };
+      card.addEventListener('click', openToken);
+      card.addEventListener('keydown', (key) => {
+        if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); openToken(); }
+      });
+      sidebarFeedCards.set(event.key, card);
+      while (sidebarFeedCards.size > 80) {
+        const first = sidebarFeedCards.keys().next().value;
+        sidebarFeedCards.get(first)?.remove();
+        sidebarFeedCards.delete(first);
+      }
+    }
+    const time = card.querySelector('.gdh-debot-sidefeed__time');
+    if (time) time.textContent = relativeTime(event.ts);
+    return card;
+  }
+
   /**
    * DeBot 使用固定 46px 的 TableVirtuoso 行。插件卡片放在同一滚动坐标系，
    * 原生行只用独立 CSS translate 让位；不向 React 的 tbody 塞未知节点。
    */
   function layoutFeed() {
-    feedRenderRaf = 0;
     const table = trackTable();
     clearFeedLayout(table);
     if (!isTrackPage() || !table || settings.enabled === false
@@ -543,13 +698,82 @@
     table.style.marginBottom = `${inserted * FEED_ROW_HEIGHT}px`;
   }
 
+  function clearSidebarFeedLayout(layout = sidebarTrackLayout()) {
+    document.querySelectorAll('.gdh-debot-sidefeed__row').forEach((card) => card.remove());
+    document.querySelectorAll('[data-gdh-debot-sidebar-shift="1"]').forEach((row) => {
+      row.style.translate = row.dataset.gdhDebotSidebarTranslate || '';
+      delete row.dataset.gdhDebotSidebarTranslate;
+      row.removeAttribute('data-gdh-debot-sidebar-shift');
+    });
+    if (layout?.list?.dataset.gdhDebotSidebarMarginBottom !== undefined) {
+      layout.list.style.marginBottom = layout.list.dataset.gdhDebotSidebarMarginBottom;
+      delete layout.list.dataset.gdhDebotSidebarMarginBottom;
+    }
+  }
+
+  function layoutSidebarFeed() {
+    const layout = sidebarTrackLayout();
+    clearSidebarFeedLayout(layout);
+    if (!isTrackShellPage() || !layout || settings.enabled === false
+      || (settings.enableFomoFeed === false && settings.enablePumpFeed === false)) return;
+
+    const rows = sidebarTrackRows(layout.list);
+    if (!rows.length) return;
+    const now = Date.now();
+    const rowInfo = rows.map((row) => ({
+      row,
+      fingerprint: sidebarNativeFingerprint(row, now),
+    })).filter((item) => item.fingerprint.ts > 0);
+    if (!rowInfo.length) return;
+    const events = visibleFeedEvents(rowInfo.map((item) => item.fingerprint));
+    const plan = sidebarFeedPlacementPlan(rowInfo.map((item) => item.fingerprint.ts), events);
+    if (!plan.length) return;
+
+    const scrollerRect = layout.scroller.getBoundingClientRect();
+    const listRect = layout.list.getBoundingClientRect();
+    const groups = new Map();
+    for (const { event, anchor } of plan) {
+      const bucket = groups.get(anchor) || [];
+      bucket.push(event);
+      groups.set(anchor, bucket);
+    }
+    let inserted = 0;
+    for (let index = 0; index < rowInfo.length; index += 1) {
+      const bucket = groups.get(index) || [];
+      const baseTop = rowInfo[index].row.getBoundingClientRect().top
+        - scrollerRect.top + layout.scroller.scrollTop;
+      bucket.forEach((event, localIndex) => {
+        const card = sidebarFeedCard(event);
+        card.style.top = `${baseTop + (inserted + localIndex) * SIDEBAR_FEED_ROW_HEIGHT}px`;
+        card.style.left = `${listRect.left - scrollerRect.left + layout.scroller.scrollLeft}px`;
+        card.style.width = `${listRect.width}px`;
+        layout.scroller.appendChild(card);
+      });
+      inserted += bucket.length;
+      if (inserted) {
+        const row = rowInfo[index].row;
+        row.dataset.gdhDebotSidebarTranslate = row.style.translate || '';
+        row.dataset.gdhDebotSidebarShift = '1';
+        row.style.translate = `0 ${inserted * SIDEBAR_FEED_ROW_HEIGHT}px`;
+      }
+    }
+    layout.list.dataset.gdhDebotSidebarMarginBottom = layout.list.style.marginBottom || '';
+    layout.list.style.marginBottom = `${inserted * SIDEBAR_FEED_ROW_HEIGHT}px`;
+  }
+
+  function layoutFeeds() {
+    feedRenderRaf = 0;
+    layoutFeed();
+    layoutSidebarFeed();
+  }
+
   function scheduleFeedLayout() {
     if (feedRenderRaf || document.visibilityState === 'hidden') return;
-    feedRenderRaf = window.requestAnimationFrame(layoutFeed);
+    feedRenderRaf = window.requestAnimationFrame(layoutFeeds);
   }
 
   async function pollFomo(force = false) {
-    if (!isTrackPage() || settings.enabled === false || settings.enableFomoFeed === false) return;
+    if (!isTrackShellPage() || settings.enabled === false || settings.enableFomoFeed === false) return;
     if (!force && Date.now() - feedLastFomoAt < FEED_POLL_MS) return;
     feedLastFomoAt = Date.now();
     const response = await runtimeMessage({ type: 'fomo-feed' });
@@ -559,7 +783,7 @@
   }
 
   async function pollPump(force = false) {
-    if (!isTrackPage() || settings.enabled === false || settings.enablePumpFeed === false) return;
+    if (!isTrackShellPage() || settings.enabled === false || settings.enablePumpFeed === false) return;
     if (!force && Date.now() - feedLastPumpAt < FEED_POLL_MS) return;
     feedLastPumpAt = Date.now();
     const response = await runtimeMessage({ type: 'pump-feed' });
@@ -1099,12 +1323,13 @@
 
   function syncRoute() {
     syncPanel();
-    if (isTrackPage()) {
+    if (isTrackShellPage()) {
       pollFomo();
       pollPump();
       scheduleFeedLayout();
     } else {
       clearFeedLayout();
+      clearSidebarFeedLayout();
     }
   }
 
@@ -1139,21 +1364,18 @@
       if (document.visibilityState === 'visible') syncRoute();
     });
     document.addEventListener('scroll', (event) => {
-      if (feedScrollTarget && event.target !== feedScrollTarget) return;
       const table = trackTable();
       const scroller = trackScroller(table);
-      if (scroller && event.target === scroller) {
-        feedScrollTarget = scroller;
-        scheduleFeedLayout();
-      }
+      const sidebarScroller = sidebarTrackLayout()?.scroller;
+      if ((scroller && event.target === scroller) || event.target === sidebarScroller) scheduleFeedLayout();
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element
-        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-fomo, .gdh-debot-fomo-launcher')
-          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-fomo'));
+        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher')
+          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback')) return false;
+        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {
@@ -1166,7 +1388,7 @@
       if (document.visibilityState !== 'hidden') { pollFomo(); pollPump(); }
     }, 3000);
     window.setInterval(() => {
-      document.querySelectorAll('.gdh-debot-feed__time[data-gdh-ts]').forEach((time) => {
+      document.querySelectorAll('.gdh-debot-feed__time[data-gdh-ts], .gdh-debot-sidefeed__time[data-gdh-ts]').forEach((time) => {
         const next = relativeTime(time.dataset.gdhTs);
         if (time.textContent !== next) time.textContent = next;
       });

@@ -146,6 +146,147 @@
   to { background: var(--bg-page, #111419); }
 }
 
+.gdh-debot-sidefeed__row {
+  position: absolute;
+  z-index: 12;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
+  grid-template-rows: 24px 24px;
+  align-items: center;
+  height: 67px;
+  min-height: 67px;
+  padding: 8px 10px 7px 12px;
+  color: var(--text-primary, #e8ecf3);
+  background: color-mix(in srgb, var(--bg-page, #111419) 94%, var(--text-brand, #f5b83d) 6%);
+  border-bottom: .5px solid var(--border-default, rgba(139, 147, 161, .22));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+}
+
+.gdh-debot-sidefeed__row:hover {
+  background: var(--bg-page-hover, rgba(139, 147, 161, .12));
+}
+
+.gdh-debot-sidefeed__row:focus-visible {
+  outline: 1px solid var(--text-brand, #f5b83d);
+  outline-offset: -1px;
+}
+
+.gdh-debot-sidefeed__stripe {
+  position: absolute;
+  inset: 1px auto 1px 0;
+  width: 3px;
+  pointer-events: none;
+}
+
+.gdh-debot-sidefeed__avatar {
+  grid-column: 1;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  overflow: hidden;
+  color: var(--text-tertiary, #8a93a6);
+  background: var(--bg-surface, rgba(139, 147, 161, .1));
+  font-size: 9px;
+}
+
+.gdh-debot-sidefeed__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gdh-debot-sidefeed__name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.gdh-debot-sidefeed__action {
+  grid-column: 3;
+  grid-row: 1;
+  margin-left: 5px;
+  white-space: nowrap;
+}
+
+.gdh-debot-sidefeed__action.is-buy { color: var(--success-10, #43c07a); }
+.gdh-debot-sidefeed__action.is-sell { color: var(--error-10, #ef5350); }
+.gdh-debot-sidefeed__action.is-swap { color: #eab308; }
+.gdh-debot-sidefeed__action.is-thesis { color: #b48ae0; }
+.gdh-debot-sidefeed__action.is-transfer { color: var(--text-tertiary, #8a93a6); }
+.gdh-debot-sidefeed__action.is-refund { color: #fb923c; }
+
+.gdh-debot-sidefeed__source {
+  grid-column: 4;
+  grid-row: 1;
+  margin-left: 5px;
+  padding: 1px 3px;
+  border: 1px solid color-mix(in srgb, var(--text-tertiary, #8a93a6) 45%, transparent);
+  border-radius: 3px;
+  color: var(--text-tertiary, #8a93a6);
+  font-size: 9px;
+}
+
+.gdh-debot-sidefeed__row.is-pump .gdh-debot-sidefeed__source {
+  color: var(--success-10, #43c07a);
+}
+
+.gdh-debot-sidefeed__time {
+  grid-column: 5;
+  grid-row: 1;
+  margin-left: 6px;
+  color: var(--text-tertiary, #8a93a6);
+  font-variant-numeric: tabular-nums;
+}
+
+.gdh-debot-sidefeed__amount {
+  grid-column: 1 / span 2;
+  grid-row: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary, #e8ecf3);
+  font-variant-numeric: tabular-nums;
+}
+
+.gdh-debot-sidefeed__symbol {
+  grid-column: 3 / span 2;
+  grid-row: 2;
+  min-width: 0;
+  margin-left: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-brand, #f5b83d);
+  font-weight: 600;
+}
+
+.gdh-debot-sidefeed__mc {
+  grid-column: 5;
+  grid-row: 2;
+  margin-left: 6px;
+  white-space: nowrap;
+  color: var(--text-tertiary, #8a93a6);
+  font-variant-numeric: tabular-nums;
+}
+
+.gdh-debot-sidefeed__row.is-new {
+  animation: gdh-debot-feed-flash 1.1s ease-out 1;
+}
+
 .gdh-debot-feed__fallback {
   box-sizing: border-box;
   min-width: 800px;
