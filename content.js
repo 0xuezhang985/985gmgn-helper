@@ -108,8 +108,8 @@
   }
 
 
-  // 在 985monitor 上只做配置同步：fomo 本地偏好，以及 Pump 的关注/屏蔽/金额过滤。
-  // 钱包令牌只用于同源读取 /api/watch-config，绝不写入扩展存储或离开 985monitor。
+  // 985monitor 页面只负责一次无感绑定和网页偏好同步。钱包主令牌始终留在同源页面；
+  // 扩展拿到的是 90 天只读会话，只能读取当前账号的 FOMO/Pump 配置与事件。
   if (/(^|\.)985monitor\.xyz$/.test(location.hostname)) {
     const readJson = (key, fallback) => {
       try {
@@ -119,90 +119,132 @@
         return JSON.parse(fallback);
       }
     };
-    let lastSent = '';
-    let pumpAccountCfg = null;
-    let pumpAccountInflight = null;
-    const pumpWatchIds = (rows) => (Array.isArray(rows) ? rows : [])
-      .filter((item) => item?.enabled !== false)
-      .map((item) => String(item?.userId || '').trim())
-      .filter(Boolean);
-    const guestPumpOverlay = () => {
-      const guest = readJson('xMonitorGuestConfigV1', '{}');
-      return guest?.overlay && typeof guest.overlay === 'object' ? guest.overlay : {};
-    };
-    const refreshPumpAccountCfg = async () => {
-      if (pumpAccountInflight) return pumpAccountInflight;
-      pumpAccountInflight = (async () => {
-        let wallet = '';
-        let token = '';
-        try {
-          wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || '');
-          token = String(window.localStorage.getItem('xMonitorWalletToken') || '');
-        } catch {}
-        const headers = wallet && token
-          ? { 'X-User-Id': wallet, 'X-User-Token': token, 'X-Wallet-Address': wallet }
-          : {};
-        try {
-          const response = await fetch('/api/watch-config', { cache: 'no-store', headers });
-          const body = await response.json().catch(() => null);
-          if (!response.ok || body?.ok !== true) return;
-          const overlay = wallet && token && body?.overlay && typeof body.overlay === 'object'
-            ? body.overlay : guestPumpOverlay();
-          pumpAccountCfg = {
-            watch: [...new Set([...pumpWatchIds(body.pumpDefaultRules), ...pumpWatchIds(overlay?.pump)])],
-            filters: overlay?.pumpFilters && typeof overlay.pumpFilters === 'object' ? overlay.pumpFilters : {},
-            tokenFilters: Array.isArray(overlay?.pumpTokenFilters) ? overlay.pumpTokenFilters : null,
-            globalTradeMinUsd: Number.isFinite(Number(overlay?.globalTradeMinUsd))
-              ? Math.max(0, Number(overlay.globalTradeMinUsd)) : 10,
-          };
-        } catch {
-          // 页面离线时保留上一次已同步配置
-        }
-      })().finally(() => { pumpAccountInflight = null; });
-      await pumpAccountInflight;
-      syncMonitorCfg();
-    };
-    const syncMonitorCfg = () => {
-      let muted = readJson('xMonitorFomoMutedV1', '[]');
-      let prefs = readJson('xMonitorFomoPrefsV1', '{}');
-      if (!Array.isArray(muted)) muted = [];
-      if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) prefs = {};
-      let pumpMuted = readJson('xMonitorPumpMutedV1', '[]');
-      let pumpPrefs = readJson('xMonitorPumpPrefsV1', '{}');
-      if (!Array.isArray(pumpMuted)) pumpMuted = [];
-      if (!pumpPrefs || typeof pumpPrefs !== 'object' || Array.isArray(pumpPrefs)) pumpPrefs = {};
-      let pumpOnlyMine = true;
-      try { pumpOnlyMine = window.localStorage.getItem('xMonitorPumpOnlyMineV1') !== 'false'; } catch {}
-      let wallet = '';
-      try { wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || ''); } catch {}
-      const guestOverlay = guestPumpOverlay();
-      const pump = pumpAccountCfg || {
-        watch: pumpWatchIds(guestOverlay?.pump),
-        filters: guestOverlay?.pumpFilters && typeof guestOverlay.pumpFilters === 'object' ? guestOverlay.pumpFilters : {},
-        tokenFilters: Array.isArray(guestOverlay?.pumpTokenFilters) ? guestOverlay.pumpTokenFilters : null,
-        globalTradeMinUsd: Number.isFinite(Number(guestOverlay?.globalTradeMinUsd))
-          ? Math.max(0, Number(guestOverlay.globalTradeMinUsd)) : 10,
-      };
-      const monitorPumpConfig = { ...pump, muted: pumpMuted, prefs: pumpPrefs, onlyMine: pumpOnlyMine };
-      const stamp = JSON.stringify([muted, prefs, wallet, monitorPumpConfig]);
-      if (stamp === lastSent) return;
-      lastSent = stamp;
+    const storageGet = (defaults) => new Promise((resolve) => {
+      try { chrome.storage.local.get(defaults, resolve); } catch { resolve(defaults); }
+    });
+    const storageSet = (values) => new Promise((resolve) => {
+      try { chrome.storage.local.set(values, resolve); } catch { resolve(); }
+    });
+    const accountKey = (value) => (/^0x/i.test(String(value || ''))
+      ? String(value || '').toLowerCase() : String(value || ''));
+    const pageAuth = () => {
       try {
-        chrome.storage.local.set({
-          monitorFomoConfig: { muted, prefs, wallet, at: Date.now() },
-          monitorPumpConfig: { ...monitorPumpConfig, at: Date.now() },
-        });
+        const wallet = String(window.localStorage.getItem('xMonitorWalletAddress') || '').trim();
+        const token = String(window.localStorage.getItem('xMonitorWalletToken') || '').trim();
+        return { wallet, token };
       } catch {
-        // 扩展上下文失效
+        return { wallet: '', token: '' };
       }
     };
-    syncMonitorCfg();
-    refreshPumpAccountCfg();
-    window.setInterval(syncMonitorCfg, 15000);
-    window.setInterval(refreshPumpAccountCfg, 3 * 60 * 1000);
-    window.addEventListener('focus', syncMonitorCfg);
-    // storage 事件只对别的标签页的写入触发；本页的改动靠 15 秒轮询兜住
-    window.addEventListener('storage', syncMonitorCfg);
+    const pagePrefs = () => {
+      let fomoMuted = readJson('xMonitorFomoMutedV1', '[]');
+      let fomoPrefs = readJson('xMonitorFomoPrefsV1', '{}');
+      let pumpMuted = readJson('xMonitorPumpMutedV1', '[]');
+      let pumpPrefs = readJson('xMonitorPumpPrefsV1', '{}');
+      if (!Array.isArray(fomoMuted)) fomoMuted = [];
+      if (!fomoPrefs || typeof fomoPrefs !== 'object' || Array.isArray(fomoPrefs)) fomoPrefs = {};
+      if (!Array.isArray(pumpMuted)) pumpMuted = [];
+      if (!pumpPrefs || typeof pumpPrefs !== 'object' || Array.isArray(pumpPrefs)) pumpPrefs = {};
+      let onlyMine = true;
+      try { onlyMine = window.localStorage.getItem('xMonitorPumpOnlyMineV1') !== 'false'; } catch {}
+      return {
+        fomo: { muted: fomoMuted, prefs: fomoPrefs },
+        pump: { muted: pumpMuted, prefs: pumpPrefs, onlyMine },
+      };
+    };
+    const applyAccountConfig = async (config, session) => {
+      if (!config?.connected || !config?.account?.userId) return;
+      const at = Date.now();
+      const expiresAt = Number(session?.expiresAt || config.sessionExpiresAt) || 0;
+      await storageSet({
+        monitorFomoConfig: { ...(config.fomo || {}), wallet: config.account.userId, connected: true, revision: config.revision, at },
+        monitorPumpConfig: { ...(config.pump || {}), wallet: config.account.userId, connected: true, revision: config.revision, at },
+        monitor985SyncStateV1: {
+          connected: true,
+          accountId: config.account.userId,
+          displayName: String(config.account.displayName || ''),
+          syncedAt: at,
+          expiresAt,
+        },
+      });
+    };
+    const pageHeaders = ({ wallet, token }) => ({
+      'Content-Type': 'application/json',
+      'X-User-Id': wallet,
+      'X-User-Token': token,
+      'X-Wallet-Address': wallet,
+    });
+    let syncInflight = null;
+    let lastPrefsStamp = '';
+    let lastFullSyncAt = 0;
+    const syncAccount = async (force = false) => {
+      if (syncInflight) return syncInflight;
+      syncInflight = (async () => {
+        const auth = pageAuth();
+        const stored = await storageGet({ monitor985SessionV1: null, monitor985ClientIdV1: '', monitor985SyncStateV1: null });
+        let clientId = String(stored.monitor985ClientIdV1 || '').trim();
+        if (!clientId) {
+          clientId = typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID() : `chrome-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await storageSet({ monitor985ClientIdV1: clientId });
+        }
+        const session = stored.monitor985SessionV1;
+        const sameAccount = accountKey(session?.accountId) === accountKey(auth.wallet);
+        const sessionFresh = sameAccount && session?.token && Number(session.expiresAt) > Date.now() + 24 * 60 * 60 * 1000;
+        if (!auth.wallet || !auth.token) {
+          if (!sessionFresh) {
+            await storageSet({ monitor985SyncStateV1: { connected: false, reason: 'login-required', checkedAt: Date.now() } });
+          }
+          return;
+        }
+        const prefs = pagePrefs();
+        const prefsStamp = JSON.stringify(prefs);
+        const needsRebind = !sessionFresh || stored.monitor985SyncStateV1?.reason === 'unauthorized';
+        const periodic = Date.now() - lastFullSyncAt >= 3 * 60 * 1000;
+        if (!force && !needsRebind && prefsStamp === lastPrefsStamp && !periodic) return;
+        const endpoint = needsRebind ? '/api/extension/session' : '/api/extension/prefs';
+        const payload = needsRebind ? { clientId, prefs } : { prefs };
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: pageHeaders(auth),
+          cache: 'no-store',
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || body?.ok !== true || !body?.config) {
+          if (response.status === 401) {
+            await storageSet({ monitor985SyncStateV1: { connected: false, reason: 'login-required', checkedAt: Date.now() } });
+          }
+          return;
+        }
+        let activeSession = session;
+        if (body.session?.token) {
+          activeSession = {
+            token: body.session.token,
+            clientId: body.session.clientId || clientId,
+            expiresAt: Number(body.session.expiresAt) || 0,
+            accountId: body.config.account.userId,
+          };
+          await storageSet({ monitor985SessionV1: activeSession });
+        }
+        await applyAccountConfig(body.config, activeSession);
+        lastPrefsStamp = prefsStamp;
+        lastFullSyncAt = Date.now();
+        try {
+          chrome.runtime.sendMessage({ type: '985-monitor-session-updated' }, () => void chrome.runtime.lastError);
+        } catch {}
+      })().catch(() => {
+        // 短暂离线沿用上次已验证配置，后台会继续重试专用只读会话。
+      }).finally(() => { syncInflight = null; });
+      return syncInflight;
+    };
+    syncAccount(true);
+    window.setInterval(() => syncAccount(false), 15000);
+    window.addEventListener('focus', () => syncAccount(true));
+    window.addEventListener('storage', () => syncAccount(false));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncAccount(false);
+    });
     return;
   }
 
@@ -5479,9 +5521,13 @@ ${flapTooltipText(info)}
   let fomoFeedLastPollAt = 0;
   let pumpFeedLastPollAt = 0;
   let pumpDefaultWallets = new Set();
-  let monitorFomoCfg = { muted: new Set(), prefs: {}, wallet: '', at: 0 };
+  let monitorFomoCfg = {
+    connected: false, muted: new Set(), prefs: {}, watch: new Set(), filters: {},
+    tokenFilters: new Set(PUMP_FEED_DEFAULT_TOKEN_FILTERS), globalTradeMinUsd: 10,
+    wallet: '', at: 0,
+  };
   let monitorPumpCfg = {
-    muted: new Set(), prefs: {}, watch: new Set(), filters: {},
+    connected: false, muted: new Set(), prefs: {}, watch: new Set(), filters: {},
     tokenFilters: new Set(PUMP_FEED_DEFAULT_TOKEN_FILTERS), onlyMine: true,
     globalTradeMinUsd: 10, at: 0,
   };
@@ -5491,7 +5537,25 @@ ${flapTooltipText(info)}
       (Array.isArray(raw?.muted) ? raw.muted : []).map((h) => String(h || '').toLowerCase()).filter(Boolean),
     );
     const prefs = raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {};
-    monitorFomoCfg = { muted, prefs, wallet: String(raw?.wallet || ''), at: Number(raw?.at) || 0 };
+    const watch = new Set(
+      (Array.isArray(raw?.watch) ? raw.watch : []).map((h) => String(h || '').toLowerCase()).filter(Boolean),
+    );
+    const filters = raw?.filters && typeof raw.filters === 'object' && !Array.isArray(raw.filters) ? raw.filters : {};
+    const tokenValues = Array.isArray(raw?.tokenFilters)
+      ? raw.tokenFilters : [...PUMP_FEED_DEFAULT_TOKEN_FILTERS];
+    const tokenFilters = new Set(tokenValues.map(pumpFeedTokenKey).filter(Boolean));
+    const globalTradeMinUsd = Number(raw?.globalTradeMinUsd);
+    monitorFomoCfg = {
+      connected: raw?.connected === true,
+      muted,
+      prefs,
+      watch,
+      filters,
+      tokenFilters,
+      globalTradeMinUsd: Number.isFinite(globalTradeMinUsd) && globalTradeMinUsd >= 0 ? globalTradeMinUsd : 10,
+      wallet: String(raw?.wallet || ''),
+      at: Number(raw?.at) || 0,
+    };
   }
 
   function pumpFeedTokenKey(raw) {
@@ -5517,6 +5581,7 @@ ${flapTooltipText(info)}
     const tokenFilters = new Set(tokenValues.map(pumpFeedTokenKey).filter(Boolean));
     const globalTradeMinUsd = Number(raw?.globalTradeMinUsd);
     monitorPumpCfg = {
+      connected: raw?.connected === true,
       muted,
       prefs,
       watch,
@@ -5536,17 +5601,31 @@ ${flapTooltipText(info)}
   }
 
   function fomoFeedEventAllowed(ev) {
+    if (!monitorFomoCfg.connected) return false;
     const types = settings.fomoFeedTypes || DEFAULTS.fomoFeedTypes;
     if (types[ev.type] === false) return false;
+    if (!monitorFomoCfg.watch.has(ev.handle)) return false;
     if (monitorFomoCfg.muted.has(ev.handle)) return false;
     const pref = monitorFomoCfg.prefs[ev.handle];
     if (pref?.types && pref.types[ev.type] === false) return false;
     // 追踪里屏蔽的币，fomo 推送同样不出现
     if (ev.addr && isTokenBlocked(ev.addr)) return false;
+    const symbolKey = pumpFeedTokenKey(ev.symbol);
+    const addressKey = pumpFeedTokenKey(ev.addr);
+    if ((symbolKey && monitorFomoCfg.tokenFilters.has(symbolKey))
+      || (addressKey && monitorFomoCfg.tokenFilters.has(addressKey))) return false;
+    const personal = Number(monitorFomoCfg.filters?.[ev.handle]?.minTradeUsd
+      ?? monitorFomoCfg.filters?.[ev.handle]);
+    const minUsd = Math.max(
+      monitorFomoCfg.globalTradeMinUsd,
+      Number.isFinite(personal) && personal > 0 ? personal : 0,
+    );
+    if (minUsd > 0 && Number(ev.usd) > 0 && Number(ev.usd) < minUsd) return false;
     return true;
   }
 
   function pumpFeedEventAllowed(ev) {
+    if (!monitorPumpCfg.connected) return false;
     const wallet = String(ev?.pumpWallet || '');
     if (!wallet || monitorPumpCfg.muted.has(wallet)) return false;
     if (monitorPumpCfg.prefs?.[wallet]?.types?.[ev.type] === false) return false;
@@ -5655,7 +5734,11 @@ ${flapTooltipText(info)}
     fomoFeedLastPollAt = Date.now();
     try {
       chrome.runtime.sendMessage({ type: 'fomo-feed' }, (resp) => {
-        if (chrome.runtime.lastError || !resp?.ok) return;
+        if (chrome.runtime.lastError) return;
+        if (!resp?.ok) {
+          if (resp?.reason === 'not-connected') { fomoFeedEvents = []; scheduleScan(); }
+          return;
+        }
         fomoFeedEvents = Array.isArray(resp.events) ? resp.events : [];
         scheduleScan();
       });
@@ -5954,7 +6037,11 @@ ${flapTooltipText(info)}
     pumpFeedLastPollAt = Date.now();
     try {
       chrome.runtime.sendMessage({ type: 'pump-feed' }, (resp) => {
-        if (chrome.runtime.lastError || !resp?.ok) return;
+        if (chrome.runtime.lastError) return;
+        if (!resp?.ok) {
+          if (resp?.reason === 'not-connected') { pumpFeedEvents = []; pumpDefaultWallets = new Set(); scheduleScan(); }
+          return;
+        }
         pumpFeedEvents = Array.isArray(resp.events) ? resp.events : [];
         pumpDefaultWallets = new Set(
           (Array.isArray(resp.defaultWallets) ? resp.defaultWallets : [])

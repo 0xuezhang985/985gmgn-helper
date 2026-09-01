@@ -3,6 +3,7 @@
 const NATIVE_HOST = 'com.xuezhang985.gmgn_helper';
 const RELEASES_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
 const UPDATE_ALARM = '985gmgn-update-check';
+const MONITOR985_SYNC_ALARM = '985gmgn-account-sync';
 const CHECK_INTERVAL_MINUTES = 360;
 const RUNNING_VERSION_KEY = 'gdhRunningVersion';
 
@@ -103,14 +104,18 @@ async function installUpdate() {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: CHECK_INTERVAL_MINUTES });
+  chrome.alarms.create(MONITOR985_SYNC_ALARM, { periodInMinutes: 5 });
   checkForUpdate();
+  refreshMonitor985Config(true).then(() => restartFomoSse());
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: CHECK_INTERVAL_MINUTES });
+  chrome.alarms.create(MONITOR985_SYNC_ALARM, { periodInMinutes: 5 });
   checkForUpdate();
   // 浏览器关着的时间不跑任何代码，开机时令牌多半已经过期，先补一次
   fomoKeepAlive(true);
+  refreshMonitor985Config(true).then(() => restartFomoSse());
 });
 
 // fomo 登录态保活：privy access 令牌约 1 小时过期。原来只在用到 fomo 接口时
@@ -125,6 +130,9 @@ const FOMO_KEEPALIVE_ALARM = '985gmgn-fomo-keepalive';
 // 闹钟被反复重建、计时永远归零，10 分钟的周期实际从来没走到过。
 chrome.alarms.get(FOMO_KEEPALIVE_ALARM).then((existing) => {
   if (!existing) chrome.alarms.create(FOMO_KEEPALIVE_ALARM, { periodInMinutes: 5 });
+}).catch(() => {});
+chrome.alarms.get(MONITOR985_SYNC_ALARM).then((existing) => {
+  if (!existing) chrome.alarms.create(MONITOR985_SYNC_ALARM, { periodInMinutes: 5 });
 }).catch(() => {});
 
 // 令牌实测寿命整 60 分钟（iat→exp 恰好 3600 秒）。SW 会被浏览器随时挂起，
@@ -235,6 +243,9 @@ async function fomoKeepAlive(force) {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) checkForUpdate();
   if (alarm.name === FOMO_KEEPALIVE_ALARM) fomoKeepAlive();
+  if (alarm.name === MONITOR985_SYNC_ALARM) {
+    refreshMonitor985Config(true).then(() => restartFomoSse());
+  }
 });
 
 // ---- fomo 代币数据（在后台取，避开页面 CORS/CSP；令牌由 fomo.family 上的脚本捕获）----
@@ -748,10 +759,97 @@ async function tokenSupply({ chain, address, rpc, apiQuery }) {
 }
 
 
-// ---- 985monitor fomo 事件源 ----
-// 985monitor 的 fomo 采集器把最近事件整体发布成一个静态 JSON（无鉴权，~1 分钟一更）。
-// 这里做唯一的取数口：控频 + ETag 条件请求（304 就不拉 800KB 全量）+ 失败指数退避。
-const FOMO_FEED_URL = 'https://www.985monitor.xyz/fomo-events.json';
+// ---- 985monitor 账号会话 / FOMO + Pump 事件源 ----
+// 扩展只保存服务端签发的只读会话。网页钱包主令牌不会进入 chrome.storage，
+// 也不会被后台拿来调用其它 985monitor 接口。
+const MONITOR985_ORIGIN = 'https://www.985monitor.xyz';
+const MONITOR985_CONFIG_URL = `${MONITOR985_ORIGIN}/api/extension/config`;
+const FOMO_FEED_URL = `${MONITOR985_ORIGIN}/api/extension/fomo-events?limit=150`;
+const PUMP_FEED_URL = `${MONITOR985_ORIGIN}/api/extension/pump-trade-events?limit=150`;
+const MONITOR985_CONFIG_TTL_MS = 3 * 60 * 1000;
+let monitor985ConfigInflight = null;
+
+async function monitor985Session() {
+  const stored = await chrome.storage.local.get({ monitor985SessionV1: null });
+  const session = stored.monitor985SessionV1;
+  if (!session?.token || Number(session.expiresAt) <= Date.now()) return null;
+  return session;
+}
+
+function monitor985AuthHeaders(session, extra = {}) {
+  return { ...extra, Authorization: `Bearer ${session.token}` };
+}
+
+function resetMonitor985EventCaches() {
+  fomoFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
+  fomoFeedEtag = '';
+  pumpFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
+  pumpDefaultWatchCache = { wallets: [], fetchedAt: 0 };
+}
+
+async function markMonitor985Disconnected(reason, clearSession = false) {
+  resetMonitor985EventCaches();
+  const patch = {
+    monitorFomoConfig: { connected: false, at: Date.now() },
+    monitorPumpConfig: { connected: false, at: Date.now() },
+    monitor985SyncStateV1: { connected: false, reason, checkedAt: Date.now() },
+  };
+  if (clearSession) patch.monitor985SessionV1 = null;
+  await chrome.storage.local.set(patch);
+}
+
+async function applyMonitor985Config(config, session) {
+  if (!config?.connected || !config?.account?.userId) return false;
+  const stored = await chrome.storage.local.get({ monitor985SyncStateV1: null });
+  const previousAccount = String(stored.monitor985SyncStateV1?.accountId || '');
+  if (previousAccount && previousAccount !== String(config.account.userId)) resetMonitor985EventCaches();
+  const at = Date.now();
+  await chrome.storage.local.set({
+    monitorFomoConfig: { ...(config.fomo || {}), wallet: config.account.userId, connected: true, revision: config.revision, at },
+    monitorPumpConfig: { ...(config.pump || {}), wallet: config.account.userId, connected: true, revision: config.revision, at },
+    monitor985SyncStateV1: {
+      connected: true,
+      accountId: config.account.userId,
+      displayName: String(config.account.displayName || ''),
+      syncedAt: at,
+      expiresAt: Number(session?.expiresAt || config.sessionExpiresAt) || 0,
+    },
+  });
+  return true;
+}
+
+async function refreshMonitor985Config(force = false) {
+  if (monitor985ConfigInflight) return monitor985ConfigInflight;
+  monitor985ConfigInflight = (async () => {
+    const stored = await chrome.storage.local.get({ monitor985SessionV1: null, monitor985SyncStateV1: null });
+    const session = stored.monitor985SessionV1;
+    if (!session?.token || Number(session.expiresAt) <= Date.now()) {
+      await markMonitor985Disconnected('login-required', Boolean(session));
+      return false;
+    }
+    if (!force && stored.monitor985SyncStateV1?.connected
+      && Date.now() - Number(stored.monitor985SyncStateV1.syncedAt) < MONITOR985_CONFIG_TTL_MS) return true;
+    try {
+      const response = await fetch(MONITOR985_CONFIG_URL, {
+        headers: monitor985AuthHeaders(session, { Accept: 'application/json' }),
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => null);
+      if (response.status === 401) {
+        await markMonitor985Disconnected('unauthorized', true);
+        return false;
+      }
+      if (!response.ok || body?.ok !== true || !body?.config) throw new Error(`HTTP ${response.status}`);
+      return applyMonitor985Config(body.config, session);
+    } catch {
+      // 网络短暂失败时保留上次已验证配置；轮询与闹钟会继续重试。
+      return Boolean(stored.monitor985SyncStateV1?.connected);
+    }
+  })().finally(() => { monitor985ConfigInflight = null; });
+  return monitor985ConfigInflight;
+}
+
+// 控频 + 失败指数退避；服务端已按账号过滤，前端仍做一次防御性过滤。
 const FOMO_FEED_MIN_INTERVAL_MS = 15000;
 const FOMO_FEED_KEEP = 150;
 let fomoFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
@@ -807,6 +905,9 @@ function slimFomoEvent(raw) {
 
 async function fetchFomoFeed() {
   if (fomoFeedInflight) return fomoFeedInflight;
+  const session = await monitor985Session();
+  if (!session) return { ok: false, reason: 'not-connected', events: [] };
+  await refreshMonitor985Config(false);
   const now = Date.now();
   if (now - fomoFeedCache.fetchedAt < FOMO_FEED_MIN_INTERVAL_MS || now < fomoFeedBackoffUntil) {
     return { ok: true, ...fomoFeedCache, stale: true };
@@ -815,7 +916,7 @@ async function fetchFomoFeed() {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 25000);
-      const headers = fomoFeedEtag ? { 'If-None-Match': fomoFeedEtag } : {};
+      const headers = monitor985AuthHeaders(session, fomoFeedEtag ? { 'If-None-Match': fomoFeedEtag } : {});
       let response;
       try {
         response = await fetch(FOMO_FEED_URL, { headers, cache: 'no-store', signal: controller.signal });
@@ -826,6 +927,10 @@ async function fetchFomoFeed() {
         fomoFeedCache.fetchedAt = Date.now();
         fomoFeedFailCount = 0;
         return { ok: true, ...fomoFeedCache };
+      }
+      if (response.status === 401) {
+        await markMonitor985Disconnected('unauthorized', true);
+        return { ok: false, reason: 'not-connected', events: [] };
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
@@ -853,12 +958,9 @@ async function fetchFomoFeed() {
 
 
 // ---- 985monitor Pump 成交事件源 ----
-// /api/pump-trade-events 公开返回全量实时成交；前台再按用户同步过来的关注和过滤设置裁剪。
-const PUMP_FEED_URL = 'https://www.985monitor.xyz/api/pump-trade-events?limit=150';
-const PUMP_DEFAULT_WATCH_URL = 'https://www.985monitor.xyz/api/pump-watch/default';
+// 专用接口在服务端先按登录账号过滤；插件侧保留同样条件作第二层防线。
 const PUMP_FEED_MIN_INTERVAL_MS = 15000;
 const PUMP_FEED_KEEP = 150;
-const PUMP_DEFAULT_WATCH_TTL_MS = 5 * 60 * 1000;
 let pumpFeedCache = { events: [], updatedAt: 0, fetchedAt: 0 };
 let pumpFeedFailCount = 0;
 let pumpFeedBackoffUntil = 0;
@@ -920,31 +1022,14 @@ function slimPumpEvent(raw) {
   };
 }
 
-async function fetchPumpDefaultWallets() {
-  if (Date.now() - pumpDefaultWatchCache.fetchedAt < PUMP_DEFAULT_WATCH_TTL_MS) {
-    return pumpDefaultWatchCache.wallets;
-  }
-  try {
-    const response = await fetch(PUMP_DEFAULT_WATCH_URL, { cache: 'no-store' });
-    const body = await response.json();
-    if (!response.ok || body?.ok !== true || !Array.isArray(body.rules)) throw new Error(`HTTP ${response.status}`);
-    const wallets = body.rules
-      .filter((item) => item?.enabled !== false)
-      .map((item) => String(item?.userId || '').trim())
-      .filter(Boolean)
-      .slice(0, 500);
-    pumpDefaultWatchCache = { wallets: [...new Set(wallets)], fetchedAt: Date.now() };
-  } catch {
-    // 保留上一次默认名单，事件主链路仍可继续
-  }
-  return pumpDefaultWatchCache.wallets;
-}
-
 async function fetchPumpFeed() {
   if (pumpFeedInflight) return pumpFeedInflight;
+  const session = await monitor985Session();
+  if (!session) return { ok: false, reason: 'not-connected', events: [], defaultWallets: [] };
+  await refreshMonitor985Config(false);
   const now = Date.now();
   if (now - pumpFeedCache.fetchedAt < PUMP_FEED_MIN_INTERVAL_MS || now < pumpFeedBackoffUntil) {
-    return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets(), stale: true };
+    return { ok: true, ...pumpFeedCache, defaultWallets: [], stale: true };
   }
   pumpFeedInflight = (async () => {
     try {
@@ -952,9 +1037,17 @@ async function fetchPumpFeed() {
       const timer = setTimeout(() => controller.abort(), 25000);
       let response;
       try {
-        response = await fetch(PUMP_FEED_URL, { cache: 'no-store', signal: controller.signal });
+        response = await fetch(PUMP_FEED_URL, {
+          headers: monitor985AuthHeaders(session),
+          cache: 'no-store',
+          signal: controller.signal,
+        });
       } finally {
         clearTimeout(timer);
+      }
+      if (response.status === 401) {
+        await markMonitor985Disconnected('unauthorized', true);
+        return { ok: false, reason: 'not-connected', events: [], defaultWallets: [] };
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
@@ -966,12 +1059,12 @@ async function fetchPumpFeed() {
       pumpFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
       pumpFeedFailCount = 0;
       pumpFeedBackoffUntil = 0;
-      return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets() };
+      return { ok: true, ...pumpFeedCache, defaultWallets: [] };
     } catch (error) {
       pumpFeedFailCount += 1;
       pumpFeedBackoffUntil = Date.now() + Math.min(15 * 60000, 60000 * Math.pow(2, pumpFeedFailCount - 1));
       if (pumpFeedCache.events.length) {
-        return { ok: true, ...pumpFeedCache, defaultWallets: await fetchPumpDefaultWallets(), stale: true };
+        return { ok: true, ...pumpFeedCache, defaultWallets: [], stale: true };
       }
       return { ok: false, reason: 'fetch-failed', message: String(error?.message || '').slice(0, 120) };
     } finally {
@@ -987,9 +1080,21 @@ async function fetchPumpFeed() {
 // 更新对应缓存并通知 GMGN / DeBot 标签页；标签页照旧用消息拿缓存（命中
 // 控频间隔内的 stale 分支，零额外 HTTP）。SW 被挂起时连接自然断，content 侧
 // 18 秒轮询一到就会唤醒 SW 触发重连——轮询同时也是 SSE 断档期的兜底。
-const FOMO_SSE_URL = 'https://www.985monitor.xyz/api/events-stream';
+const FOMO_SSE_URL = `${MONITOR985_ORIGIN}/api/extension/events-stream`;
 let fomoSseAbort = null;
 let fomoSseBackoff = 5000;
+let fomoSseReconnectTimer = 0;
+let fomoSseGeneration = 0;
+let monitor985LastEventId = '';
+
+function restartFomoSse() {
+  fomoSseGeneration += 1;
+  if (fomoSseReconnectTimer) clearTimeout(fomoSseReconnectTimer);
+  fomoSseReconnectTimer = 0;
+  try { fomoSseAbort?.abort(); } catch {}
+  fomoSseAbort = null;
+  setTimeout(connectFomoSse, 0);
+}
 
 function trackingFeedComparableId(ev) {
   const tx = String(ev?.tx || '').trim();
@@ -1054,20 +1159,32 @@ function pumpSseIngest(raw) {
 
 async function connectFomoSse() {
   if (fomoSseAbort) return;
+  const session = await monitor985Session();
+  if (!session || fomoSseAbort) return;
+  await refreshMonitor985Config(false);
+  const generation = fomoSseGeneration;
   const controller = new AbortController();
   fomoSseAbort = controller;
   try {
     const response = await fetch(FOMO_SSE_URL, {
-      headers: { Accept: 'text/event-stream' },
+      headers: monitor985AuthHeaders(session, {
+        Accept: 'text/event-stream',
+        ...(monitor985LastEventId ? { 'Last-Event-ID': monitor985LastEventId } : {}),
+      }),
       cache: 'no-store',
       signal: controller.signal,
     });
+    if (response.status === 401) {
+      await markMonitor985Disconnected('unauthorized', true);
+      return;
+    }
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
     fomoSseBackoff = 5000;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let eventType = '';
+    let eventId = '';
     let dataLines = [];
     for (;;) {
       const { done, value } = await reader.read();
@@ -1087,24 +1204,39 @@ async function connectFomoSse() {
               // 单帧坏数据不断流
             }
           }
+          if (eventId) monitor985LastEventId = eventId;
           eventType = '';
+          eventId = '';
           dataLines = [];
           continue;
         }
-        if (line.startsWith('event:')) eventType = line.slice(6).trim();
+        if (line.startsWith('id:')) eventId = line.slice(3).trim();
+        else if (line.startsWith('event:')) eventType = line.slice(6).trim();
         else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
       }
     }
   } catch {
     // 断线/超时/SW 即将挂起，都走重连
   } finally {
-    fomoSseAbort = null;
+    if (fomoSseAbort === controller) fomoSseAbort = null;
   }
+  if (generation !== fomoSseGeneration || !(await monitor985Session())) return;
   // 指数退避重连（上限 2 分钟）；SW 若被挂起，这个定时器作废，
   // 由下一次 'fomo-feed' 消息唤醒时重连
-  setTimeout(connectFomoSse, fomoSseBackoff);
+  fomoSseReconnectTimer = setTimeout(() => {
+    fomoSseReconnectTimer = 0;
+    connectFomoSse();
+  }, fomoSseBackoff);
   fomoSseBackoff = Math.min(120000, fomoSseBackoff * 2);
 }
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes.monitor985SessionV1) return;
+  resetMonitor985EventCaches();
+  monitor985LastEventId = '';
+  fomoSseBackoff = 5000;
+  restartFomoSse();
+});
 
 
 // ---- 标注人物完整持仓（985monitor 服务器发布，GMGN 官方 API 采集）----
@@ -1326,6 +1458,12 @@ async function recordFomoPageHeartbeat(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === '985-monitor-session-updated') {
+    refreshMonitor985Config(true)
+      .then((ok) => { restartFomoSse(); sendResponse({ ok: Boolean(ok) }); })
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (message?.type === 'fomo-page-heartbeat') {
     recordFomoPageHeartbeat(message, sender)
       .then(() => sendResponse({ ok: true }))

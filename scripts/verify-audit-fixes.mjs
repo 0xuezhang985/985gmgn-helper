@@ -594,7 +594,7 @@ await test('DeBot 混排不向 React tbody 插未知节点且沿用单一后台�
   assert.ok(!debotContent.includes('new WebSocket'));
   assert.ok(!debotContent.includes('EventSource'));
   assert.ok(!debotContent.includes('/api/events-stream'));
-  assert.equal((background.match(/api\/events-stream/g) || []).length, 1);
+  assert.equal((background.match(/api\/extension\/events-stream/g) || []).length, 1);
   assert.match(background, /\['https:\/\/gmgn\.ai\/\*', 'https:\/\/debot\.ai\/\*'\]/);
   assert.ok(debotStyles.includes('.gdh-debot-feed__row.is-absolute'));
 });
@@ -795,8 +795,9 @@ await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', 
     pumpDefaultWallets: new Set(defaults),
     isTokenBlocked: () => false,
   });
-  const cfg = { muted: new Set(), prefs: {}, watch: new Set(), filters: {}, tokenFilters: new Set(), onlyMine: true, globalTradeMinUsd: 10 };
+  const cfg = { connected: true, muted: new Set(), prefs: {}, watch: new Set(), filters: {}, tokenFilters: new Set(), onlyMine: true, globalTradeMinUsd: 10 };
   assert.equal(run(cfg), true);
+  assert.equal(run({ ...cfg, connected: false }), false);
   assert.equal(run({ ...cfg, globalTradeMinUsd: 30 }), false);
   assert.equal(run({ ...cfg, muted: new Set([wallet]) }), false);
   assert.equal(run({ ...cfg, prefs: { [wallet]: { types: { buy: false } } } }), false);
@@ -808,7 +809,7 @@ await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', 
 await test('Pump 明确的空代币过滤不会错误回退默认股票名单', () => {
   assert.match(content, /const tokenValues = Array\.isArray\(raw\?\.tokenFilters\)\s*\? raw\.tokenFilters\s*: \[\.\.\.PUMP_FEED_DEFAULT_TOKEN_FILTERS\]/);
   assert.ok(!content.includes('Array.isArray(raw?.tokenFilters) && raw.tokenFilters.length'));
-  assert.match(content, /tokenFilters: Array\.isArray\(overlay\?\.pumpTokenFilters\) \? overlay\.pumpTokenFilters : null/);
+  assert.ok(content.includes("monitorPumpConfig: { ...(config.pump || {})"));
 });
 
 await test('Pump 推送有独立设置项并复用同一 SSE 连接', () => {
@@ -817,7 +818,48 @@ await test('Pump 推送有独立设置项并复用同一 SSE 连接', () => {
   assert.ok(content.includes("chrome.runtime.sendMessage({ type: 'pump-feed' }"));
   assert.ok(background.includes("eventType === 'pump-trade'"));
   assert.ok(background.includes("type: 'gdh-pump-push'"));
-  assert.equal((background.match(/api\/events-stream/g) || []).length, 1);
+  assert.equal((background.match(/api\/extension\/events-stream/g) || []).length, 1);
+});
+
+await test('985monitor 账号配置使用独立只读会话且不落盘网页主令牌', () => {
+  assert.ok(content.includes("fetch('/api/extension/session'" ) || content.includes("? '/api/extension/session'"));
+  assert.ok(content.includes("'/api/extension/prefs'"));
+  assert.ok(content.includes('monitor985SessionV1'));
+  assert.ok(background.includes('/api/extension/config'));
+  assert.ok(background.includes('/api/extension/fomo-events?limit=150'));
+  assert.ok(background.includes('/api/extension/pump-trade-events?limit=150'));
+  assert.ok(background.includes("Authorization: `Bearer ${session.token}`"));
+  assert.ok(!background.includes('X-User-Token'));
+  assert.ok(!content.includes('monitor985SessionV1: { token: auth.token'));
+  assert.ok(popupHtml.includes('id="monitor-985-sync-status"'));
+});
+
+await test('FOMO 插卡按账号名单、屏蔽、类型、代币和最低成交额过滤', () => {
+  const functions = [extractFunction(content, 'pumpFeedTokenKey'), extractFunction(content, 'fomoFeedEventAllowed')];
+  const ev = { handle: 'alice', type: 'buy', usd: 25, symbol: 'TEST', addr: '0x1111111111111111111111111111111111111111' };
+  const settings = { fomoFeedTypes: { buy: true } };
+  const base = {
+    connected: true,
+    muted: new Set(),
+    prefs: {},
+    watch: new Set(['alice']),
+    filters: {},
+    tokenFilters: new Set(),
+    globalTradeMinUsd: 10,
+  };
+  const run = (cfg, event = ev) => evaluate(functions, `fomoFeedEventAllowed(${JSON.stringify(event)})`, {
+    monitorFomoCfg: cfg,
+    settings,
+    DEFAULTS: settings,
+    isTokenBlocked: () => false,
+  });
+  assert.equal(run(base), true);
+  assert.equal(run({ ...base, connected: false }), false);
+  assert.equal(run({ ...base, watch: new Set() }), false);
+  assert.equal(run({ ...base, muted: new Set(['alice']) }), false);
+  assert.equal(run({ ...base, prefs: { alice: { types: { buy: false } } } }), false);
+  assert.equal(run({ ...base, tokenFilters: new Set(['TEST']) }), false);
+  assert.equal(run({ ...base, globalTradeMinUsd: 30 }), false);
 });
 
 await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async () => {

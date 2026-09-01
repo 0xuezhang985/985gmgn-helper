@@ -55,6 +55,7 @@ const colorInput = document.querySelector('#highlight-color');
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
+const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
 const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
 const markedEnableInput = document.querySelector('#enable-marked-holders');
 const flapEnableInput = document.querySelector('#enable-flap-tax');
@@ -134,6 +135,22 @@ function renderGmgnHoldingSyncState(state) {
   gmgnHoldingSyncStatus.className = 'sync-status is-ok';
 }
 
+function short985Account(raw) {
+  const value = String(raw || '');
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-5)}` : value;
+}
+
+function renderMonitor985SyncState(state) {
+  if (!state?.connected) {
+    monitor985SyncStatus.textContent = '未连接：打开已登录的 985monitor 网页一次';
+    monitor985SyncStatus.className = 'sync-status is-warn';
+    return;
+  }
+  const account = String(state.displayName || '').trim() || short985Account(state.accountId);
+  monitor985SyncStatus.textContent = `985monitor 账号配置已连接${account ? `：${account}` : ''}`;
+  monitor985SyncStatus.className = 'sync-status is-ok';
+}
+
 function parseDevList(text) {
   const entries = new Map();
   const errors = [];
@@ -193,9 +210,16 @@ chrome.storage.local.get({ gmgnHoldingSignalSyncState: null }, (stored) => {
   renderGmgnHoldingSyncState(stored.gmgnHoldingSignalSyncState);
 });
 
+chrome.storage.local.get({ monitor985SyncStateV1: null }, (stored) => {
+  renderMonitor985SyncState(stored.monitor985SyncStateV1);
+});
+
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes.gmgnHoldingSignalSyncState) {
     renderGmgnHoldingSyncState(changes.gmgnHoldingSignalSyncState.newValue);
+  }
+  if (areaName === 'local' && changes.monitor985SyncStateV1) {
+    renderMonitor985SyncState(changes.monitor985SyncStateV1.newValue);
   }
 });
 
