@@ -557,7 +557,42 @@
       .filter((row) => row instanceof HTMLElement && !row.hasAttribute('data-gdh-debot-fomo-key'));
   }
 
+  function debotAbsoluteTimestamp(value, now = Date.now()) {
+    const match = safeText(value, 24).match(/^(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+    if (!match) return 0;
+    const parts = match.slice(1).map(Number);
+    if (parts[0] < 1 || parts[0] > 12 || parts[1] < 1 || parts[1] > 31
+      || parts[2] > 23 || parts[3] > 59 || parts[4] > 59) return 0;
+    const current = new Date(now);
+    let timestamp = new Date(
+      current.getFullYear(),
+      parts[0] - 1,
+      parts[1],
+      parts[2],
+      parts[3],
+      parts[4],
+    ).getTime();
+    if (!Number.isFinite(timestamp)) return 0;
+    // 跨年时，DeBot 只显示月日；未来超过一天的记录属于上一年。
+    if (timestamp > now + 86400000) {
+      timestamp = new Date(
+        current.getFullYear() - 1,
+        parts[0] - 1,
+        parts[1],
+        parts[2],
+        parts[3],
+        parts[4],
+      ).getTime();
+    }
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
   function sidebarRowTime(row, now = Date.now()) {
+    const absoluteLabel = [...row.querySelectorAll('[aria-label]')]
+      .map((node) => safeText(node.getAttribute('aria-label'), 24))
+      .find((value) => /^\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(value));
+    const absoluteTimestamp = debotAbsoluteTimestamp(absoluteLabel, now);
+    if (absoluteTimestamp) return absoluteTimestamp;
     const rowRect = row.getBoundingClientRect();
     const candidates = [...row.querySelectorAll('span, div')].filter((node) => {
       if (node.children.length) return false;
@@ -577,6 +612,24 @@
     if (!match) return 0;
     const multiplier = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]];
     return now - Number(match[1]) * multiplier;
+  }
+
+  function sidebarRowSymbol(row) {
+    const bridged = safeText(row.dataset.gdhDebotTrackSymbol, 24);
+    if (bridged) return bridged;
+    const tokenLinks = [...row.querySelectorAll('a[href*="/token/"]')];
+    for (const link of tokenLinks) {
+      if (!link.querySelector('img')) continue;
+      const sibling = link.parentElement?.nextElementSibling;
+      const symbol = safeText(sibling?.textContent, 24);
+      if (symbol && !/^[+-]?\d+(?:\.\d+)?%?$/.test(symbol)) return symbol.replace(/^\$/, '');
+    }
+    const titled = [...row.querySelectorAll('[title]')].map((node) => ({
+      text: safeText(node.textContent, 24),
+      title: safeText(node.getAttribute('title'), 24),
+    })).find(({ text, title }) => text && text === title
+      && !/^[+-]?\d+(?:\.\d+)?%?$/.test(text));
+    return (titled?.text || '').replace(/^\$/, '');
   }
 
   function sidebarNativeFingerprint(row, now = Date.now()) {
@@ -1035,7 +1088,8 @@
     const ts = Number(row.dataset.gdhDebotTrackTs) || sidebarRowTime(row);
     const side = safeText(row.dataset.gdhDebotTrackSide, 12)
       || safeText((row.innerText.match(/建仓|加仓|减仓|清仓|买入|卖出|转入|转出/) || [])[0], 12);
-    return `${address}|${token}|${side}|${Math.round(ts / 5000)}`;
+    const tx = safeText(row.dataset.gdhDebotTrackTx, 180);
+    return tx ? `${address}|tx:${tx}` : `${address}|${token}|${side}|${Math.round(ts / 1000)}`;
   }
 
   function pinSidebarRow(row, wallet) {
@@ -1056,8 +1110,7 @@
     item.className = 'gdh-debot-special-pin-item';
     item.href = href;
     bindDebotNavigation(item);
-    const tokenText = safeText(row.querySelector('a[href*="/token/"]')?.textContent, 30)
-      || safeText(row.dataset.gdhDebotTrackSymbol, 20) || '代币';
+    const tokenText = sidebarRowSymbol(row) || '代币';
     const action = safeText((row.innerText.match(/建仓|加仓|减仓|清仓|买入|卖出|转入|转出/) || [])[0], 12);
     item.textContent = `📌 ${wallet.label || wallet.address.slice(0, 8)} ${action} ${tokenText}`;
     const close = document.createElement('button');

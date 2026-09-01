@@ -707,6 +707,22 @@ await test('DeBot 卡片与列表模式共享重点关注、调色、置顶和�
   assert.ok(debotStyles.includes('.gdh-debot-sidefeed__row.is-list'));
 });
 
+await test('DeBot 特别关注使用绝对成交时间去重且置顶文案只取代币名', () => {
+  const timestampFn = extractFunction(debotContent, 'debotAbsoluteTimestamp');
+  const safeText = (value, max) => String(value ?? '').trim().slice(0, max);
+  const now = new Date(2026, 8, 2, 6, 0, 0).getTime();
+  const first = evaluate([timestampFn], `debotAbsoluteTimestamp('09/02 05:53:36', ${now})`, { safeText, Date });
+  const later = evaluate([timestampFn], `debotAbsoluteTimestamp('09/02 05:53:36', ${now + 5000})`, { safeText, Date });
+  assert.equal(first, later);
+  assert.equal(first, new Date(2026, 8, 2, 5, 53, 36).getTime());
+  const signature = extractFunction(debotContent, 'sidebarRowSignature');
+  assert.ok(signature.includes('Math.round(ts / 1000)'));
+  assert.ok(signature.includes('dataset.gdhDebotTrackTx'));
+  const pin = extractFunction(debotContent, 'pinSidebarRow');
+  assert.ok(pin.includes('sidebarRowSymbol(row)'));
+  assert.ok(!pin.includes("row.querySelector('a[href*=\"/token/\"]')?.textContent"));
+});
+
 await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码', () => {
   assert.ok(debotContent.includes("type: 'fomo-token-feed'"));
   assert.ok(debotContent.includes("type: 'fomo-user-pnl'"));
