@@ -242,7 +242,14 @@ const FOMO_API = 'https://prod-api.fomo.family';
 // fomo 自己每个请求都带这个头（少了它 /hodlers/top 会返回空）：eth,bnb,monad,robinhood,base,solana
 const FOMO_CHAINS = '1,56,143,4663,8453,1399811149';
 const FOMO_CACHE_MS = 20000;
+const FOMO_CACHE_MAX = 60;
 const fomoCache = new Map();
+
+function setBoundedMap(map, key, value, max) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  while (map.size > max) map.delete(map.keys().next().value);
+}
 
 /** 递归找出响应里第一个「对象数组」，避开各层包装字段名的不确定性。 */
 function firstObjectArray(value, depth) {
@@ -424,7 +431,7 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     if (!Array.isArray(items)) items = firstObjectArray(ro, 0) || [];
     const data = { ok: true, items, count: items.length };
     if (Number.isFinite(total)) data.total = total;
-    fomoCache.set(key, { at: Date.now(), data });
+    setBoundedMap(fomoCache, key, { at: Date.now(), data }, FOMO_CACHE_MAX);
     return data;
   } catch (error) {
     return {
@@ -439,6 +446,7 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
 // fomo 悬浮卡是「实时余额算的累计 PnL − 7 天前快照的 PnL」，要两个请求。
 // 这里用同一条快照序列的首末差，一个请求就够，代价是最多滞后一小时——打标记足够了。
 const FOMO_PNL_TTL = 10 * 60 * 1000;
+const FOMO_PNL_CACHE_MAX = 500;
 const fomoPnlCache = new Map();
 
 async function fomoUserPnl7d({ userId }) {
@@ -462,7 +470,7 @@ async function fomoUserPnl7d({ userId }) {
       .sort((a, b) => Number(a.snapshotId) - Number(b.snapshotId));
     if (rows.length < 2) {
       const data = { ok: true, pnl: null, equity: Number(rows[0]?.equity) || 0, points: rows.length };
-      fomoPnlCache.set(userId, { at: Date.now(), data });
+      setBoundedMap(fomoPnlCache, userId, { at: Date.now(), data }, FOMO_PNL_CACHE_MAX);
       return data;
     }
     const first = rows[0];
@@ -473,7 +481,7 @@ async function fomoUserPnl7d({ userId }) {
       equity: Number(last.equity) || 0,
       points: rows.length,
     };
-    fomoPnlCache.set(userId, { at: Date.now(), data });
+    setBoundedMap(fomoPnlCache, userId, { at: Date.now(), data }, FOMO_PNL_CACHE_MAX);
     return data;
   } catch (error) {
     return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
@@ -511,6 +519,8 @@ const SUPPLY_RPCS = {
   base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'],
 };
 const FLAP_TTL = 60000;
+const FLAP_CACHE_MAX = 400;
+const FLAP_SYMBOL_CACHE_MAX = 600;
 const flapCache = new Map();
 
 /** 定长返回值按 32 字节切词——这些方法没有动态类型，直接按序读即可。 */
@@ -617,7 +627,7 @@ async function flapTokenInfo({ token, rpc }) {
       if (missing.length) {
         try {
           const syms = await flapRpc(endpoint, missing.map((a) => ({ to: a, data: FLAP_SEL.symbol })));
-          missing.forEach((a, i) => flapSymbolCache.set(a, flapString(syms[i])));
+          missing.forEach((a, i) => setBoundedMap(flapSymbolCache, a, flapString(syms[i]), FLAP_SYMBOL_CACHE_MAX));
         } catch {
           // 拿不到符号就只显示比例与地址，不影响主信息
         }
@@ -644,7 +654,7 @@ async function flapTokenInfo({ token, rpc }) {
         dist,
         rpc: endpoint,
       };
-      flapCache.set(address, { at: Date.now(), data });
+      setBoundedMap(flapCache, address, { at: Date.now(), data }, FLAP_CACHE_MAX);
       return data;
     } catch (error) {
       lastError = String(error?.message || error).slice(0, 80);
@@ -657,13 +667,14 @@ async function flapTokenInfo({ token, rpc }) {
     }
   }
   const data = { ok: false, reason: lastError === 'not-flap' ? 'not-flap' : 'rpc-failed', message: lastError };
-  flapCache.set(address, { at: Date.now(), data });
+  setBoundedMap(flapCache, address, { at: Date.now(), data }, FLAP_CACHE_MAX);
   return data;
 }
 
 // 代币总供应量（人类可读口径，和 fomo 的 humanAmount 对齐），用于算 fomo 持仓占比。
 // 供应量基本不变，长缓存；只支持 EVM 链（沿用 Flap 那条 RPC 通道）。
 const supplyCache = new Map();
+const SUPPLY_CACHE_MAX = 500;
 
 // GMGN 自己的代币信息接口:所有链通用(sol/robinhood/evm 都返回 total_supply,
 // 已是人类可读单位、不用再按 decimals 换算)。实测 Solana CATE 9.64 亿、
@@ -706,7 +717,7 @@ async function tokenSupply({ chain, address, rpc, apiQuery }) {
   // 先问 GMGN 接口：所有链通用（Solana / Robinhood 只有这条路走得通）
   const viaGmgn = await gmgnTokenSupply(chain, address, apiQuery);
   if (viaGmgn > 0) {
-    supplyCache.set(key, viaGmgn);
+    setBoundedMap(supplyCache, key, viaGmgn, SUPPLY_CACHE_MAX);
     return { ok: true, supply: viaGmgn };
   }
 
@@ -727,7 +738,7 @@ async function tokenSupply({ chain, address, rpc, apiQuery }) {
       if (!raw || !Number.isFinite(dec) || dec > 36) return { ok: false, reason: 'bad-data' };
       const supply = Number(raw) / Math.pow(10, dec);
       if (!Number.isFinite(supply) || supply <= 0) return { ok: false, reason: 'bad-data' };
-      supplyCache.set(key, supply);
+      setBoundedMap(supplyCache, key, supply, SUPPLY_CACHE_MAX);
       return { ok: true, supply };
     } catch (error) {
       lastError = String(error?.message || '').slice(0, 80);

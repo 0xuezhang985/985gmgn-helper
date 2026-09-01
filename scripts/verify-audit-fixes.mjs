@@ -309,6 +309,68 @@ await test('追踪流新挂载虚拟行会继承已有插卡位移', () => {
   assert.match(content, /scheduleFomoFeedRowReflow\(\);\s*\n\s*}\s*\n\s*if \(\!\(target instanceof Element\)/);
 });
 
+await test('长期缓存按容量淘汰最老条目', () => {
+  const mapFn = extractFunction(content, 'setBoundedMap');
+  const setFn = extractFunction(content, 'rememberBoundedSet');
+  const result = evaluate([mapFn, setFn], `(() => {
+    const map = new Map();
+    setBoundedMap(map, 'a', 1, 2);
+    setBoundedMap(map, 'b', 2, 2);
+    setBoundedMap(map, 'c', 3, 2);
+    const set = new Set();
+    rememberBoundedSet(set, 'a', 2);
+    rememberBoundedSet(set, 'b', 2);
+    rememberBoundedSet(set, 'c', 2);
+    return { map: [...map.keys()].join(','), set: [...set].join(',') };
+  })()`);
+  assert.equal(result.map, 'b,c');
+  assert.equal(result.set, 'b,c');
+  assert.ok(content.includes('setBoundedMap(fomoTrCache'));
+  assert.ok(content.includes('setBoundedMap(fomoPnlCache'));
+  assert.ok(content.includes('rememberBoundedSet(fomoFeedSeen'));
+  assert.ok(background.includes('setBoundedMap(fomoCache'));
+  assert.ok(background.includes('setBoundedMap(flapCache'));
+  assert.ok(background.includes('setBoundedMap(supplyCache'));
+});
+
+await test('滚动限频使用单个延时器而不是逐帧空转', () => {
+  const contentRun = extractFunction(content, 'runScheduledScan');
+  const bridgeRun = extractFunction(bridge, 'runScheduledScan');
+  const run = (fn, gap) => {
+    const state = { scans: 0, schedules: 0, wait: 0 };
+    return evaluate([fn], `(() => {
+    runScheduledScan();
+    return { delay: scanDelayTimer, scans: state.scans, schedules: state.schedules, wait: state.wait };
+  })()`, {
+    scanRafId: 1,
+    scanDelayTimer: 0,
+    lastScanAt: 100,
+    scrollingUntil: 500,
+    scanScheduled: true,
+    SCAN_MIN_GAP_SCROLLING: gap,
+    Date: { now: () => 150 },
+    Math,
+    state,
+    window: { setTimeout: (_fn, ms) => { state.wait = ms; return 7; } },
+    scheduleScan: () => { state.schedules += 1; },
+    scanCards: () => { state.scans += 1; },
+  });
+  };
+  const contentResult = run(contentRun, 120);
+  const bridgeResult = run(bridgeRun, 150);
+  assert.equal(`${contentResult.delay}|${contentResult.scans}|${contentResult.schedules}|${contentResult.wait}`, '7|0|0|70');
+  assert.equal(`${bridgeResult.delay}|${bridgeResult.scans}|${bridgeResult.schedules}|${bridgeResult.wait}`, '7|0|0|100');
+});
+
+await test('追踪流 mutation 重排合帧且隐藏标签不全量扫描', () => {
+  assert.ok(content.includes('const fomoFeedScrollTargets = new WeakSet();'));
+  assert.ok(content.includes('scheduleFomoFeedRowReflow();\n      scheduleScan();'));
+  assert.ok(!content.includes('refreshFomoFeedFixedRowShifts();\n      }\n      scheduleScan();'));
+  assert.ok(content.includes("if (document.visibilityState === 'hidden') return;"));
+  assert.ok(bridge.includes("if (document.visibilityState === 'hidden') return;"));
+  assert.ok(content.includes("if (document.visibilityState !== 'hidden') scanVisibleCards();"));
+});
+
 await test('Pump 成交按已验证字段瘦身并映射到 GMGN 链', () => {
   const functions = [
     extractFunction(background, 'pumpFeedHttpsUrl'),
@@ -443,7 +505,7 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.16' }) },
+      runtime: { getManifest: () => ({ version: '0.46.17' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -456,15 +518,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.16');
+  assert.equal(saved.gdhRunningVersion, '0.46.17');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.16' }) },
+      runtime: { getManifest: () => ({ version: '0.46.17' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.16' }),
+        get: async () => ({ gdhRunningVersion: '0.46.17' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -598,8 +660,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.16.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.16.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.17.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.17.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

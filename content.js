@@ -278,9 +278,23 @@
   let activeCard = null;
   let tooltip = null;
 
+  /** 页面长时间开着时，缓存只保留最近使用的一段，避免跨代币浏览后只增不减。 */
+  function setBoundedMap(map, key, value, max) {
+    if (map.has(key)) map.delete(key);
+    map.set(key, value);
+    while (map.size > max) map.delete(map.keys().next().value);
+  }
+
+  function rememberBoundedSet(set, value, max) {
+    if (set.has(value)) set.delete(value);
+    set.add(value);
+    while (set.size > max) set.delete(set.values().next().value);
+  }
+
   // Dev 历史最高市值：gmgn.ai/api/v1/dev_created_tokens（同源，带会话，免配置）。
   const DEV_ATH_TTL_MS = 5 * 60 * 1000;
   const DEV_ATH_ERROR_RETRY_MS = 60 * 1000;
+  const DEV_ATH_CACHE_MAX = 400;
   const DEV_ATH_GAP_MS = 250;
   const DEV_ATH_QS =
     'device_id=&client_id=gmgn_web&from_app=gmgn&app_ver=&tz_name=Asia%2FShanghai&tz_offset=28800&app_lang=zh-CN&os=web';
@@ -333,7 +347,7 @@
     } catch {
       // 网络失败静默降级：峰段不显示，60s 后允许重试。
     }
-    devAthCache.set(creator, entry);
+    setBoundedMap(devAthCache, creator, entry, DEV_ATH_CACHE_MAX);
     devAthQueued.delete(creator);
     if (entry.ok && entry.mc > 0) scheduleScan();
     if (devAthQueue.length) devAthTimer = window.setTimeout(processDevAthQueue, DEV_ATH_GAP_MS);
@@ -972,6 +986,7 @@
   const flapRetry = new Map();
   const FLAP_RETRY_BASE = 8000;
   const FLAP_RETRY_MAX = 5;
+  const FLAP_CACHE_MAX = 400;
 
   /** 按税收去向判定模式，与展示图标一一对应。 */
   function flapMode(dist) {
@@ -1173,11 +1188,11 @@ ${flapTooltipText(info)}
       payload: { token, rpc: String(settings.flapRpc || '').trim() },
     }).then((res) => {
       // sendMessage 在 SW 被挂起时会拿到 undefined，那也是暂时的，同样要能重试
-      flapInfoCache.set(token, res || { ok: false, reason: 'no-response' });
+      setBoundedMap(flapInfoCache, token, res || { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
       if (res?.ok || res?.reason === 'not-flap') {
         flapRetry.delete(token);
       } else {
-        flapRetry.set(token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 });
+        setBoundedMap(flapRetry, token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 }, FLAP_CACHE_MAX);
       }
     }).catch(() => {}).finally(() => {
       flapPending.delete(token);
@@ -3280,6 +3295,7 @@ ${flapTooltipText(info)}
 
   // ---- 观点翻译（Chrome 138+ 内置本地翻译，与 985monitor 同一套 API，全程在本机跑）----
   const fomoTrCache = new Map();
+  const FOMO_TR_CACHE_MAX = 300;
   const fomoTranslators = new Map();
   let fomoDetector = null;
   let fomoTrQueue = [];
@@ -3440,12 +3456,12 @@ ${flapTooltipText(info)}
         const cached = fomoTrCache.get(text);
         if (cached) { paintTranslation(el, cached); continue; }
         const lang = await fomoDetectLang(text);
-        if (!lang || lang === 'zh') { fomoTrCache.set(text, ''); continue; }
+        if (!lang || lang === 'zh') { setBoundedMap(fomoTrCache, text, '', FOMO_TR_CACHE_MAX); continue; }
         const translator = await fomoTranslatorFor(lang);
         if (!translator) continue;
         const zh = String(await translator.translate(text) || '').trim();
         if (!zh) continue;
-        fomoTrCache.set(text, zh);
+        setBoundedMap(fomoTrCache, text, zh, FOMO_TR_CACHE_MAX);
         paintTranslation(el, zh);
       } catch {
         // 语言包缺失/下载失败：保留原文，不打断其余条目
@@ -3498,6 +3514,7 @@ ${flapTooltipText(info)}
   }
 
   const FOMO_PNL_TTL = 10 * 60 * 1000;
+  const FOMO_PNL_CACHE_MAX = 300;
   const fomoPnlCache = new Map();
   let fomoPnlQueue = [];
   let fomoPnlActive = 0;
@@ -3529,7 +3546,7 @@ ${flapTooltipText(info)}
       fomoPnlActive += 1;
       chrome.runtime.sendMessage({ type: 'fomo-user-pnl', payload: { userId: job.userId } })
         .then((res) => {
-          fomoPnlCache.set(job.userId, { at: Date.now(), data: res });
+          setBoundedMap(fomoPnlCache, job.userId, { at: Date.now(), data: res }, FOMO_PNL_CACHE_MAX);
           if (job.el.isConnected) paintFomoTag(job.el, res);
         })
         .catch(() => {})
@@ -5460,6 +5477,7 @@ ${flapTooltipText(info)}
   let pumpFeedEvents = [];
   const fomoFeedCards = new Map();
   const fomoFeedSeen = new Set();
+  const FOMO_FEED_SEEN_MAX = 600;
   let fomoFeedPinEl = null;
   let fomoFeedLastPollAt = 0;
   let pumpFeedLastPollAt = 0;
@@ -5901,7 +5919,7 @@ ${flapTooltipText(info)}
     card.addEventListener('pointerdown', (event) => event.stopPropagation());
 
     if (!fomoFeedSeen.has(ev.key)) {
-      fomoFeedSeen.add(ev.key);
+      rememberBoundedSet(fomoFeedSeen, ev.key, FOMO_FEED_SEEN_MAX);
       card.classList.add('is-new');
     }
   }
@@ -5969,6 +5987,7 @@ ${flapTooltipText(info)}
   const FOMO_FEED_INLINE_CAP = 6;
   const fomoFeedShifted = new Set();
   let fomoFeedReflowRaf = 0;
+  const fomoFeedScrollTargets = new WeakSet();
 
   function clearFomoFeedShifts() {
     for (const el of fomoFeedShifted) {
@@ -6322,6 +6341,7 @@ ${flapTooltipText(info)}
   // 用 rAF 合帧（一帧最多一次），滚动期间进一步降到 ~120ms 一次——
   // 滚动停下 200ms 内立即补一次全量扫描，保证不漏挂。
   let scanRafId = 0;
+  let scanDelayTimer = 0;
   let lastScanAt = 0;
   let scrollingUntil = 0;
   const SCAN_MIN_GAP_SCROLLING = 120;
@@ -6330,9 +6350,16 @@ ${flapTooltipText(info)}
     scanRafId = 0;
     const now = Date.now();
     if (now < scrollingUntil && now - lastScanAt < SCAN_MIN_GAP_SCROLLING) {
-      // 滚动中且离上次太近：不做全量扫描，等下一帧再判断
-      scanScheduled = false;
-      scheduleScan();
+      // 旧版会在这里逐帧重新挂 rAF，虽然没全扫也会空转约 60 次/秒。
+      // 改为只留一个延时器，到达 120ms 间隔后再进下一帧。
+      if (!scanDelayTimer) {
+        const wait = Math.max(1, SCAN_MIN_GAP_SCROLLING - (now - lastScanAt));
+        scanDelayTimer = window.setTimeout(() => {
+          scanDelayTimer = 0;
+          scanScheduled = false;
+          scheduleScan();
+        }, wait);
+      }
       return;
     }
     lastScanAt = now;
@@ -6341,8 +6368,9 @@ ${flapTooltipText(info)}
 
   function scheduleScan() {
     if (scanScheduled) return;
+    if (document.visibilityState === 'hidden') return;
     scanScheduled = true;
-    if (scanRafId) return;
+    if (scanRafId || scanDelayTimer) return;
     scanRafId = window.requestAnimationFrame(runScheduledScan);
   }
 
@@ -6352,8 +6380,13 @@ ${flapTooltipText(info)}
     scrollingUntil = Date.now() + 200;
 
     const target = event.target;
-    if (target instanceof Element
+    let trackingScroll = target instanceof Element && fomoFeedScrollTargets.has(target);
+    if (!trackingScroll && target instanceof Element
       && (target.querySelector(TRACKER_ITEM_SELECTOR) || target.querySelector(TRACKER_SYMBOL_CELL))) {
+      fomoFeedScrollTargets.add(target);
+      trackingScroll = true;
+    }
+    if (trackingScroll) {
       scheduleFomoFeedRowReflow();
     }
     if (!(target instanceof Element)
@@ -6479,11 +6512,9 @@ ${flapTooltipText(info)}
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
-      // 虚拟列表新挂载的行必须在本帧绘制前继承已有插卡位移。这里同步重排；
-      // observer 不监听 style，所以写 transform 不会反过来触发自身。
-      if (document.querySelector('.gdh-fomofeed.is-abs, [data-gdh-token-blocked="1"]')) {
-        refreshFomoFeedFixedRowShifts();
-      }
+      // 虚拟列表新挂载的行必须在本帧绘制前继承已有插卡位移。合到同一 rAF，
+      // 避免一次 mutation delivery 里反复读 offsetHeight / 写 transform。
+      scheduleFomoFeedRowReflow();
       scheduleScan();
       return;
     }
@@ -6634,5 +6665,10 @@ ${flapTooltipText(info)}
     // 扩展上下文失效
   }
 
-  window.setInterval(scanVisibleCards, 1000);
+  window.setInterval(() => {
+    if (document.visibilityState !== 'hidden') scanVisibleCards();
+  }, 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden') scheduleScan();
+  });
 })();

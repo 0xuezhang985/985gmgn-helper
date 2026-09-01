@@ -750,6 +750,7 @@
   // 声明必须在 scanCards 之前：它在函数体里赋值，声明放后面会命中 TDZ，
   // 导致 scanCards 每次都从第一行崩掉（持仓行/追踪卡标记全部失效）。
   let scanRafId = 0;
+  let scanDelayTimer = 0;
   let lastScanAt = 0;
   let scrollingUntil = 0;
 
@@ -811,8 +812,14 @@
     scanRafId = 0;
     const now = Date.now();
     if (now < scrollingUntil && now - lastScanAt < 150) {
-      scanScheduled = false;
-      scheduleScan();
+      if (!scanDelayTimer) {
+        const wait = Math.max(1, 150 - (now - lastScanAt));
+        scanDelayTimer = window.setTimeout(() => {
+          scanDelayTimer = 0;
+          scanScheduled = false;
+          scheduleScan();
+        }, wait);
+      }
       return;
     }
     lastScanAt = now;
@@ -821,12 +828,16 @@
 
   function scheduleScan() {
     if (scanScheduled) return;
+    if (document.visibilityState === 'hidden') return;
     scanScheduled = true;
-    if (scanRafId) return;
+    if (scanRafId || scanDelayTimer) return;
     scanRafId = window.requestAnimationFrame(runScheduledScan);
   }
 
   document.addEventListener('scroll', () => { scrollingUntil = Date.now() + 200; }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden') scheduleScan();
+  });
 
   function startDomScanner() {
     if (!document.documentElement) return;
