@@ -139,7 +139,8 @@
   }
 
   function currentTrackChain() {
-    return safeText(new URLSearchParams(location.search).get('chain'), 24).toLowerCase();
+    const queryChain = safeText(new URLSearchParams(location.search).get('chain'), 24).toLowerCase();
+    return queryChain || debotTokenRoute()?.chain || '';
   }
 
   function isTrackPage() {
@@ -148,7 +149,7 @@
   }
 
   function isTrackShellPage() {
-    return location.pathname === '/track';
+    return location.pathname === '/track' || debotTokenRoute() !== null;
   }
 
   /** DeBot 登录后会把 inviteCode 拼成 /token/chain/invite_address。 */
@@ -319,11 +320,10 @@
   function buildFeedCard(event) {
     const tag = FEED_TAGS[event.type] || { label: '事件', cls: '' };
     const profile = profileMeta(event);
-    const card = document.createElement('div');
+    const card = document.createElement('a');
     card.className = `gdh-debot-feed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
     card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
-    card.setAttribute('role', 'button');
-    card.tabIndex = 0;
+    card.href = debotTokenHref(event.chain, event.addr);
 
     const stripe = document.createElement('span');
     stripe.className = 'gdh-debot-feed__stripe';
@@ -383,14 +383,6 @@
     time.dataset.gdhTs = String(event.ts);
     card.append(who, token, action, amount, mc, time);
 
-    const openToken = () => {
-      const href = debotTokenHref(event.chain, event.addr);
-      if (href) location.assign(href);
-    };
-    card.addEventListener('click', openToken);
-    card.addEventListener('keydown', (key) => {
-      if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); openToken(); }
-    });
     if (!feedSeen.has(event.key)) {
       feedSeen.add(event.key);
       card.classList.add('is-new');
@@ -567,11 +559,10 @@
     if (!card) {
       const tag = FEED_TAGS[event.type] || { label: '事件', cls: '' };
       const profile = profileMeta(event);
-      card = document.createElement('div');
+      card = document.createElement('a');
       card.className = `gdh-debot-sidefeed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
       card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
-      card.setAttribute('role', 'button');
-      card.tabIndex = 0;
+      card.href = debotTokenHref(event.chain, event.addr);
 
       const stripe = document.createElement('span');
       stripe.className = 'gdh-debot-sidefeed__stripe';
@@ -615,14 +606,6 @@
       mc.textContent = Number(event.mc) > 0 ? `MC ${fomoUsd(event.mc)}` : '';
       card.append(stripe, avatar, name, action, source, time, amount, symbol, mc);
 
-      const openToken = () => {
-        const href = debotTokenHref(event.chain, event.addr);
-        if (href) location.assign(href);
-      };
-      card.addEventListener('click', openToken);
-      card.addEventListener('keydown', (key) => {
-        if (key.key === 'Enter' || key.key === ' ') { key.preventDefault(); openToken(); }
-      });
       sidebarFeedCards.set(event.key, card);
       while (sidebarFeedCards.size > 80) {
         const first = sidebarFeedCards.keys().next().value;

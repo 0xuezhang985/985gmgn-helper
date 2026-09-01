@@ -620,8 +620,18 @@ await test('DeBot FOMO/Pump 事件按时间锚定原生行并限制顶部数量'
 
 await test('DeBot 左侧追踪面板在管理标签页也会混排且不写入 React 列表', () => {
   const routeFn = extractFunction(debotContent, 'isTrackShellPage');
-  assert.equal(evaluate([routeFn], 'isTrackShellPage()', { location: { pathname: '/track' } }), true);
-  assert.equal(evaluate([routeFn], 'isTrackShellPage()', { location: { pathname: '/token/robinhood/0x1' } }), false);
+  const tokenRouteFn = extractFunction(debotContent, 'debotTokenRoute');
+  const tokenAddress = '0x65eeaf07b545c9560dcbd8a72f239fa1ab961501';
+  const routeContext = { FOMO_NETWORK_ID: { robinhood: 4663 }, decodeURIComponent };
+  assert.equal(evaluate([routeFn, tokenRouteFn], 'isTrackShellPage()', {
+    ...routeContext, location: { pathname: '/track' },
+  }), true);
+  assert.equal(evaluate([routeFn, tokenRouteFn], 'isTrackShellPage()', {
+    ...routeContext, location: { pathname: `/token/robinhood/${tokenAddress}` },
+  }), true);
+  assert.equal(evaluate([routeFn, tokenRouteFn], 'isTrackShellPage()', {
+    ...routeContext, location: { pathname: '/market' },
+  }), false);
 
   const planFn = extractFunction(debotContent, 'sidebarFeedPlacementPlan');
   const rowTimes = [100_000, 80_000, 60_000];
@@ -646,6 +656,18 @@ await test('DeBot 左侧追踪面板在管理标签页也会混排且不写入 R
   assert.match(debotContent, /async function pollFomo[\s\S]*if \(!isTrackShellPage\(\)/);
   assert.match(debotContent, /async function pollPump[\s\S]*if \(!isTrackShellPage\(\)/);
   assert.ok(debotStyles.includes('.gdh-debot-sidefeed__row'));
+});
+
+await test('DeBot FOMO/Pump 卡片使用站内原生链接同页跳转代币', () => {
+  const mainCard = extractFunction(debotContent, 'buildFeedCard');
+  const sidebarCard = extractFunction(debotContent, 'sidebarFeedCard');
+  assert.ok(mainCard.includes("document.createElement('a')"));
+  assert.ok(mainCard.includes('card.href = debotTokenHref(event.chain, event.addr)'));
+  assert.ok(sidebarCard.includes("document.createElement('a')"));
+  assert.ok(sidebarCard.includes('card.href = debotTokenHref(event.chain, event.addr)'));
+  assert.ok(!mainCard.includes('location.assign'));
+  assert.ok(!sidebarCard.includes('location.assign'));
+  assert.ok(debotStyles.includes('text-decoration: none'));
 });
 
 await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码', () => {
@@ -696,7 +718,7 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
   await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.21' }) },
+      runtime: { getManifest: () => ({ version: '0.46.22' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -709,15 +731,15 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.21');
+  assert.equal(saved.gdhRunningVersion, '0.46.22');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.21' }) },
+      runtime: { getManifest: () => ({ version: '0.46.22' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.21' }),
+        get: async () => ({ gdhRunningVersion: '0.46.22' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -851,8 +873,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.21.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.21.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.22.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.22.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

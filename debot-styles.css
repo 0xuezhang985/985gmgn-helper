@@ -14,6 +14,7 @@
   line-height: 1.2;
   overflow: hidden;
   isolation: isolate;
+  text-decoration: none;
 }
 
 .gdh-debot-feed__row:hover {
@@ -165,6 +166,7 @@
   font-size: 12px;
   line-height: 1.2;
   overflow: hidden;
+  text-decoration: none;
 }
 
 .gdh-debot-sidefeed__row:hover {
