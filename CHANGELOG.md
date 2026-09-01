@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.46.23 - 2026-09-02
+
+- DeBot FOMO/Pump 左侧混排同时适配原生 **卡片模式（67px）** 与 **列表模式（40px 六列）**；行高、列宽和插入位移从当前 DeBot 虚拟行实时读取，模式切换后自动重建对应格式，不向 React 的 `virtuoso-item-list` 插入未知节点。
+- 插件卡片点击不再用普通整页链接跳转：自动继承当前 DeBot 原生链接中的 invite 前缀（例如 `231141_`），经 MAIN world History 路由触发同页 SPA 切币；Ctrl/⌘/Shift 点击仍保留浏览器原生新标签行为。
+- 将 GMGN **重点关注**移植到 DeBot，并直接共用 `specialWallets`：卡片/列表原生追踪行均可点 ☆，支持逐钱包 7 色/炫彩、彩色高亮、管理面板、手动添加/移除，以及「📌 新推送置顶 10 秒」。
+- DeBot 插入的 FOMO/Pump 行同步支持长按 1 秒屏蔽代币，继续复用 GMGN 的 `blockedTokens` 名单，并可在 ★N 面板恢复。GMGN 专属的 Dev 战绩、App 持仓提醒、原生提醒历史、喊单窗与 Flap 税徽章未误搬到 DeBot。
+- 真实 DeBot DOM 基准确认列表模式为 `TR[data-known-size="40"]`、卡片模式为 `DIV[data-known-size="67"]`，原生代币链接带 `data-discover="true"` 和账号 invite 前缀；JavaScript 语法检查与 52 项自动化回归通过。
+
 ## 0.46.22 - 2026-09-01
 
 - 修复 DeBot 代币页左侧追踪面板不插卡：v0.46.21 只在 `/track` 路由启动左侧 FOMO/Pump 混排，而 DeBot 的常驻追踪 dock 在 `/token/<chain>/<address>` 代币页同样存在；新版在有效代币路由上也启动同一事件流和 67px 虚拟行布局。

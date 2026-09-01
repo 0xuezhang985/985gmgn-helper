@@ -13,6 +13,8 @@
     fomoFeedTypes: {
       buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true,
     },
+    enableSpecialWallet: true,
+    specialWallets: [],
     blockedTokens: [],
     debotFomoPanelOpen: false,
     debotFomoPanelFolded: false,
@@ -46,10 +48,15 @@
   const FEED_RENDER_CAP = 40;
   const FEED_VISIBLE_CAP = 12;
   const FEED_HEAD_CAP = 6;
-  const SIDEBAR_FEED_ROW_HEIGHT = 67;
   const SIDEBAR_FEED_VISIBLE_CAP = 8;
   const SIDEBAR_FEED_HEAD_CAP = 3;
   const PANEL_REFRESH_MS = 30000;
+  const SPECIAL_COLOR_PALETTE = [
+    '#f5b83d', '#ef5350', '#43c07a', '#4c9ffe', '#b48ae0', '#ed6ba4', '#3ec6c6',
+  ];
+  const SPECIAL_PIN_MS = 10000;
+  const SPECIAL_PIN_MAX = 3;
+  const SPECIAL_PIN_SEEN_MAX = 400;
 
   let settings = { ...DEFAULTS };
   let fomoEvents = [];
@@ -68,6 +75,12 @@
   const feedCards = new Map();
   const sidebarFeedCards = new Map();
   const feedSeen = new Set();
+  let specialWalletMap = new Map();
+  let specialManageOpen = false;
+  let specialPalette = null;
+  let specialPinStrip = null;
+  let specialPinBaselineDone = false;
+  const specialPinSeen = new Set();
 
   let panel = null;
   let panelLauncher = null;
@@ -171,7 +184,39 @@
     const safeChain = safeText(chain, 24).toLowerCase();
     const safeAddress = safeText(address, 96);
     if (!/^[a-z0-9_-]{2,24}$/.test(safeChain) || !safeAddress) return '';
-    return `/token/${encodeURIComponent(safeChain)}/${encodeURIComponent(safeAddress)}`;
+    return `/token/${encodeURIComponent(safeChain)}/${encodeURIComponent(`${debotInvitePrefix()}${safeAddress}`)}`;
+  }
+
+  function debotInvitePrefix() {
+    const paths = [location.pathname, ...[...document.querySelectorAll('a[href*="/token/"]')]
+      .slice(0, 30).map((link) => link.getAttribute('href') || '')];
+    for (const path of paths) {
+      let pathname = '';
+      try { pathname = new URL(path, location.origin).pathname; } catch { continue; }
+      const match = pathname.match(/^\/token\/[a-z0-9_-]+\/([^/?#]+)/i);
+      if (!match) continue;
+      let segment = match[1];
+      try { segment = decodeURIComponent(segment); } catch {}
+      const token = segment.match(/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/)?.[1] || '';
+      const prefix = token ? segment.slice(0, -token.length) : '';
+      if (/^[a-zA-Z0-9-]{1,64}_$/.test(prefix)) return prefix;
+    }
+    return '';
+  }
+
+  function bindDebotNavigation(link) {
+    if (!(link instanceof HTMLAnchorElement) || link.dataset.gdhDebotNavigate === '1') return link;
+    link.dataset.gdhDebotNavigate = '1';
+    link.dataset.discover = 'true';
+    link.addEventListener('click', (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (event.target instanceof Element && event.target.closest('button, input, label')) return;
+      const href = link.getAttribute('href') || '';
+      if (!href) return;
+      event.preventDefault();
+      document.dispatchEvent(new CustomEvent('gdh-debot-navigate', { detail: { href } }));
+    });
+    return link;
   }
 
   function pumpTokenKey(value) {
@@ -324,6 +369,7 @@
     card.className = `gdh-debot-feed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
     card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
     card.href = debotTokenHref(event.chain, event.addr);
+    bindDebotNavigation(card);
 
     const stripe = document.createElement('span');
     stripe.className = 'gdh-debot-feed__stripe';
@@ -501,13 +547,13 @@
 
   function sidebarTrackLayout() {
     const panelRoot = document.querySelector('[data-edge-dock-panel="track"]');
-    const scroller = panelRoot?.querySelector('[data-testid="virtuoso-scroller"][data-virtuoso-scroller]');
+    const scroller = panelRoot?.querySelector('[data-testid="virtuoso-scroller"]');
     const list = scroller?.querySelector('[data-testid="virtuoso-item-list"]');
     return scroller instanceof HTMLElement && list instanceof HTMLElement ? { scroller, list } : null;
   }
 
   function sidebarTrackRows(list) {
-    return [...list.querySelectorAll(':scope > div[data-index][data-known-size]')]
+    return [...list.querySelectorAll(':scope > div[data-index][data-known-size], :scope > tr[data-index][data-known-size]')]
       .filter((row) => row instanceof HTMLElement && !row.hasAttribute('data-gdh-debot-fomo-key'));
   }
 
@@ -518,9 +564,15 @@
       const text = safeText(node.textContent, 12);
       if (!/^\d+(?:s|m|h|d)$/.test(text)) return false;
       const rect = node.getBoundingClientRect();
+      if (row.tagName === 'TR') return rect.left < rowRect.left + 64;
       return rect.right >= rowRect.right - 64 && rect.top < rowRect.top + 34;
     });
-    const text = safeText(candidates.at(-1)?.textContent, 12);
+    candidates.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return row.tagName === 'TR' ? ar.left - br.left : ar.top - br.top || br.right - ar.right;
+    });
+    const text = safeText(candidates[0]?.textContent, 12);
     const match = text.match(/^(\d+)(s|m|h|d)$/);
     if (!match) return 0;
     const multiplier = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]];
@@ -554,15 +606,24 @@
     };
   }
 
-  function sidebarFeedCard(event) {
+  function sidebarFeedCard(event, layoutMeta) {
+    layoutMeta = layoutMeta || {};
+    const mode = layoutMeta.mode === 'list' ? 'list' : 'card';
     let card = sidebarFeedCards.get(event.key);
+    if (card && card.dataset.gdhDebotMode !== mode) {
+      card.remove();
+      sidebarFeedCards.delete(event.key);
+      card = null;
+    }
     if (!card) {
       const tag = FEED_TAGS[event.type] || { label: '事件', cls: '' };
       const profile = profileMeta(event);
       card = document.createElement('a');
-      card.className = `gdh-debot-sidefeed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
+      card.className = `gdh-debot-sidefeed__row is-${mode} ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
       card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
+      card.dataset.gdhDebotMode = mode;
       card.href = debotTokenHref(event.chain, event.addr);
+      bindDebotNavigation(card);
 
       const stripe = document.createElement('span');
       stripe.className = 'gdh-debot-sidefeed__stripe';
@@ -601,10 +662,51 @@
       const symbol = document.createElement('span');
       symbol.className = 'gdh-debot-sidefeed__symbol';
       symbol.textContent = safeText(event.symbol, 24) || safeText(event.addr, 8);
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.className = 'gdh-debot-sidefeed__block';
+      block.textContent = '🚫';
+      block.title = '长按 1 秒屏蔽这个代币';
+      let blockTimer = 0;
+      const cancelBlock = () => {
+        if (blockTimer) window.clearTimeout(blockTimer);
+        blockTimer = 0;
+        block.classList.remove('is-holding');
+      };
+      block.addEventListener('pointerdown', (pointerEvent) => {
+        pointerEvent.preventDefault(); pointerEvent.stopPropagation();
+        cancelBlock();
+        block.classList.add('is-holding');
+        blockTimer = window.setTimeout(() => {
+          blockTimer = 0;
+          block.classList.remove('is-holding');
+          blockToken(event.addr, event.symbol);
+        }, 1000);
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach((type) => block.addEventListener(type, cancelBlock));
+      block.addEventListener('click', (clickEvent) => { clickEvent.preventDefault(); clickEvent.stopPropagation(); });
+      symbol.appendChild(block);
       const mc = document.createElement('span');
       mc.className = 'gdh-debot-sidefeed__mc';
       mc.textContent = Number(event.mc) > 0 ? `MC ${fomoUsd(event.mc)}` : '';
-      card.append(stripe, avatar, name, action, source, time, amount, symbol, mc);
+      if (mode === 'list') {
+        const cells = [time, action, null, symbol, amount, mc].map((content, index) => {
+          const cell = document.createElement('span');
+          cell.className = `gdh-debot-sidefeed__list-cell is-col-${index + 1}`;
+          if (index === 2) cell.append(avatar, name, source);
+          else if (content) cell.appendChild(content);
+          return cell;
+        });
+        const sampleCells = [...(layoutMeta.sampleRow?.children || [])];
+        if (sampleCells.length >= 6) {
+          const columns = sampleCells.slice(0, 6)
+            .map((cell) => `${Math.max(36, Math.round(cell.getBoundingClientRect().width))}px`).join(' ');
+          card.style.gridTemplateColumns = columns;
+        }
+        card.append(stripe, ...cells);
+      } else {
+        card.append(stripe, avatar, name, action, source, time, amount, symbol, mc);
+      }
 
       sidebarFeedCards.set(event.key, card);
       while (sidebarFeedCards.size > 80) {
@@ -702,6 +804,10 @@
 
     const rows = sidebarTrackRows(layout.list);
     if (!rows.length) return;
+    const mode = rows[0].tagName === 'TR' ? 'list' : 'card';
+    const measured = Number(rows[0].dataset.knownSize) || rows[0].getBoundingClientRect().height;
+    const rowHeight = Number.isFinite(measured) && measured >= 32 && measured <= 120
+      ? Math.round(measured) : (mode === 'list' ? 40 : 67);
     const now = Date.now();
     const rowInfo = rows.map((row) => ({
       row,
@@ -726,8 +832,9 @@
       const baseTop = rowInfo[index].row.getBoundingClientRect().top
         - scrollerRect.top + layout.scroller.scrollTop;
       bucket.forEach((event, localIndex) => {
-        const card = sidebarFeedCard(event);
-        card.style.top = `${baseTop + (inserted + localIndex) * SIDEBAR_FEED_ROW_HEIGHT}px`;
+        const card = sidebarFeedCard(event, { mode, rowHeight, sampleRow: rows[0] });
+        card.style.setProperty('--gdh-debot-row-height', `${rowHeight}px`);
+        card.style.top = `${baseTop + (inserted + localIndex) * rowHeight}px`;
         card.style.left = `${listRect.left - scrollerRect.left + layout.scroller.scrollLeft}px`;
         card.style.width = `${listRect.width}px`;
         layout.scroller.appendChild(card);
@@ -737,16 +844,370 @@
         const row = rowInfo[index].row;
         row.dataset.gdhDebotSidebarTranslate = row.style.translate || '';
         row.dataset.gdhDebotSidebarShift = '1';
-        row.style.translate = `0 ${inserted * SIDEBAR_FEED_ROW_HEIGHT}px`;
+        row.style.translate = `0 ${inserted * rowHeight}px`;
       }
     }
     layout.list.dataset.gdhDebotSidebarMarginBottom = layout.list.style.marginBottom || '';
-    layout.list.style.marginBottom = `${inserted * SIDEBAR_FEED_ROW_HEIGHT}px`;
+    layout.list.style.marginBottom = `${inserted * rowHeight}px`;
+  }
+
+  function normalizeWalletAddress(value) {
+    const text = safeText(value, 96);
+    if (/^0x[a-fA-F0-9]{40}$/.test(text)) return text.toLowerCase();
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(text) ? text : '';
+  }
+
+  function normalizeSpecialColor(value) {
+    if (value === 'rainbow') return 'rainbow';
+    return /^#[0-9a-fA-F]{6}$/.test(String(value || ''))
+      ? String(value).toLowerCase() : SPECIAL_COLOR_PALETTE[0];
+  }
+
+  function rebuildSpecialWalletMap() {
+    specialWalletMap = new Map((Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
+      .map((item) => {
+        const address = normalizeWalletAddress(item?.address);
+        return address ? [address, {
+          label: safeText(item?.label, 32),
+          color: normalizeSpecialColor(item?.color),
+          pin: item?.pin === true,
+        }] : null;
+      }).filter(Boolean));
+  }
+
+  function persistSpecialWallets(next) {
+    settings.specialWallets = next;
+    rebuildSpecialWalletMap();
+    chrome.storage.local.set({ specialWallets: next });
+    scheduleFeedLayout();
+  }
+
+  function toggleSpecialWallet(address, label = '') {
+    const normalized = normalizeWalletAddress(address);
+    if (!normalized) return false;
+    const list = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
+    const exists = list.some((item) => normalizeWalletAddress(item?.address) === normalized);
+    persistSpecialWallets(exists
+      ? list.filter((item) => normalizeWalletAddress(item?.address) !== normalized)
+      : [...list, { address: normalized, label: safeText(label, 32), color: SPECIAL_COLOR_PALETTE[0], pin: false }]);
+    return true;
+  }
+
+  function updateSpecialWallet(address, patch) {
+    const normalized = normalizeWalletAddress(address);
+    if (!normalized || !specialWalletMap.has(normalized)) return;
+    const list = (Array.isArray(settings.specialWallets) ? settings.specialWallets : []).map((item) => (
+      normalizeWalletAddress(item?.address) === normalized ? { ...item, ...patch } : item
+    ));
+    persistSpecialWallets(list);
+  }
+
+  function specialRgba(color, alpha) {
+    const match = String(color).match(/^#([0-9a-fA-F]{6})$/);
+    if (!match) return `rgba(245, 184, 61, ${alpha})`;
+    const value = parseInt(match[1], 16);
+    return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+  }
+
+  function sidebarWalletMeta(row) {
+    const links = [...row.querySelectorAll('a[href*="/address/"]')];
+    const link = links.find((item) => safeText(item.textContent, 40)) || links[0];
+    let address = '';
+    try {
+      const pathname = new URL(link?.getAttribute('href') || '', location.origin).pathname;
+      address = pathname.match(/^\/address\/[a-z0-9_-]+\/([^/?#]+)/i)?.[1] || '';
+      address = decodeURIComponent(address);
+    } catch {}
+    address = normalizeWalletAddress(address || row.dataset.gdhDebotTrackWallet);
+    return { address, label: safeText(link?.textContent, 32), link };
+  }
+
+  function closeSpecialPalette() {
+    specialPalette?.remove();
+    specialPalette = null;
+  }
+
+  function openSpecialPalette(address, anchorRect) {
+    closeSpecialPalette();
+    const meta = specialWalletMap.get(address);
+    if (!meta) return;
+    const palette = document.createElement('div');
+    palette.className = 'gdh-debot-special-palette';
+    palette.addEventListener('pointerdown', (event) => event.stopPropagation());
+    for (const color of [...SPECIAL_COLOR_PALETTE, 'rainbow']) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = `gdh-debot-special-palette__dot${color === 'rainbow' ? ' is-rainbow' : ''}`;
+      if (color !== 'rainbow') dot.style.background = color;
+      dot.classList.toggle('is-active', meta.color === color);
+      dot.title = color === 'rainbow' ? '炫彩' : color;
+      dot.addEventListener('click', (event) => {
+        event.preventDefault(); event.stopPropagation();
+        updateSpecialWallet(address, { color });
+        closeSpecialPalette();
+      });
+      palette.appendChild(dot);
+    }
+    const pin = document.createElement('label');
+    pin.className = 'gdh-debot-special-palette__pin';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = meta.pin;
+    input.addEventListener('change', () => updateSpecialWallet(address, { pin: input.checked }));
+    pin.append(input, document.createTextNode('📌 新推送置顶 10 秒'));
+    palette.appendChild(pin);
+    document.body.appendChild(palette);
+    const width = palette.offsetWidth || 230;
+    const height = palette.offsetHeight || 70;
+    palette.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, anchorRect.left - width / 2))}px`;
+    palette.style.top = `${anchorRect.bottom + height + 8 <= window.innerHeight
+      ? anchorRect.bottom + 6 : Math.max(8, anchorRect.top - height - 6)}px`;
+    specialPalette = palette;
+  }
+
+  function applySpecialRow(row) {
+    const { address, label, link } = sidebarWalletMeta(row);
+    if (!address) return null;
+    const meta = specialWalletMap.get(address);
+    row.classList.toggle('gdh-debot-special-row', Boolean(meta));
+    if (meta) {
+      row.dataset.gdhDebotSpecial = '1';
+      row.dataset.gdhDebotSpecialRainbow = meta.color === 'rainbow' ? '1' : '0';
+      if (meta.color !== 'rainbow') {
+        row.style.setProperty('--gdh-debot-special-bg', specialRgba(meta.color, 0.13));
+        row.style.setProperty('--gdh-debot-special-color', meta.color);
+      }
+    } else {
+      delete row.dataset.gdhDebotSpecial;
+      delete row.dataset.gdhDebotSpecialRainbow;
+      row.style.removeProperty('--gdh-debot-special-bg');
+      row.style.removeProperty('--gdh-debot-special-color');
+    }
+    let star = row.querySelector(':scope .gdh-debot-special-star');
+    if (!star && link?.parentElement) {
+      star = document.createElement('button');
+      star.type = 'button';
+      star.className = 'gdh-debot-special-star';
+      star.addEventListener('pointerdown', (event) => event.stopPropagation());
+      star.addEventListener('click', (event) => {
+        event.preventDefault(); event.stopPropagation();
+        toggleSpecialWallet(star.dataset.address, star.dataset.label);
+      });
+      link.insertAdjacentElement('afterend', star);
+    }
+    if (star) {
+      star.dataset.address = address;
+      star.dataset.label = label;
+      star.textContent = meta ? '★' : '☆';
+      star.classList.toggle('is-active', Boolean(meta));
+      star.classList.toggle('is-rainbow', meta?.color === 'rainbow');
+      star.style.color = meta && meta.color !== 'rainbow' ? meta.color : '';
+      star.title = meta ? '取消重点关注' : '加入重点关注';
+    }
+    let swatch = row.querySelector(':scope .gdh-debot-special-swatch');
+    if (meta && star) {
+      if (!swatch) {
+        swatch = document.createElement('button');
+        swatch.type = 'button';
+        swatch.className = 'gdh-debot-special-swatch';
+        swatch.addEventListener('pointerdown', (event) => event.stopPropagation());
+        swatch.addEventListener('click', (event) => {
+          event.preventDefault(); event.stopPropagation();
+          openSpecialPalette(swatch.dataset.address, swatch.getBoundingClientRect());
+        });
+        star.insertAdjacentElement('afterend', swatch);
+      }
+      swatch.dataset.address = address;
+      swatch.style.background = meta.color === 'rainbow'
+        ? 'conic-gradient(#ef5350,#f5b83d,#43c07a,#4c9ffe,#b48ae0,#ed6ba4,#ef5350)'
+        : meta.color;
+    } else swatch?.remove();
+    return { address, label, meta };
+  }
+
+  function rememberSpecialPin(signature) {
+    specialPinSeen.add(signature);
+    while (specialPinSeen.size > SPECIAL_PIN_SEEN_MAX) specialPinSeen.delete(specialPinSeen.values().next().value);
+  }
+
+  function sidebarRowSignature(row, address) {
+    const token = row.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
+    const ts = Number(row.dataset.gdhDebotTrackTs) || sidebarRowTime(row);
+    const side = safeText(row.dataset.gdhDebotTrackSide, 12)
+      || safeText((row.innerText.match(/建仓|加仓|减仓|清仓|买入|卖出|转入|转出/) || [])[0], 12);
+    return `${address}|${token}|${side}|${Math.round(ts / 5000)}`;
+  }
+
+  function pinSidebarRow(row, wallet) {
+    const root = document.querySelector('[data-edge-dock-panel="track"]');
+    const scroller = root?.querySelector('[data-testid="virtuoso-scroller"]');
+    const href = row.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
+    if (!(root instanceof HTMLElement) || !(scroller instanceof HTMLElement) || !href) return;
+    if (!specialPinStrip?.isConnected) {
+      specialPinStrip = document.createElement('div');
+      specialPinStrip.className = 'gdh-debot-special-pin-strip';
+      root.appendChild(specialPinStrip);
+    }
+    const rootRect = root.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    specialPinStrip.style.top = `${Math.max(42, Math.round(scrollerRect.top - rootRect.top))}px`;
+    while (specialPinStrip.children.length >= SPECIAL_PIN_MAX) specialPinStrip.lastElementChild.remove();
+    const item = document.createElement('a');
+    item.className = 'gdh-debot-special-pin-item';
+    item.href = href;
+    bindDebotNavigation(item);
+    const tokenText = safeText(row.querySelector('a[href*="/token/"]')?.textContent, 30)
+      || safeText(row.dataset.gdhDebotTrackSymbol, 20) || '代币';
+    const action = safeText((row.innerText.match(/建仓|加仓|减仓|清仓|买入|卖出|转入|转出/) || [])[0], 12);
+    item.textContent = `📌 ${wallet.label || wallet.address.slice(0, 8)} ${action} ${tokenText}`;
+    const close = document.createElement('button');
+    close.type = 'button'; close.textContent = '×'; close.title = '关闭';
+    close.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); item.remove(); });
+    item.appendChild(close);
+    specialPinStrip.prepend(item);
+    window.setTimeout(() => {
+      item.remove();
+      if (specialPinStrip && !specialPinStrip.children.length) {
+        specialPinStrip.remove(); specialPinStrip = null;
+      }
+    }, SPECIAL_PIN_MS);
+  }
+
+  function unblockToken(address) {
+    const normalized = normalizeAddress(address);
+    const list = (Array.isArray(settings.blockedTokens) ? settings.blockedTokens : []).filter((item) => (
+      normalizeAddress(typeof item === 'string' ? item : item?.address || item?.token) !== normalized
+    ));
+    settings.blockedTokens = list;
+    chrome.storage.local.set({ blockedTokens: list });
+    scheduleFeedLayout();
+  }
+
+  function blockToken(address, symbol = '') {
+    const normalized = normalizeAddress(address);
+    if (!normalized || blockedTokenSet().has(normalized)) return;
+    const list = Array.isArray(settings.blockedTokens) ? settings.blockedTokens : [];
+    settings.blockedTokens = [...list, { address: normalized, symbol: safeText(symbol, 24) }];
+    chrome.storage.local.set({ blockedTokens: settings.blockedTokens });
+    scheduleFeedLayout();
+  }
+
+  function ensureSpecialManageUI(root) {
+    if (!(root instanceof HTMLElement)) return;
+    let button = root.querySelector(':scope > .gdh-debot-special-manage-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gdh-debot-special-manage-button';
+      button.addEventListener('click', (event) => {
+        event.preventDefault(); event.stopPropagation();
+        specialManageOpen = !specialManageOpen;
+        scheduleFeedLayout();
+      });
+      root.appendChild(button);
+    }
+    button.textContent = `★${specialWalletMap.size}`;
+    button.title = '重点关注管理';
+    button.classList.toggle('is-active', specialManageOpen);
+    let modal = root.querySelector(':scope > .gdh-debot-special-manage');
+    if (!specialManageOpen) { modal?.remove(); return; }
+    if (!modal) {
+      modal = document.createElement('section');
+      modal.className = 'gdh-debot-special-manage';
+      root.appendChild(modal);
+    }
+    const blocked = [...blockedTokenSet()];
+    const renderKey = JSON.stringify([settings.specialWallets, blocked]);
+    if (modal.dataset.renderKey === renderKey) return;
+    modal.dataset.renderKey = renderKey;
+    modal.replaceChildren();
+    const head = document.createElement('div'); head.className = 'gdh-debot-special-manage__head';
+    const title = document.createElement('strong'); title.textContent = `重点关注 · ${specialWalletMap.size}`;
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×';
+    close.addEventListener('click', () => { specialManageOpen = false; modal.remove(); button.classList.remove('is-active'); });
+    head.append(title, close); modal.appendChild(head);
+    const add = document.createElement('div'); add.className = 'gdh-debot-special-manage__add';
+    const address = document.createElement('input'); address.placeholder = '钱包地址'; address.spellcheck = false;
+    const label = document.createElement('input'); label.placeholder = '备注';
+    const submit = document.createElement('button'); submit.type = 'button'; submit.textContent = '添加';
+    submit.addEventListener('click', () => {
+      const normalized = normalizeWalletAddress(address.value);
+      if (!normalized || specialWalletMap.has(normalized)) return void address.classList.add('is-error');
+      toggleSpecialWallet(normalized, label.value); address.value = ''; label.value = '';
+    });
+    add.append(address, label, submit); modal.appendChild(add);
+    const list = document.createElement('div'); list.className = 'gdh-debot-special-manage__list';
+    for (const [walletAddress, meta] of specialWalletMap) {
+      const row = document.createElement('div'); row.className = 'gdh-debot-special-manage__row';
+      const swatch = document.createElement('button'); swatch.type = 'button'; swatch.className = 'gdh-debot-special-swatch';
+      swatch.style.background = meta.color === 'rainbow'
+        ? 'conic-gradient(#ef5350,#f5b83d,#43c07a,#4c9ffe,#b48ae0,#ed6ba4,#ef5350)' : meta.color;
+      swatch.addEventListener('click', () => openSpecialPalette(walletAddress, swatch.getBoundingClientRect()));
+      const pin = document.createElement('button'); pin.type = 'button'; pin.textContent = '📌'; pin.className = meta.pin ? 'is-pinned' : '';
+      pin.title = meta.pin ? '取消新推送置顶' : '新推送置顶 10 秒';
+      pin.addEventListener('click', () => updateSpecialWallet(walletAddress, { pin: !meta.pin }));
+      const name = document.createElement('span'); name.textContent = meta.label || `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`;
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '移除';
+      remove.addEventListener('click', () => toggleSpecialWallet(walletAddress));
+      row.append(swatch, pin, name, remove); list.appendChild(row);
+    }
+    if (!specialWalletMap.size) list.textContent = '还没有重点关注的钱包';
+    modal.appendChild(list);
+    if (blocked.length) {
+      const blockedBox = document.createElement('div'); blockedBox.className = 'gdh-debot-special-manage__blocked';
+      const blockedTitle = document.createElement('strong'); blockedTitle.textContent = `已屏蔽代币 · ${blocked.length}`;
+      blockedBox.appendChild(blockedTitle);
+      for (const token of blocked) {
+        const restore = document.createElement('button'); restore.type = 'button';
+        restore.textContent = `${token.slice(0, 6)}…${token.slice(-4)}  恢复`;
+        restore.addEventListener('click', () => unblockToken(token));
+        blockedBox.appendChild(restore);
+      }
+      modal.appendChild(blockedBox);
+    }
+  }
+
+  function scanSidebarFeatures() {
+    const layout = sidebarTrackLayout();
+    const root = document.querySelector('[data-edge-dock-panel="track"]');
+    if (!isTrackShellPage() || !layout || !(root instanceof HTMLElement) || settings.enableSpecialWallet === false) {
+      document.querySelectorAll('.gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-manage-button, .gdh-debot-special-manage')
+        .forEach((node) => node.remove());
+      document.querySelectorAll('[data-gdh-debot-special]').forEach((row) => {
+        row.classList.remove('gdh-debot-special-row');
+        delete row.dataset.gdhDebotSpecial;
+        delete row.dataset.gdhDebotSpecialRainbow;
+        row.style.removeProperty('--gdh-debot-special-bg');
+        row.style.removeProperty('--gdh-debot-special-color');
+      });
+      specialPinStrip?.remove(); specialPinStrip = null;
+      return;
+    }
+    ensureSpecialManageUI(root);
+    const rows = sidebarTrackRows(layout.list);
+    const current = [];
+    for (const row of rows) {
+      const wallet = applySpecialRow(row);
+      if (!wallet) continue;
+      const signature = sidebarRowSignature(row, wallet.address);
+      current.push({ row, wallet, signature });
+    }
+    if (!specialPinBaselineDone) {
+      current.forEach((item) => rememberSpecialPin(item.signature));
+      specialPinBaselineDone = true;
+      return;
+    }
+    for (const item of current) {
+      if (specialPinSeen.has(item.signature)) continue;
+      rememberSpecialPin(item.signature);
+      if (item.wallet.meta?.pin) pinSidebarRow(item.row, item.wallet);
+    }
   }
 
   function layoutFeeds() {
     feedRenderRaf = 0;
     layoutFeed();
+    scanSidebarFeatures();
     layoutSidebarFeed();
   }
 
@@ -1319,6 +1780,7 @@
   function start() {
     chrome.storage.local.get(DEFAULTS, (stored) => {
       settings = { ...DEFAULTS, ...stored };
+      rebuildSpecialWalletMap();
       syncRoute();
     });
     chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null }, (stored) => {
@@ -1334,6 +1796,7 @@
         else if (key === 'fomoToken') panelLoadedKey = '';
         else settings[key] = change.newValue;
       }
+      if (changes.specialWallets) rebuildSpecialWalletMap();
       syncRoute();
     });
     chrome.runtime.onMessage.addListener((message) => {
@@ -1346,6 +1809,10 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') syncRoute();
     });
+    document.addEventListener('pointerdown', (event) => {
+      if (!specialPalette || (event.target instanceof Node && specialPalette.contains(event.target))) return;
+      closeSpecialPalette();
+    }, true);
     document.addEventListener('scroll', (event) => {
       const table = trackTable();
       const scroller = trackScroller(table);
@@ -1354,11 +1821,11 @@
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element
-        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher')
-          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo'));
+        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip')
+          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row')) return false;
+        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {

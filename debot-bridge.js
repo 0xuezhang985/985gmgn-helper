@@ -184,6 +184,24 @@
     scanRaf = window.requestAnimationFrame(scan);
   }
 
+  function navigateTokenRoute(event) {
+    const raw = typeof event?.detail?.href === 'string' ? event.detail.href : '';
+    let url;
+    try { url = new URL(raw, location.origin); } catch { return; }
+    if (url.origin !== location.origin || !/^\/token\/[a-z0-9_-]+\/[^/?#]+/i.test(url.pathname)) return;
+    if (url.href === location.href) return;
+    const previous = history.state && typeof history.state === 'object' ? history.state : {};
+    const idx = Number.isFinite(Number(previous.idx)) ? Number(previous.idx) + 1 : 1;
+    const state = {
+      ...previous,
+      usr: null,
+      key: Math.random().toString(36).slice(2, 10),
+      idx,
+    };
+    history.pushState(state, '', `${url.pathname}${url.search}${url.hash}`);
+    window.dispatchEvent(new PopStateEvent('popstate', { state }));
+  }
+
   function start() {
     const observer = new MutationObserver((records) => {
       if (records.some((record) => {
@@ -197,6 +215,7 @@
       scheduleScan();
     }, true);
     document.addEventListener('visibilitychange', scheduleScan);
+    document.addEventListener('gdh-debot-navigate', navigateTokenRoute);
     window.addEventListener('popstate', scheduleScan);
     window.setInterval(scheduleScan, 1200);
     scheduleScan();
