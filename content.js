@@ -5435,13 +5435,11 @@ ${flapTooltipText(info)}
   // ==== 985monitor fomo 推送：混排进追踪流 ====
   // 数据：后台轮询 985monitor 发布的 fomo 事件 JSON。过滤：沿用 985monitor 网页上的
   // 屏蔽名单/每人事件开关（monitorFomoConfig，由 985monitor 域的分支同步过来）。
-  // 摆放：追踪流是 react-virtuoso 虚拟列表，往列表里插兄弟节点会错位——所以不插队，
-  // 搭车：把 fomo 卡塞进"时间上紧邻的那张追踪卡"的专属外壳里，virtuoso 的
-  // ResizeObserver 会把它当成该行变高，自动重排。比所有行都新的事件放列表上方的
-  // 兜底条（在滚动容器之外，不参与虚拟化）。
+  // 摆放：按时间插到相邻原生追踪记录之间；比第一条原生记录更新的事件直接插在它
+  // 前面。固定行高布局用 transform 给插卡让位，流式布局插入相邻兄弟节点。
   const FOMO_FEED_POLL_MS = 18000;
   const FOMO_FEED_RENDER_CAP = 40;
-  const FOMO_FEED_PIN_CAP = 6;
+  const FOMO_FEED_HEAD_CAP = 6;
   // GMGN Fusion 模式的链条色。默认表扒自 _app chunk（R={[lg.Sol]:"#7b44f2",...}）；
   // 用户在 GMGN 里自定义过的链色存 localStorage follow_toast_chain_color_v1，优先用它，
   // 和原生竖条完全一致。
@@ -5478,7 +5476,6 @@ ${flapTooltipText(info)}
   const fomoFeedCards = new Map();
   const fomoFeedSeen = new Set();
   const FOMO_FEED_SEEN_MAX = 600;
-  let fomoFeedPinEl = null;
   let fomoFeedLastPollAt = 0;
   let pumpFeedLastPollAt = 0;
   let pumpDefaultWallets = new Set();
@@ -5937,51 +5934,6 @@ ${flapTooltipText(info)}
     return el;
   }
 
-  /** virtuoso 的滚动容器（从追踪卡向上找 overflow 可滚的那层）。兜底条要放它外面。 */
-  function fomoFeedScrollerOf(card) {
-    let el = card?.parentElement;
-    for (let level = 0; level < 12 && el instanceof HTMLElement; level += 1) {
-      const style = getComputedStyle(el);
-      if (/(auto|scroll|overlay)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 4) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  /** 追踪流头部（index 0）是否已挂载。滚下去时不放兜底条，免得旧事件顶在最上面。 */
-  function fomoFeedHeadMounted(cards) {
-    let min = Infinity;
-    for (const card of cards) {
-      const wrap = card.closest('[data-index], [data-item-index]');
-      if (!wrap) continue;
-      const idx = Number(wrap.getAttribute('data-index') ?? wrap.getAttribute('data-item-index'));
-      if (Number.isFinite(idx)) min = Math.min(min, idx);
-    }
-    return min === Infinity ? true : min === 0;
-  }
-
-  function ensureFomoFeedPin(scroller) {
-    // 滚动容器外面可能还套着高度为 0 的壳（实测 GMGN 的 .virtual-list-container 高 0，
-    // overflow visible）——兜底条插进 0 高壳里会叠在列表上。向上跳过这些壳，
-    // 插到真正占布局的那层里、壳的前面。
-    let host = scroller;
-    for (let level = 0; level < 6 && host.parentElement instanceof HTMLElement; level += 1) {
-      if (host.parentElement.getBoundingClientRect().height >= 10) break;
-      host = host.parentElement;
-    }
-    if (fomoFeedPinEl?.isConnected && fomoFeedPinEl.nextElementSibling === host) return fomoFeedPinEl;
-    fomoFeedPinEl?.remove();
-    const pin = document.createElement('div');
-    pin.className = 'gdh-fomofeed-pin';
-    const head = document.createElement('div');
-    head.className = 'gdh-fomofeed-pin__head';
-    head.textContent = 'fomo / Pump 推送';
-    pin.appendChild(head);
-    host.parentElement?.insertBefore(pin, host);
-    fomoFeedPinEl = pin;
-    return pin;
-  }
-
   // 固定行高模式下同屏最多混排几张：位移只发生在挂载窗口内，插太多会把
   // 「scrollTop ÷ 行高 → 该挂载哪些行」的映射拉出 overscan 冗余，底部会露白
   const FOMO_FEED_INLINE_CAP = 6;
@@ -6095,8 +6047,6 @@ ${flapTooltipText(info)}
   function teardownFomoFeed() {
     for (const el of fomoFeedCards.values()) el.remove();
     fomoFeedCards.clear();
-    fomoFeedPinEl?.remove();
-    fomoFeedPinEl = null;
     clearFomoFeedShifts();
   }
 
@@ -6134,20 +6084,20 @@ ${flapTooltipText(info)}
       .map((el) => ({ el, ts: Number(el.getAttribute('data-gdh-track-ts')) || 0 }))
       .filter((item) => item.ts > 0)
       .sort((a, b) => b.ts - a.ts);
-    const headMounted = fomoFeedHeadMounted(cards);
     const oldest = withTs.length ? withTs[withTs.length - 1] : null;
+    const headCard = withTs[0]?.el || cards[0];
     // GMGN 现网追踪流是固定行高公式布局（行推不动），走位移插卡；
     // 万一改版回流式布局，仍走原来的行内插入
-    const fixedMode = withTs.length > 0 && !!fomoFeedFixedRow(withTs[0].el);
+    const fixedMode = !!fomoFeedFixedRow(headCard);
 
-    // key -> {ev, anchor}；anchor=null 表示进兜底条；没进 map 的这轮不显示
+    // key -> {ev, anchor}；anchor='head' 表示直接插在第一条原生记录之前。
     const placements = new Map();
-    let pinCount = 0;
+    let headCount = 0;
     let inlineCount = 0;
     for (const ev of events) {
       if (!withTs.length) {
-        // page-bridge 没拿到任何行时间（构建差异/改版）——全部降级进兜底条
-        if (pinCount < FOMO_FEED_PIN_CAP) { placements.set(ev.key, { ev, anchor: null }); pinCount += 1; }
+        // page-bridge 没拿到行时间时仍直接插进追踪列表，不再创建独立顶部暂存条。
+        if (headCount < FOMO_FEED_HEAD_CAP) { placements.set(ev.key, { ev, anchor: 'head' }); headCount += 1; }
         continue;
       }
       let anchor = null;
@@ -6156,8 +6106,8 @@ ${flapTooltipText(info)}
         else break;
       }
       if (!anchor) {
-        // 比所有已挂载的行都新 → 头部在视口内才进兜底条，滚下去了就先不显示
-        if (headMounted && pinCount < FOMO_FEED_PIN_CAP) { placements.set(ev.key, { ev, anchor: null }); pinCount += 1; }
+        // 比所有已挂载行都新：直接插在第一条原生记录之前。
+        if (headCount < FOMO_FEED_HEAD_CAP) { placements.set(ev.key, { ev, anchor: 'head' }); headCount += 1; }
         continue;
       }
       // 锚到了最老的已挂载行：无法确认它下面还有没有更老的未挂载行，先不摆
@@ -6176,29 +6126,6 @@ ${flapTooltipText(info)}
       placements.set(ev.key, { ev, anchor: anchor.el });
     }
 
-    // 兜底条（先落位；落不了位的从 placements 摘掉，下面的清理才不会误留）
-    const pinItems = [...placements.values()].filter((it) => it.anchor === null).map((it) => it.ev);
-    if (pinItems.length) {
-      const scroller = fomoFeedScrollerOf(cards[0]);
-      if (scroller) {
-        const pin = ensureFomoFeedPin(scroller);
-        let prev = pin.firstElementChild; // 标题
-        for (const ev of pinItems) {
-          const el = fomoFeedCardFor(ev);
-          el.classList.remove('is-abs');
-          delete el.dataset.gdhFomoAfterTop;
-          if (el.style.top) el.style.top = '';
-          if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
-          prev = el;
-        }
-      } else {
-        for (const ev of pinItems) placements.delete(ev.key);
-      }
-    } else if (fomoFeedPinEl) {
-      fomoFeedPinEl.remove();
-      fomoFeedPinEl = null;
-    }
-
     // 移除不再显示的
     for (const [key, el] of fomoFeedCards) {
       if (!placements.has(key)) {
@@ -6209,21 +6136,38 @@ ${flapTooltipText(info)}
 
     // 锚定分组：同一锚下按时间新→旧
     const byAnchor = new Map();
+    const headItems = [];
     for (const it of placements.values()) {
-      if (!it.anchor) continue;
+      if (it.anchor === 'head') { headItems.push(it.ev); continue; }
       if (!byAnchor.has(it.anchor)) byAnchor.set(it.anchor, []);
       byAnchor.get(it.anchor).push(it.ev);
     }
 
     if (fixedMode) {
-      layoutFomoFeedFixed(cards, byAnchor);
+      layoutFomoFeedFixed(cards, byAnchor, headItems);
       return;
     }
     clearFomoFeedShifts();
+    let headPrev = null;
+    for (const ev of headItems) {
+      const el = fomoFeedCardFor(ev);
+      el.classList.remove('is-abs');
+      delete el.dataset.gdhFomoAfterTop;
+      if (el.style.top) el.style.top = '';
+      if (!headPrev) {
+        if (headCard.previousElementSibling !== el) headCard.insertAdjacentElement('beforebegin', el);
+      } else if (headPrev.nextElementSibling !== el) {
+        headPrev.insertAdjacentElement('afterend', el);
+      }
+      headPrev = el;
+    }
     for (const [anchorEl, list] of byAnchor) {
       let prev = anchorEl;
       for (const ev of list) {
         const el = fomoFeedCardFor(ev);
+        el.classList.remove('is-abs');
+        delete el.dataset.gdhFomoAfterTop;
+        if (el.style.top) el.style.top = '';
         if (prev.nextElementSibling !== el) prev.insertAdjacentElement('afterend', el);
         prev = el;
       }
@@ -6243,7 +6187,7 @@ ${flapTooltipText(info)}
     if (cards.length) layoutFomoFeedFixed(cards, new Map());
   }
 
-  function layoutFomoFeedFixed(cards, byAnchor) {
+  function layoutFomoFeedFixed(cards, byAnchor, headItems = []) {
     const rows = [];
     for (const card of cards) {
       const info = fomoFeedFixedRow(card);
@@ -6256,6 +6200,17 @@ ${flapTooltipText(info)}
 
     const stillShifted = new Set();
     let cum = 0;
+    let headInner = 0;
+    for (const ev of headItems) {
+      const el = fomoFeedCardFor(ev);
+      el.classList.add('is-abs');
+      if (el.parentElement !== spacer) spacer.appendChild(el);
+      el.dataset.gdhFomoAfterTop = String(rows[0].top);
+      const top = `${rows[0].top + headInner}px`;
+      if (el.style.top !== top) el.style.top = top;
+      headInner += el.offsetHeight + 2;
+    }
+    cum = headInner;
     for (const row of rows) {
       const shift = cum ? `translateY(${cum}px)` : '';
       if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
@@ -6507,7 +6462,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-fomofeed-pin, .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;

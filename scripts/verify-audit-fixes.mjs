@@ -310,6 +310,19 @@ await test('追踪流新挂载虚拟行会继承已有插卡位移', () => {
   assert.match(content, /scheduleFomoFeedRowReflow\(\);\s*\n\s*}\s*\n\s*if \(\!\(target instanceof Element\)/);
 });
 
+await test('新 FOMO/Pump 推送直接插入且不再创建顶部暂存条', () => {
+  const shiftFn = extractFunction(content, 'fomoFeedInsertionShift');
+  assert.equal(evaluate([shiftFn], 'fomoFeedInsertionShift(0, [{ afterTop: 0, height: 66 }])'), 66);
+  assert.match(content, /placements\.set\(ev\.key, \{ ev, anchor: 'head' \}\)/);
+  assert.ok(content.includes('layoutFomoFeedFixed(cards, byAnchor, headItems);'));
+  assert.ok(content.includes("headCard.insertAdjacentElement('beforebegin', el);"));
+  assert.ok(content.includes("const headCard = withTs[0]?.el || cards[0];"));
+  assert.match(extractFunction(content, 'layoutFomoFeedFixed'), /el\.dataset\.gdhFomoAfterTop = String\(rows\[0\]\.top\);/);
+  assert.ok(!content.includes('gdh-fomofeed-pin'));
+  assert.ok(!content.includes('fomo / Pump 推送'));
+  assert.ok(!styles.includes('.gdh-fomofeed-pin'));
+});
+
 await test('长期缓存按容量淘汰最老条目', () => {
   const mapFn = extractFunction(content, 'setBoundedMap');
   const setFn = extractFunction(content, 'rememberBoundedSet');
@@ -516,7 +529,7 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.18' }) },
+      runtime: { getManifest: () => ({ version: '0.46.19' }) },
       storage: { local: {
         get: async () => ({ gdhRunningVersion: '0.46.14' }),
         set: async (value) => Object.assign(saved, value),
@@ -529,15 +542,15 @@ await test('版本变更后只刷新一次已打开的 GMGN 标签页', async ()
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
-  assert.equal(saved.gdhRunningVersion, '0.46.18');
+  assert.equal(saved.gdhRunningVersion, '0.46.19');
 
   reloaded.length = 0;
   await evaluate([fn], 'refreshGmgnTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
-      runtime: { getManifest: () => ({ version: '0.46.18' }) },
+      runtime: { getManifest: () => ({ version: '0.46.19' }) },
       storage: { local: {
-        get: async () => ({ gdhRunningVersion: '0.46.18' }),
+        get: async () => ({ gdhRunningVersion: '0.46.19' }),
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
@@ -671,8 +684,8 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes('985gmgn-helper-setup-v0.46.18.exe'));
-  assert.ok(site.includes('985gmgn-helper-v0.46.18.zip'));
+  assert.ok(site.includes('985gmgn-helper-setup-v0.46.19.exe'));
+  assert.ok(site.includes('985gmgn-helper-v0.46.19.zip'));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {
