@@ -31,6 +31,24 @@
   z-index: 12;
 }
 
+.gdh-debot-feed__row.has-comment {
+  height: auto;
+  min-height: 46px;
+  grid-template-rows: 46px auto;
+  align-items: start;
+}
+
+.gdh-debot-feed__comment {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  padding: 0 12px 10px;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .gdh-debot-feed__stripe {
   position: absolute;
   inset: 1px auto 1px 0;
@@ -179,6 +197,35 @@
   padding: 0;
   min-width: 100%;
   font-size: 12px;
+}
+
+.gdh-debot-sidefeed__row.has-comment {
+  height: auto;
+  min-height: var(--gdh-debot-row-height, 67px);
+}
+
+.gdh-debot-sidefeed__row.is-card.has-comment {
+  grid-template-rows: 24px 24px auto;
+}
+
+.gdh-debot-sidefeed__row.is-list.has-comment {
+  grid-template-rows: var(--gdh-debot-row-height, 40px) auto;
+}
+
+.gdh-debot-sidefeed__comment {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 3px 2px 0;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gdh-debot-sidefeed__row.is-list .gdh-debot-sidefeed__comment {
+  padding: 6px 8px 8px;
 }
 
 .gdh-debot-sidefeed__row:hover {
@@ -555,24 +602,36 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
   left: 0;
   right: 0;
   display: grid;
-  gap: 2px;
+  gap: 0;
   pointer-events: none;
 }
 .gdh-debot-special-pin-item {
+  position: relative;
   box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 6px 9px;
+  min-height: var(--gdh-debot-pin-height, 67px);
+  padding: 0;
   color: var(--text-primary, #e8ecf3);
-  background: color-mix(in srgb, var(--bg-page, #111419) 88%, var(--text-brand, #f5b83d) 12%);
-  border: 1px solid var(--text-brand, #f5b83d);
-  border-radius: 6px;
-  text-decoration: none;
+  background: var(--bg-page, #111419);
+  overflow: hidden;
   pointer-events: auto;
 }
-.gdh-debot-special-pin-item > button { margin-left: auto; border: 0; color: inherit; background: transparent; cursor: pointer; }
-
+.gdh-debot-special-pin-native {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  translate: none !important;
+  transform: none !important;
+}
+.gdh-debot-special-pin-native > a[href*="/token/"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--gdh-debot-pin-height, 67px);
+}
+.gdh-debot-special-pin-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
 .gdh-debot-feed__fallback {
   box-sizing: border-box;
   min-width: 800px;

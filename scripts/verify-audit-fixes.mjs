@@ -698,7 +698,7 @@ await test('DeBot 卡片与列表模式共享重点关注、调色、置顶和�
   assert.ok(debotContent.includes('function rebuildSpecialWalletMap()'));
   assert.ok(debotContent.includes('function applySpecialRow(row)'));
   assert.ok(debotContent.includes("row.tagName === 'TR'"));
-  assert.ok(debotContent.includes('function pinSidebarRow(row, wallet)'));
+  assert.ok(debotContent.includes('function pinSidebarRow(row)'));
   assert.ok(debotContent.includes('SPECIAL_PIN_MS = 10000'));
   assert.ok(debotContent.includes('function blockToken(address, symbol'));
   assert.ok(debotContent.includes('function unblockToken(address)'));
@@ -707,7 +707,7 @@ await test('DeBot 卡片与列表模式共享重点关注、调色、置顶和�
   assert.ok(debotStyles.includes('.gdh-debot-sidefeed__row.is-list'));
 });
 
-await test('DeBot 特别关注使用绝对成交时间去重且置顶文案只取代币名', () => {
+await test('DeBot 特别关注使用绝对成交时间或交易哈希稳定去重', () => {
   const timestampFn = extractFunction(debotContent, 'debotAbsoluteTimestamp');
   const safeText = (value, max) => String(value ?? '').trim().slice(0, max);
   const now = new Date(2026, 8, 2, 6, 0, 0).getTime();
@@ -718,9 +718,36 @@ await test('DeBot 特别关注使用绝对成交时间去重且置顶文案只�
   const signature = extractFunction(debotContent, 'sidebarRowSignature');
   assert.ok(signature.includes('Math.round(ts / 1000)'));
   assert.ok(signature.includes('dataset.gdhDebotTrackTx'));
+});
+
+await test('DeBot 观点卡完整渲染正文并按实际高度让位', () => {
+  const multilineFn = extractFunction(debotContent, 'safeMultilineText');
+  assert.equal(evaluate([multilineFn], "safeMultilineText('第一行\\r\\n第二行')"), '第一行\n第二行');
+  const sidebarCard = extractFunction(debotContent, 'sidebarFeedCard');
+  const mainCard = extractFunction(debotContent, 'buildFeedCard');
+  const heightFn = extractFunction(debotContent, 'measuredFeedCardHeight');
+  const mainLayout = extractFunction(debotContent, 'layoutFeed');
+  const sidebarLayout = extractFunction(debotContent, 'layoutSidebarFeed');
+  assert.ok(sidebarCard.includes("comment.className = 'gdh-debot-sidefeed__comment'"));
+  assert.ok(mainCard.includes("comment.className = 'gdh-debot-feed__comment'"));
+  assert.ok(mainLayout.includes('measuredFeedCardHeight(card, FEED_ROW_HEIGHT)'));
+  assert.ok(sidebarLayout.includes('measuredFeedCardHeight(card, rowHeight)'));
+  assert.ok(debotStyles.includes('white-space: pre-wrap'));
+  assert.ok(debotStyles.includes('.gdh-debot-sidefeed__row.has-comment'));
+  assert.ok(background.includes(".slice(0, 1500)"));
+  assert.equal(evaluate([heightFn], "measuredFeedCardHeight({ classList: { contains: () => true }, getBoundingClientRect: () => ({ height: 91.2 }), scrollHeight: 94 }, 67)"), 94);
+  assert.equal(evaluate([heightFn], "measuredFeedCardHeight({ classList: { contains: () => false } }, 67)"), 67);
+});
+
+await test('DeBot 特别关注置顶复刻原生行而不是重新拼文本卡', () => {
+  const clone = extractFunction(debotContent, 'cloneNativeSidebarRow');
   const pin = extractFunction(debotContent, 'pinSidebarRow');
-  assert.ok(pin.includes('sidebarRowSymbol(row)'));
-  assert.ok(!pin.includes("row.querySelector('a[href*=\"/token/\"]')?.textContent"));
+  assert.ok(clone.includes('row.cloneNode(true)'));
+  assert.ok(clone.includes(".gdh-debot-special-star, .gdh-debot-special-swatch"));
+  assert.ok(pin.includes('cloneNativeSidebarRow(row)'));
+  assert.ok(pin.includes("document.createElement('div')"));
+  assert.ok(!pin.includes('item.textContent ='));
+  assert.ok(debotStyles.includes('.gdh-debot-special-pin-native'));
 });
 
 await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码', () => {

@@ -890,7 +890,7 @@ function slimFomoEvent(raw) {
     avatar: String(raw.avatar || '').slice(0, 300),
     usd: Number(raw.usd) || 0,
     comment: String(raw.comment || content.comment || content.text
-      || (type === 'refund' ? `链上交易失败 · ${String(raw.failReason || '已退款')}` : '')).slice(0, 600),
+      || (type === 'refund' ? `链上交易失败 · ${String(raw.failReason || '已退款')}` : '')).slice(0, 1500),
     addr: String(raw.tokenAddress || '').slice(0, 64),
     chain: FOMO_CHAIN_SLUG[chainName.toLowerCase()] || chainName.toLowerCase(),
     chainName,

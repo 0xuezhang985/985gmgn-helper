@@ -115,6 +115,12 @@
     return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
   }
 
+  function safeMultilineText(value, max = 1500) {
+    return String(value ?? '').replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+      .trim().slice(0, max);
+  }
+
   function validImageUrl(value) {
     const text = safeText(value, 500);
     return /^https?:\/\//i.test(text) ? text : '';
@@ -428,6 +434,15 @@
     const time = feedCell('gdh-debot-feed__time', relativeTime(event.ts));
     time.dataset.gdhTs = String(event.ts);
     card.append(who, token, action, amount, mc, time);
+    const commentText = (event.type === 'thesis' || event.type === 'refund')
+      ? safeMultilineText(event.comment) : '';
+    if (commentText) {
+      const comment = document.createElement('div');
+      comment.className = 'gdh-debot-feed__comment';
+      comment.textContent = commentText;
+      card.classList.add('has-comment');
+      card.appendChild(comment);
+    }
 
     if (!feedSeen.has(event.key)) {
       feedSeen.add(event.key);
@@ -614,24 +629,6 @@
     return now - Number(match[1]) * multiplier;
   }
 
-  function sidebarRowSymbol(row) {
-    const bridged = safeText(row.dataset.gdhDebotTrackSymbol, 24);
-    if (bridged) return bridged;
-    const tokenLinks = [...row.querySelectorAll('a[href*="/token/"]')];
-    for (const link of tokenLinks) {
-      if (!link.querySelector('img')) continue;
-      const sibling = link.parentElement?.nextElementSibling;
-      const symbol = safeText(sibling?.textContent, 24);
-      if (symbol && !/^[+-]?\d+(?:\.\d+)?%?$/.test(symbol)) return symbol.replace(/^\$/, '');
-    }
-    const titled = [...row.querySelectorAll('[title]')].map((node) => ({
-      text: safeText(node.textContent, 24),
-      title: safeText(node.getAttribute('title'), 24),
-    })).find(({ text, title }) => text && text === title
-      && !/^[+-]?\d+(?:\.\d+)?%?$/.test(text));
-    return (titled?.text || '').replace(/^\$/, '');
-  }
-
   function sidebarNativeFingerprint(row, now = Date.now()) {
     const tokenLink = row.querySelector('a[href*="/token/"]');
     const walletLink = row.querySelector('a[href*="/address/"]');
@@ -742,6 +739,14 @@
       const mc = document.createElement('span');
       mc.className = 'gdh-debot-sidefeed__mc';
       mc.textContent = Number(event.mc) > 0 ? `MC ${fomoUsd(event.mc)}` : '';
+      const commentText = (event.type === 'thesis' || event.type === 'refund')
+        ? safeMultilineText(event.comment) : '';
+      const comment = commentText ? document.createElement('div') : null;
+      if (comment) {
+        comment.className = 'gdh-debot-sidefeed__comment';
+        comment.textContent = commentText;
+        card.classList.add('has-comment');
+      }
       if (mode === 'list') {
         const cells = [time, action, null, symbol, amount, mc].map((content, index) => {
           const cell = document.createElement('span');
@@ -760,6 +765,7 @@
       } else {
         card.append(stripe, avatar, name, action, source, time, amount, symbol, mc);
       }
+      if (comment) card.appendChild(comment);
 
       sidebarFeedCards.set(event.key, card);
       while (sidebarFeedCards.size > 80) {
@@ -771,6 +777,12 @@
     const time = card.querySelector('.gdh-debot-sidefeed__time');
     if (time) time.textContent = relativeTime(event.ts);
     return card;
+  }
+
+  function measuredFeedCardHeight(card, fallback) {
+    const minimum = Math.max(1, Number(fallback) || 1);
+    if (!card?.classList?.contains('has-comment')) return minimum;
+    return Math.max(minimum, Math.ceil(card.getBoundingClientRect().height), Math.ceil(card.scrollHeight));
   }
 
   /**
@@ -815,25 +827,27 @@
     const left = tableRect.left - scrollerRect.left + scroller.scrollLeft;
     const width = tableRect.width;
     const columns = gridColumns(table);
-    let inserted = 0;
+    let insertedHeight = 0;
     for (let index = 0; index < rowInfo.length; index += 1) {
       const bucket = groups.get(index) || [];
-      bucket.forEach((event, localIndex) => {
+      let bucketHeight = 0;
+      bucket.forEach((event) => {
         const card = feedCard(event);
         card.classList.add('is-absolute');
-        card.style.top = `${rowInfo[index].top + (inserted + localIndex) * FEED_ROW_HEIGHT}px`;
+        card.style.top = `${rowInfo[index].top + insertedHeight + bucketHeight}px`;
         card.style.left = `${left}px`;
         card.style.width = `${width}px`;
         card.style.gridTemplateColumns = columns;
         scroller.appendChild(card);
+        bucketHeight += measuredFeedCardHeight(card, FEED_ROW_HEIGHT);
       });
-      inserted += bucket.length;
-      if (inserted) {
-        rowInfo[index].row.style.translate = `0 ${inserted * FEED_ROW_HEIGHT}px`;
+      insertedHeight += bucketHeight;
+      if (insertedHeight) {
+        rowInfo[index].row.style.translate = `0 ${insertedHeight}px`;
         rowInfo[index].row.dataset.gdhDebotShift = '1';
       }
     }
-    table.style.marginBottom = `${inserted * FEED_ROW_HEIGHT}px`;
+    table.style.marginBottom = `${insertedHeight}px`;
   }
 
   function clearSidebarFeedLayout(layout = sidebarTrackLayout()) {
@@ -879,29 +893,31 @@
       bucket.push(event);
       groups.set(anchor, bucket);
     }
-    let inserted = 0;
+    let insertedHeight = 0;
     for (let index = 0; index < rowInfo.length; index += 1) {
       const bucket = groups.get(index) || [];
       const baseTop = rowInfo[index].row.getBoundingClientRect().top
         - scrollerRect.top + layout.scroller.scrollTop;
-      bucket.forEach((event, localIndex) => {
+      let bucketHeight = 0;
+      bucket.forEach((event) => {
         const card = sidebarFeedCard(event, { mode, rowHeight, sampleRow: rows[0] });
         card.style.setProperty('--gdh-debot-row-height', `${rowHeight}px`);
-        card.style.top = `${baseTop + (inserted + localIndex) * rowHeight}px`;
+        card.style.top = `${baseTop + insertedHeight + bucketHeight}px`;
         card.style.left = `${listRect.left - scrollerRect.left + layout.scroller.scrollLeft}px`;
         card.style.width = `${listRect.width}px`;
         layout.scroller.appendChild(card);
+        bucketHeight += measuredFeedCardHeight(card, rowHeight);
       });
-      inserted += bucket.length;
-      if (inserted) {
+      insertedHeight += bucketHeight;
+      if (insertedHeight) {
         const row = rowInfo[index].row;
         row.dataset.gdhDebotSidebarTranslate = row.style.translate || '';
         row.dataset.gdhDebotSidebarShift = '1';
-        row.style.translate = `0 ${inserted * rowHeight}px`;
+        row.style.translate = `0 ${insertedHeight}px`;
       }
     }
     layout.list.dataset.gdhDebotSidebarMarginBottom = layout.list.style.marginBottom || '';
-    layout.list.style.marginBottom = `${inserted * rowHeight}px`;
+    layout.list.style.marginBottom = `${insertedHeight}px`;
   }
 
   function normalizeWalletAddress(value) {
@@ -1092,7 +1108,30 @@
     return tx ? `${address}|tx:${tx}` : `${address}|${token}|${side}|${Math.round(ts / 1000)}`;
   }
 
-  function pinSidebarRow(row, wallet) {
+  function cloneNativeSidebarRow(row) {
+    const clone = row.cloneNode(true);
+    clone.classList.remove('gdh-debot-special-row');
+    clone.querySelectorAll('.gdh-debot-special-star, .gdh-debot-special-swatch').forEach((node) => node.remove());
+    for (const element of [clone, ...clone.querySelectorAll('[data-gdh-debot-special], [data-gdh-debot-special-rainbow]')]) {
+      delete element.dataset.gdhDebotSpecial;
+      delete element.dataset.gdhDebotSpecialRainbow;
+      element.style.removeProperty('--gdh-debot-special-bg');
+      element.style.removeProperty('--gdh-debot-special-color');
+    }
+    clone.removeAttribute('data-index');
+    clone.removeAttribute('data-item-index');
+    clone.removeAttribute('data-known-size');
+    clone.removeAttribute('data-gdh-debot-sidebar-shift');
+    clone.removeAttribute('data-gdh-debot-sidebar-translate');
+    clone.style.translate = '';
+    clone.style.transform = '';
+    clone.style.position = '';
+    clone.style.inset = '';
+    clone.classList.add('gdh-debot-special-pin-native');
+    return clone;
+  }
+
+  function pinSidebarRow(row) {
     const root = document.querySelector('[data-edge-dock-panel="track"]');
     const scroller = root?.querySelector('[data-testid="virtuoso-scroller"]');
     const href = row.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
@@ -1106,17 +1145,23 @@
     const scrollerRect = scroller.getBoundingClientRect();
     specialPinStrip.style.top = `${Math.max(42, Math.round(scrollerRect.top - rootRect.top))}px`;
     while (specialPinStrip.children.length >= SPECIAL_PIN_MAX) specialPinStrip.lastElementChild.remove();
-    const item = document.createElement('a');
+    const item = document.createElement('div');
     item.className = 'gdh-debot-special-pin-item';
-    item.href = href;
-    bindDebotNavigation(item);
-    const tokenText = sidebarRowSymbol(row) || '代币';
-    const action = safeText((row.innerText.match(/建仓|加仓|减仓|清仓|买入|卖出|转入|转出/) || [])[0], 12);
-    item.textContent = `📌 ${wallet.label || wallet.address.slice(0, 8)} ${action} ${tokenText}`;
-    const close = document.createElement('button');
-    close.type = 'button'; close.textContent = '×'; close.title = '关闭';
-    close.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); item.remove(); });
-    item.appendChild(close);
+    item.style.setProperty('--gdh-debot-pin-height', `${Math.max(40, Math.ceil(row.getBoundingClientRect().height))}px`);
+    const nativeRow = cloneNativeSidebarRow(row);
+    const nativeTokenLink = nativeRow.matches('a[href*="/token/"]')
+      ? nativeRow : nativeRow.querySelector('a[href*="/token/"]');
+    if (nativeTokenLink instanceof HTMLAnchorElement) bindDebotNavigation(nativeTokenLink);
+    if (nativeRow instanceof HTMLTableRowElement) {
+      const table = document.createElement('table');
+      table.className = 'gdh-debot-special-pin-table';
+      const colgroup = row.closest('table')?.querySelector(':scope > colgroup')?.cloneNode(true);
+      const body = document.createElement('tbody');
+      body.appendChild(nativeRow);
+      if (colgroup) table.appendChild(colgroup);
+      table.appendChild(body);
+      item.appendChild(table);
+    } else item.appendChild(nativeRow);
     specialPinStrip.prepend(item);
     window.setTimeout(() => {
       item.remove();
@@ -1253,7 +1298,7 @@
     for (const item of current) {
       if (specialPinSeen.has(item.signature)) continue;
       rememberSpecialPin(item.signature);
-      if (item.wallet.meta?.pin) pinSidebarRow(item.row, item.wallet);
+      if (item.wallet.meta?.pin) pinSidebarRow(item.row);
     }
   }
 
