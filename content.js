@@ -1127,8 +1127,8 @@
   }
 
   /** 在币名那一行下面开一行专门放徽章；这一行由插件自己创建和维护。 */
-  function flapOwnRow(card, native) {
-    let existing = card.querySelector(':scope .gdh-flap-row');
+  function tokenMetaOwnRow(card, native, rowClass, roomKey) {
+    let existing = card.querySelector(`:scope .${rowClass}`);
     if (existing) return existing;
 
     // 徽章行紧跟币名行（0.33.1 起的定位，塞进币名行会被 ellipsis 裁掉）。
@@ -1147,11 +1147,28 @@
     }
     if (!anchor || !anchor.parentElement) return null;
 
-    card.dataset.gdhFlapRoom = '1';
+    card.dataset[roomKey] = '1';
     const line = document.createElement('div');
-    line.className = 'gdh-flap-row';
+    line.className = rowClass;
     anchor.insertAdjacentElement('afterend', line);
     return line;
+  }
+
+  function flapOwnRow(card, native) {
+    return tokenMetaOwnRow(card, native, 'gdh-flap-row', 'gdhFlapRoom');
+  }
+
+  function clearFlapBadges() {
+    if (!document.querySelector('.gdh-flap-row, [data-gdh-flap-room]')) return;
+    document.querySelectorAll('[data-gdh-flap-native]').forEach((el) => {
+      el.style.removeProperty('display');
+      el.removeAttribute('data-gdh-flap-native');
+    });
+    document.querySelectorAll('.gdh-flap-row').forEach((el) => el.remove());
+    document.querySelectorAll('[data-gdh-flap-room]').forEach((el) => {
+      delete el.dataset.gdhFlapRoom;
+      delete el.dataset.gdhFlapKey;
+    });
   }
 
   // flap 官方税收详情页；Flap 目前只在 BSC，链名它那边写作 bnb
@@ -1243,30 +1260,30 @@ ${flapTooltipText(info)}
   }
 
   /**
-   * 搜索结果所在的容器。用搜索框的 placeholder 作锚（GMGN 自己写的文案，
-   * 比构建期标记稳），往上找到含代币链接的那一层；找不到就返回空，
-   * 绝不退化成全站扫描——那会把徽章撒到持仓、喊单等一堆无关的地方。
+   * 搜索结果所在的容器。GMGN 当前把全局搜索放在 `.pi-modal-wrap` 中；
+   * 同时保留标准 dialog / aria-modal 作为布局兼容。搜索框本身仍用 placeholder
+   * 作语义锚，但只接受它所在的原生模态框，绝不沿父节点爬到页面根布局——
+   * 否则搜索框未展开时，根布局里的战壕/追踪链接也会被误当成搜索结果。
    */
   function searchScopes() {
     const inputs = document.querySelectorAll(
-      'input[placeholder*="合约地址"], input[placeholder*="代码"], input[placeholder*="Contract"], input[placeholder*="Search"]',
+      'input[placeholder*="合约"], input[placeholder*="代币名"], input[placeholder*="代码"], input[placeholder*="Contract"], input[placeholder*="Search"]',
     );
     const scopes = new Set();
     inputs.forEach((input) => {
-      let el = input.parentElement;
-      for (let level = 0; level < 8 && el instanceof HTMLElement; level += 1) {
-        if (el.querySelector('a[href*="/token/0x"]')) return void scopes.add(el);
-        el = el.parentElement;
-      }
+      const modal = input.closest('.pi-modal-wrap, [role="dialog"], [aria-modal="true"]');
+      if (!(modal instanceof HTMLElement)) return;
+      const rect = modal.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      if (modal.querySelector('a[href*="/token/0x"]')) scopes.add(modal);
     });
     return [...scopes];
   }
 
   function scanFlapBadges() {
-    if (settings.enableFlapTax === false) {
-      document.querySelectorAll('.gdh-flap').forEach((el) => el.remove());
-      return;
-    }
+    // 这一套合约 selector 与 RPC 只适用于 BSC。Robinhood 的 Flap 虽也以
+    // 7777 结尾，但直接拿 BSC 节点查询会得到错误的 not-flap 结论。
+    if (settings.enableFlapTax === false || currentChain() !== 'bsc') return void clearFlapBadges();
     const seen = new Set();
     const put = (host, token, native) => {
       if (!FLAP_ADDR_RE.test(token)) return;
@@ -1343,6 +1360,176 @@ ${flapTooltipText(info)}
         put(row || title, route.address);
       }
     }
+  }
+
+  // ---- Robinhood 搜索结果：底池资产 / 持币分红徽章 ----
+  // 使用 GMGN 搜索页自己调用的两个同源接口：mutil_window_token_info 返回
+  // pool.quote_symbol，token_fee_info 返回 security.tax_allocation.dividend。
+  // 不以代币名、税率或 7777 尾号猜测分红，营销税不会被误标成持币分红。
+  const ROBINHOOD_SEARCH_TTL = 5 * 60 * 1000;
+  const ROBINHOOD_SEARCH_ERROR_RETRY = 15 * 1000;
+  const ROBINHOOD_SEARCH_CACHE_MAX = 300;
+  const robinhoodSearchCache = new Map();
+  const robinhoodSearchPending = new Set();
+
+  function robinhoodSearchMeta(tokenInfo, quoteInfo, feeInfo) {
+    const launchQuoteAddress = String(feeInfo?.launchpad?.launch_quote_address || '').toLowerCase();
+    let poolSymbol = String(tokenInfo?.pool?.quote_symbol || '').trim();
+    if (!poolSymbol && /^0x0{40}$/.test(launchQuoteAddress)) poolSymbol = 'ETH';
+    if (!poolSymbol && quoteInfo
+      && String(quoteInfo.address || '').toLowerCase() === launchQuoteAddress) {
+      poolSymbol = String(quoteInfo.symbol || '').trim();
+    }
+    const allocation = feeInfo?.security?.tax_allocation;
+    const dividendShare = Number(allocation?.dividend ?? feeInfo?.security?.dividend_tax ?? 0);
+    return {
+      poolSymbol: poolSymbol.replace(/[\r\n\t]/g, '').slice(0, 16),
+      dividend: Number.isFinite(dividendShare) && dividendShare > 0,
+      dividendShare: Number.isFinite(dividendShare) && dividendShare > 0 ? dividendShare : 0,
+    };
+  }
+
+  async function fetchRobinhoodSearchInfo(token) {
+    const apiQuery = gmgnApiQuery();
+    if (!apiQuery) return { ok: false, reason: 'api-query' };
+
+    let feeInfo = null;
+    let feeLoaded = false;
+    try {
+      const res = await fetch(`https://gmgn.ai/api/v1/token_fee_info/robinhood/${token}?${apiQuery}`, {
+        credentials: 'include',
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.code === 0) {
+        feeLoaded = true;
+        feeInfo = body.data || null;
+      }
+    } catch {
+      // 底池信息仍可由下面的批量代币详情接口给出。
+    }
+
+    const launchQuoteAddress = String(feeInfo?.launchpad?.launch_quote_address || '').toLowerCase();
+    const addresses = [token];
+    if (/^0x[a-f0-9]{40}$/.test(launchQuoteAddress) && !/^0x0{40}$/.test(launchQuoteAddress)) {
+      addresses.push(launchQuoteAddress);
+    }
+
+    let tokenInfo = null;
+    let quoteInfo = null;
+    try {
+      const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: 'robinhood', addresses }),
+      });
+      const body = await res.json().catch(() => null);
+      const items = res.ok && body?.code === 0 && Array.isArray(body?.data) ? body.data : [];
+      tokenInfo = items.find((item) => String(item?.address || '').toLowerCase() === token) || null;
+      quoteInfo = items.find((item) => String(item?.address || '').toLowerCase() === launchQuoteAddress) || null;
+    } catch {
+      // API 短暂失败时由 15 秒退避重试，不长期缓存错误。
+    }
+
+    const meta = robinhoodSearchMeta(tokenInfo, quoteInfo, feeInfo);
+    return {
+      ok: Boolean(meta.poolSymbol || meta.dividend),
+      complete: Boolean(meta.poolSymbol && feeLoaded),
+      reason: meta.poolSymbol || meta.dividend ? '' : 'no-data',
+      ...meta,
+    };
+  }
+
+  function robinhoodCachedInfo(token) {
+    const hit = robinhoodSearchCache.get(token);
+    if (!hit) return null;
+    const ttl = hit.data?.complete ? ROBINHOOD_SEARCH_TTL : ROBINHOOD_SEARCH_ERROR_RETRY;
+    return Date.now() - hit.at < ttl ? hit.data : null;
+  }
+
+  function requestRobinhoodSearchInfo(token) {
+    const hit = robinhoodSearchCache.get(token);
+    if (hit) {
+      const ttl = hit.data?.complete ? ROBINHOOD_SEARCH_TTL : ROBINHOOD_SEARCH_ERROR_RETRY;
+      if (Date.now() - hit.at < ttl) return;
+    }
+    if (robinhoodSearchPending.has(token) || robinhoodSearchPending.size >= 3) return;
+    robinhoodSearchPending.add(token);
+    fetchRobinhoodSearchInfo(token).then((data) => {
+      // 页面客户端参数尚未就绪不是接口失败；不缓存，下一轮扫描立即再试。
+      if (data.reason !== 'api-query') {
+        setBoundedMap(robinhoodSearchCache, token, { at: Date.now(), data }, ROBINHOOD_SEARCH_CACHE_MAX);
+      }
+    }).catch(() => {
+      setBoundedMap(robinhoodSearchCache, token, {
+        at: Date.now(), data: { ok: false, reason: 'request' },
+      }, ROBINHOOD_SEARCH_CACHE_MAX);
+    }).finally(() => {
+      robinhoodSearchPending.delete(token);
+      scheduleScan();
+    });
+  }
+
+  function robinhoodOwnRow(card, native) {
+    return tokenMetaOwnRow(card, native, 'gdh-robinhood-row', 'gdhRobinhoodRoom');
+  }
+
+  function ensureRobinhoodSearchBadges(host, token, info) {
+    let pool = host.querySelector(':scope > .gdh-robinhood-pool');
+    let dividend = host.querySelector(':scope > .gdh-robinhood-dividend');
+    if (info.poolSymbol) {
+      if (!pool) {
+        pool = document.createElement('span');
+        pool.className = 'gdh-robinhood-chip gdh-robinhood-pool';
+        host.appendChild(pool);
+      }
+      pool.textContent = `🪙${info.poolSymbol}`;
+      pool.title = `底池资产：${info.poolSymbol}`;
+      pool.dataset.gdhRobinhoodToken = token;
+    } else pool?.remove();
+
+    if (info.dividend) {
+      if (!dividend) {
+        dividend = document.createElement('span');
+        dividend.className = 'gdh-robinhood-chip gdh-robinhood-dividend';
+        host.appendChild(dividend);
+      }
+      dividend.textContent = '💎分红';
+      dividend.title = `持币分红（占税收分配 ${(info.dividendShare * 100).toFixed(1).replace(/\.0$/, '')}%）`;
+      dividend.dataset.gdhRobinhoodToken = token;
+    } else dividend?.remove();
+  }
+
+  function clearRobinhoodSearchBadges() {
+    if (!document.querySelector('.gdh-robinhood-row, [data-gdh-robinhood-room]')) return;
+    document.querySelectorAll('.gdh-robinhood-row').forEach((el) => el.remove());
+    document.querySelectorAll('[data-gdh-robinhood-room]').forEach((el) => {
+      delete el.dataset.gdhRobinhoodRoom;
+      delete el.dataset.gdhRobinhoodKey;
+    });
+  }
+
+  function scanRobinhoodSearchBadges() {
+    if (settings.enableFlapTax === false || currentChain() !== 'robinhood') {
+      return void clearRobinhoodSearchBadges();
+    }
+    searchScopes().forEach((scope) => {
+      scope.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
+        const raw = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
+        if (!raw) return;
+        const token = raw.toLowerCase();
+        if (link.dataset.gdhRobinhoodKey && link.dataset.gdhRobinhoodKey !== token) {
+          link.querySelector(':scope .gdh-robinhood-row')?.remove();
+          delete link.dataset.gdhRobinhoodRoom;
+        }
+        link.dataset.gdhRobinhoodKey = token;
+        requestRobinhoodSearchInfo(token);
+        const info = robinhoodCachedInfo(token);
+        if (!info?.ok) return;
+        const row = robinhoodOwnRow(link, findNativeTaxChip(link));
+        if (row) ensureRobinhoodSearchBadges(row, token, info);
+      });
+    });
   }
 
   // ---- 标注人物持仓徽章 ----
@@ -6484,6 +6671,7 @@ ${flapTooltipText(info)}
     // 两个都要打网络、又要动第三方 DOM，各自兜住别把整轮扫描带塌。
     timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
     timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
+    timed('robinhood-search-meta', () => { try { scanRobinhoodSearchBadges(); } catch { /* 不影响其余扫描 */ } });
     timed('lightning', scanFrontrunLightning);
     timed('remind', scanRemindToasts);
     timed('surge', scanHoldingSurge);
@@ -6669,7 +6857,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;

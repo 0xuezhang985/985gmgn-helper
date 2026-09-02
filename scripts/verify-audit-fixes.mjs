@@ -388,6 +388,68 @@ await test('长期缓存按容量淘汰最老条目', () => {
   assert.ok(background.includes('setBoundedMap(supplyCache'));
 });
 
+await test('Robinhood 搜索底池优先使用当前池并兼容原生 ETH 与自定义计价币', () => {
+  const fn = extractFunction(content, 'robinhoodSearchMeta');
+  const currentPool = evaluate([fn], `robinhoodSearchMeta(
+    { pool: { quote_symbol: 'WETH' } },
+    { address: '0x1111111111111111111111111111111111111111', symbol: 'USDG' },
+    { launchpad: { launch_quote_address: '0x1111111111111111111111111111111111111111' }, security: {} }
+  )`);
+  assert.equal(currentPool.poolSymbol, 'WETH');
+  const nativePool = evaluate([fn], `robinhoodSearchMeta(
+    {}, null,
+    { launchpad: { launch_quote_address: '0x0000000000000000000000000000000000000000' }, security: {} }
+  )`);
+  assert.equal(nativePool.poolSymbol, 'ETH');
+  const customPool = evaluate([fn], `robinhoodSearchMeta(
+    {}, { address: '0x1111111111111111111111111111111111111111', symbol: 'NFLX' },
+    { launchpad: { launch_quote_address: '0x1111111111111111111111111111111111111111' }, security: {} }
+  )`);
+  assert.equal(customPool.poolSymbol, 'NFLX');
+});
+
+await test('Robinhood 分红徽章只认 GMGN 税收分配的正分红值', () => {
+  const fn = extractFunction(content, 'robinhoodSearchMeta');
+  const marketingOnly = evaluate([fn], `robinhoodSearchMeta(
+    { pool: { quote_symbol: 'ETH' } }, null,
+    { security: { tax_allocation: { dividend: '0', marketing: '1' } } }
+  )`);
+  assert.equal(marketingOnly.dividend, false);
+  const dividend = evaluate([fn], `robinhoodSearchMeta(
+    { pool: { quote_symbol: 'ETH' } }, null,
+    { security: { tax_allocation: { dividend: '0.09', marketing: '0.91' } } }
+  )`);
+  assert.equal(dividend.dividend, true);
+  assert.equal(dividend.dividendShare, 0.09);
+  const legacyField = evaluate([fn], `robinhoodSearchMeta(
+    { pool: { quote_symbol: 'ETH' } }, null,
+    { security: { dividend_tax: '0.2' } }
+  )`);
+  assert.equal(legacyField.dividend, true);
+});
+
+await test('Robinhood 底池与分红只扫描搜索弹层并适配新版中文占位符', () => {
+  const scan = extractFunction(content, 'scanRobinhoodSearchBadges');
+  const scopes = extractFunction(content, 'searchScopes');
+  assert.ok(scan.includes("currentChain() !== 'robinhood'"));
+  assert.ok(scan.includes('searchScopes().forEach'));
+  assert.ok(!scan.includes('CARD_SELECTOR'));
+  assert.ok(content.includes('input[placeholder*="合约"]'));
+  assert.ok(content.includes('input[placeholder*="代币名"]'));
+  assert.ok(scopes.includes("input.closest('.pi-modal-wrap"));
+  assert.ok(scopes.includes('[role="dialog"]'));
+  assert.ok(scopes.includes('[aria-modal="true"]'));
+  assert.ok(scopes.includes('getBoundingClientRect()'));
+  assert.ok(!scopes.includes('parentElement'));
+  assert.ok(!scopes.includes('level <'));
+  assert.ok(content.includes('/api/v1/token_fee_info/robinhood/'));
+  assert.ok(content.includes('/api/v1/mutil_window_token_info?'));
+  assert.ok(content.includes('robinhoodSearchPending.size >= 3'));
+  assert.ok(content.includes("currentChain() !== 'bsc'"));
+  assert.ok(styles.includes('html[data-theme="light"] .gdh-robinhood-pool'));
+  assert.ok(styles.includes('[data-gdh-robinhood-room="1"]'));
+});
+
 await test('滚动限频使用单个延时器而不是逐帧空转', () => {
   const contentRun = extractFunction(content, 'runScheduledScan');
   const bridgeRun = extractFunction(bridge, 'runScheduledScan');

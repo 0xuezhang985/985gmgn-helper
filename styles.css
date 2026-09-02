@@ -2148,6 +2148,36 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   text-overflow: ellipsis;
 }
 
+/* Robinhood 搜索结果：底池资产与持币分红分成两个短徽章。 */
+.gdh-robinhood-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 2px 0 0;
+  min-width: 0;
+}
+
+.gdh-robinhood-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.gdh-robinhood-pool { color: #72b7df; }
+.gdh-robinhood-dividend { color: #f5b83d; }
+
+html[data-theme="light"] .gdh-robinhood-pool { color: #216c94; }
+html[data-theme="light"] .gdh-robinhood-dividend { color: #8a6100; }
+
 /* fomo 浮窗顶部的数据统计条 */
 .gdh-fomo__stats {
   display: grid;
@@ -2354,6 +2384,18 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   max-height: none !important;
 }
 [data-gdh-flap-room="1"] [class*="h-[24px]"] {
+  height: auto !important;
+  min-height: 24px !important;
+  overflow: visible !important;
+}
+
+[data-gdh-robinhood-room="1"] {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+[data-gdh-robinhood-room="1"] [class*="h-[24px]"] {
   height: auto !important;
   min-height: 24px !important;
   overflow: visible !important;
