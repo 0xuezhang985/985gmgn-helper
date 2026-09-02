@@ -142,7 +142,7 @@ function short985Account(raw) {
 
 function renderMonitor985SyncState(state) {
   if (!state?.connected) {
-    monitor985SyncStatus.textContent = '未连接：打开已登录的 985monitor 网页一次';
+    monitor985SyncStatus.textContent = '未连接：请确认 985monitor 网页已登录（无需刷新）';
     monitor985SyncStatus.className = 'sync-status is-warn';
     return;
   }

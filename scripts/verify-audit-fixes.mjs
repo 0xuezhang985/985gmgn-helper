@@ -1180,6 +1180,40 @@ await test('985monitor 账号配置使用独立只读会话且不落盘网页主
   assert.ok(!background.includes('X-User-Token'));
   assert.ok(!content.includes('monitor985SessionV1: { token: auth.token'));
   assert.ok(popupHtml.includes('id="monitor-985-sync-status"'));
+  assert.ok(popup.includes('985monitor 网页已登录（无需刷新）'));
+});
+
+await test('已打开的 985monitor 页面无需刷新即可恢复会话同步', async () => {
+  const calls = [];
+  const chrome = {
+    runtime: { lastError: null },
+    tabs: {
+      query: async (options) => {
+        calls.push(['query', options.url]);
+        return [{ id: 11 }, { id: 22 }, { id: null }];
+      },
+      sendMessage: (id, message, callback) => {
+        calls.push(['ping', id, message.type]);
+        chrome.runtime.lastError = id === 22 ? { message: 'no receiver' } : null;
+        callback(id === 11 ? { ok: true } : undefined);
+        chrome.runtime.lastError = null;
+      },
+    },
+    scripting: {
+      executeScript: async (options) => calls.push(['inject', options.target.tabId, options.files?.[0] || 'reset']),
+    },
+  };
+  const fn = extractFunction(background, 'wakeOpenMonitor985Tabs');
+  await evaluate([fn], 'wakeOpenMonitor985Tabs()', { chrome, Number, Promise });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ['query', ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*']]);
+  assert.deepEqual(calls.filter((call) => call[0] === 'ping').map((call) => call[1]), [11, 22]);
+  assert.deepEqual(calls.filter((call) => call[0] === 'inject'), [
+    ['inject', 22, 'reset'],
+    ['inject', 22, 'content.js'],
+  ]);
+  assert.ok(manifest.permissions.includes('scripting'));
+  assert.ok(content.includes("message?.type !== '985-monitor-sync-now'"));
+  assert.ok(content.includes('syncAccount(false)'));
 });
 
 await test('FOMO 插卡按账号名单、屏蔽、类型、代币和最低成交额过滤', () => {

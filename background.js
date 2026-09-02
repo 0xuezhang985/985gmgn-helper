@@ -29,6 +29,37 @@ async function refreshSupportedTabsAfterVersionChange() {
 
 refreshSupportedTabsAfterVersionChange();
 
+/**
+ * 985monitor 标签页可能在扩展升级前就已打开。扩展重载后旧 content script 的
+ * chrome.runtime 上下文会失效，而页面本身不刷新，导致明明登录却一直显示未连接。
+ * 先 ping 现有脚本让它主动同步；只有收不到响应时才重新注入 content.js，避免
+ * 重复监听器/定时器，也不打断用户正在看的 985monitor 页面。
+ */
+async function wakeOpenMonitor985Tabs() {
+  try {
+    const tabs = await chrome.tabs.query({
+      url: ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*'],
+    });
+    await Promise.allSettled(tabs.filter((tab) => Number.isInteger(tab.id)).map(async (tab) => {
+      const alive = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tab.id, { type: '985-monitor-sync-now' }, (response) => {
+          resolve(!chrome.runtime.lastError && response?.ok === true);
+        });
+      });
+      if (alive) return;
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => { window.__gdhContentStarted = false; },
+      });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+    }));
+  } catch {
+    // 没有打开 985monitor、页面正在关闭或浏览器尚未恢复标签时无需打扰其它功能。
+  }
+}
+
+wakeOpenMonitor985Tabs();
+
 function sendNativeMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendNativeMessage(NATIVE_HOST, message, (response) => {

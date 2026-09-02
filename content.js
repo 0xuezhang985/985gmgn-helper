@@ -238,6 +238,18 @@
       }).finally(() => { syncInflight = null; });
       return syncInflight;
     };
+    // 后台在扩展启动/升级时会 ping 已打开的 985monitor 页面。收到消息说明当前
+    // content script 仍然活着，直接同步即可；收不到时后台才会重新注入本文件。
+    try {
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (message?.type !== '985-monitor-sync-now') return false;
+        syncAccount(false);
+        sendResponse({ ok: true });
+        return false;
+      });
+    } catch {
+      // 扩展正在重载时旧上下文会失效，新注入脚本会重新注册。
+    }
     syncAccount(true);
     window.setInterval(() => syncAccount(false), 15000);
     window.addEventListener('focus', () => syncAccount(true));
