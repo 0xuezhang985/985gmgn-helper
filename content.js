@@ -2713,12 +2713,16 @@ ${flapTooltipText(info)}
   }
 
   function trackerCardSignature(card, address) {
-    const action = findCardActionContainer(card);
-    const actionText = action
-      ? [...action.children].filter((el) => el.tagName === 'SPAN').map((el) => (el.textContent || '').trim()).join('')
-      : '';
-    const amount = (card.querySelector('[data-sentry-component="LiteTrackerAmount"]')?.textContent || '').trim();
-    return `${address}|${card.getAttribute('href') || ''}|${actionText}|${amount}`;
+    // 动作文案里混有“43s/44s”相对时间，金额也可能异步补全；拿它们做签名会把
+    // 同一笔成交反复识别成新推送。优先使用链上交易哈希；缺哈希时只组合 bridge
+    // 从原始成交记录读取的绝对字段。稳定字段尚未就绪就等下一轮，不用动态 DOM 猜。
+    const tx = String(card.dataset?.gdhTrackTx || '').trim().slice(0, 180);
+    if (tx) return `${address}|tx:${tx}`;
+    const token = String(card.dataset?.gdhTrackAddr || '').trim().slice(0, 64);
+    const side = String(card.dataset?.gdhTrackSide || '').trim().toLowerCase().slice(0, 12);
+    const ts = Number(card.dataset?.gdhTrackTs);
+    if (!token || (side !== 'buy' && side !== 'sell') || !Number.isFinite(ts) || ts <= 0) return '';
+    return `${address}|${token}|${side}|${Math.round(ts)}`;
   }
 
   function rememberPinSeen(sig) {
@@ -2797,7 +2801,8 @@ ${flapTooltipText(info)}
     if (!specialPinBaselineDone) {
       cards.forEach((card) => {
         const address = extractRowWalletAddress(card);
-        if (address) rememberPinSeen(trackerCardSignature(card, address));
+        const sig = address ? trackerCardSignature(card, address) : '';
+        if (sig) rememberPinSeen(sig);
       });
       specialPinBaselineDone = true;
       return;
@@ -2808,6 +2813,7 @@ ${flapTooltipText(info)}
       const address = extractRowWalletAddress(card);
       if (!address) return;
       const sig = trackerCardSignature(card, address);
+      if (!sig) return;
       if (specialPinSeen.has(sig)) return;
       rememberPinSeen(sig);
       if (pinnedActive && specialWalletMap.get(address)?.pin === true) {

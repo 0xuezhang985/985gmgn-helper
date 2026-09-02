@@ -563,6 +563,34 @@ await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
 });
 
+await test('GMGN 特别关注按交易哈希或绝对事件时间去重', () => {
+  const signatureFn = extractFunction(content, 'trackerCardSignature');
+  const run = (dataset, actionText, amount) => evaluate(
+    [signatureFn],
+    `trackerCardSignature({
+      dataset: ${JSON.stringify(dataset)},
+      getAttribute: () => '/robinhood/token/0x1111111111111111111111111111111111111111',
+      querySelector: () => ({ textContent: ${JSON.stringify(amount)} })
+    }, '0x2222222222222222222222222222222222222222')`,
+    { findCardActionContainer: () => ({ children: [{ tagName: 'SPAN', textContent: actionText }] }) },
+  );
+
+  const stable = {
+    gdhTrackTx: '0xabc123',
+    gdhTrackAddr: '0x1111111111111111111111111111111111111111',
+    gdhTrackSide: 'buy',
+    gdhTrackTs: '1788339600123',
+  };
+  assert.equal(run(stable, '买入 fomo 43s', '$100'), run(stable, '买入 fomo 44s', '$101'));
+  assert.equal(run(stable, '买入 fomo 43s', '$100'), '0x2222222222222222222222222222222222222222|tx:0xabc123');
+
+  const fallback = { ...stable, gdhTrackTx: '' };
+  assert.equal(run(fallback, '买入 43s', '$100'), run(fallback, '买入 44s', '$101'));
+  assert.match(run(fallback, '买入 43s', '$100'), /\|buy\|1788339600123$/);
+  assert.equal(run({ gdhTrackAddr: stable.gdhTrackAddr }, '买入 43s', '$100'), '');
+  assert.match(extractFunction(content, 'scanPinnedPush'), /if \(!sig\) return;/);
+});
+
 await test('重点 Dev 高亮开关不再充当 FOMO/Pump 插卡总开关', () => {
   assert.ok(extractFunction(content, 'applyCardState').includes('settings.enabled'));
   assert.ok(!extractFunction(content, 'pollFomoFeed').includes('settings.enabled'));
