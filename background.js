@@ -262,6 +262,52 @@ function setBoundedMap(map, key, value, max) {
   while (map.size > max) map.delete(map.keys().next().value);
 }
 
+// 985monitor 的 Robinhood RWA 目录。只把 203 个资产的必要字段传给内容脚本，
+// 不把 1MB+ 的池子明细塞进消息；目录按合约地址匹配，绝不凭 symbol 猜。
+const ROBINHOOD_RWA_CATALOG_URL = 'https://www.985monitor.xyz/rwa/data.json';
+const ROBINHOOD_RWA_CATALOG_TTL = 15 * 60 * 1000;
+let robinhoodRwaCatalogCache = null;
+let robinhoodRwaCatalogPending = null;
+
+function compactRobinhoodRwaCatalog(payload) {
+  return (Array.isArray(payload?.rwa) ? payload.rwa : [])
+    .map((item) => ({
+      address: String(item?.c || '').toLowerCase(),
+      symbol: String(item?.s || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      description: String(item?.ds || '').replace(/[\r\n\t]/g, ' ').slice(0, 240),
+    }))
+    .filter((item) => /^0x[a-f0-9]{40}$/.test(item.address) && item.symbol);
+}
+
+async function fetchRobinhoodRwaCatalog() {
+  if (robinhoodRwaCatalogCache
+    && Date.now() - robinhoodRwaCatalogCache.at < ROBINHOOD_RWA_CATALOG_TTL) {
+    return { ok: true, assets: robinhoodRwaCatalogCache.assets };
+  }
+  if (robinhoodRwaCatalogPending) return robinhoodRwaCatalogPending;
+  robinhoodRwaCatalogPending = (async () => {
+    try {
+      const response = await fetch(ROBINHOOD_RWA_CATALOG_URL, {
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const assets = compactRobinhoodRwaCatalog(await response.json());
+      if (!assets.length) throw new Error('empty catalog');
+      robinhoodRwaCatalogCache = { at: Date.now(), assets };
+      return { ok: true, assets };
+    } catch (error) {
+      if (robinhoodRwaCatalogCache?.assets?.length) {
+        return { ok: true, stale: true, assets: robinhoodRwaCatalogCache.assets };
+      }
+      return { ok: false, reason: 'request', message: String(error?.message || '') };
+    } finally {
+      robinhoodRwaCatalogPending = null;
+    }
+  })();
+  return robinhoodRwaCatalogPending;
+}
+
 /** 递归找出响应里第一个「对象数组」，避开各层包装字段名的不确定性。 */
 function firstObjectArray(value, depth) {
   if (!value || typeof value !== 'object' || depth > 4) return null;
@@ -1546,6 +1592,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'flap-token-info') {
     flapTokenInfo(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'robinhood-rwa-catalog') {
+    fetchRobinhoodRwaCatalog()
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

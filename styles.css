@@ -2178,6 +2178,36 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 html[data-theme="light"] .gdh-robinhood-pool { color: #216c94; }
 html[data-theme="light"] .gdh-robinhood-dividend { color: #8a6100; }
 
+/* 代币详情右栏：只有合约地址命中 985monitor RWA 目录的池资产才可点。 */
+.gdh-robinhood-rwa-link {
+  color: #7ba5d6 !important;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.gdh-robinhood-rwa-link::after {
+  content: ' ↗';
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.gdh-robinhood-rwa-link:hover {
+  color: #9fc4ee !important;
+  background: rgba(123, 165, 214, 0.1);
+}
+
+.gdh-robinhood-rwa-link:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+html[data-theme="light"] .gdh-robinhood-rwa-link {
+  color: #285f91 !important;
+}
+
 /* fomo 浮窗顶部的数据统计条 */
 .gdh-fomo__stats {
   display: grid;

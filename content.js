@@ -1374,6 +1374,7 @@ ${flapTooltipText(info)}
 
   function robinhoodSearchMeta(tokenInfo, quoteInfo, feeInfo) {
     const launchQuoteAddress = String(feeInfo?.launchpad?.launch_quote_address || '').toLowerCase();
+    const poolInfo = tokenInfo?.pool || {};
     let poolSymbol = String(tokenInfo?.pool?.quote_symbol || '').trim();
     if (!poolSymbol && /^0x0{40}$/.test(launchQuoteAddress)) poolSymbol = 'ETH';
     if (!poolSymbol && quoteInfo
@@ -1384,6 +1385,11 @@ ${flapTooltipText(info)}
     const dividendShare = Number(allocation?.dividend ?? feeInfo?.security?.dividend_tax ?? 0);
     return {
       poolSymbol: poolSymbol.replace(/[\r\n\t]/g, '').slice(0, 16),
+      baseAddress: String(poolInfo.base_address || tokenInfo?.address || '').toLowerCase(),
+      baseSymbol: String(tokenInfo?.symbol || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      quoteAddress: String(poolInfo.quote_address || launchQuoteAddress || '').toLowerCase(),
+      quoteSymbol: String(poolInfo.quote_symbol || quoteInfo?.symbol || poolSymbol)
+        .replace(/[\r\n\t]/g, '').slice(0, 24),
       dividend: Number.isFinite(dividendShare) && dividendShare > 0,
       dividendShare: Number.isFinite(dividendShare) && dividendShare > 0 ? dividendShare : 0,
     };
@@ -1530,6 +1536,105 @@ ${flapTooltipText(info)}
         if (row) ensureRobinhoodSearchBadges(row, token, info);
       });
     });
+  }
+
+  // ---- Robinhood 代币详情：RWA 底池资产直达 985monitor 资料 ----
+  // GMGN 的 PairInfo DOM 只有 symbol，没有合约地址；地址取它自己的
+  // mutil_window_token_info.pool，RWA 身份取 985monitor 目录。两边都用 address
+  // 精确相交后才加链接，避免同名 meme 冒充股票资产。
+  let robinhoodRwaCatalog = new Map();
+  let robinhoodRwaCatalogReady = false;
+  let robinhoodRwaCatalogLoading = false;
+  let robinhoodRwaCatalogRetryAt = 0;
+
+  function robinhoodRwaUrl(address) {
+    const normalized = String(address || '').toLowerCase();
+    return /^0x[a-f0-9]{40}$/.test(normalized)
+      ? `https://www.985monitor.xyz/rwa/?asset=${encodeURIComponent(normalized)}` : '';
+  }
+
+  function requestRobinhoodRwaCatalog() {
+    if (robinhoodRwaCatalogReady || robinhoodRwaCatalogLoading
+      || Date.now() < robinhoodRwaCatalogRetryAt) return;
+    robinhoodRwaCatalogLoading = true;
+    chrome.runtime.sendMessage({ type: 'robinhood-rwa-catalog' }, (response) => {
+      robinhoodRwaCatalogLoading = false;
+      if (chrome.runtime.lastError || !response?.ok || !Array.isArray(response.assets)) {
+        robinhoodRwaCatalogRetryAt = Date.now() + 30000;
+        return;
+      }
+      robinhoodRwaCatalog = new Map(response.assets
+        .filter((item) => /^0x[a-f0-9]{40}$/.test(String(item?.address || '')))
+        .map((item) => [String(item.address).toLowerCase(), item]));
+      robinhoodRwaCatalogReady = robinhoodRwaCatalog.size > 0;
+      scheduleScan();
+    });
+  }
+
+  function clearRobinhoodRwaLink(node) {
+    node.classList.remove('gdh-robinhood-rwa-link');
+    node.removeAttribute('role');
+    node.removeAttribute('tabindex');
+    node.removeAttribute('title');
+    delete node.dataset.gdhRobinhoodRwaUrl;
+    delete node.dataset.gdhRobinhoodRwaAddress;
+  }
+
+  function clearRobinhoodRwaPoolLinks(except) {
+    document.querySelectorAll('.gdh-robinhood-rwa-link').forEach((node) => {
+      if (!except?.has(node)) clearRobinhoodRwaLink(node);
+    });
+  }
+
+  function scanRobinhoodRwaPoolLinks() {
+    const route = currentTokenRoute();
+    if (!route || route.chain !== 'robinhood') return void clearRobinhoodRwaPoolLinks();
+    const pool = document.querySelector('[data-sentry-component="PoolInfo"]');
+    const pair = pool?.querySelector('[data-sentry-component="PairInfo"]');
+    if (!pair) return void clearRobinhoodRwaPoolLinks();
+
+    const token = String(route.address || '').toLowerCase();
+    requestRobinhoodSearchInfo(token);
+    requestRobinhoodRwaCatalog();
+    const info = robinhoodCachedInfo(token);
+    if (!info || !robinhoodRwaCatalogReady) return void clearRobinhoodRwaPoolLinks();
+
+    const assets = [
+      { address: info.baseAddress, symbol: info.baseSymbol },
+      { address: info.quoteAddress, symbol: info.quoteSymbol },
+    ];
+    const cells = [...pair.children];
+    const kept = new Set();
+    assets.forEach((poolAsset, index) => {
+      const cell = cells[3 + index * 3];
+      const address = String(poolAsset.address || '').toLowerCase();
+      const asset = robinhoodRwaCatalog.get(address);
+      const shown = String(cell?.textContent || '').trim().toUpperCase();
+      const expected = String(poolAsset.symbol || '').trim().toUpperCase();
+      if (!(cell instanceof HTMLElement) || !asset || !shown || shown !== expected) return;
+      const url = robinhoodRwaUrl(address);
+      if (!url) return;
+      cell.classList.add('gdh-robinhood-rwa-link');
+      cell.setAttribute('role', 'link');
+      cell.tabIndex = 0;
+      cell.dataset.gdhRobinhoodRwaUrl = url;
+      cell.dataset.gdhRobinhoodRwaAddress = address;
+      cell.title = `${asset.symbol} · ${asset.description || 'Robinhood RWA 资产'}\n点击查看 985monitor 资料`;
+      kept.add(cell);
+    });
+    clearRobinhoodRwaPoolLinks(kept);
+  }
+
+  function openRobinhoodRwaPoolLink(event) {
+    const target = event.target instanceof Element
+      ? event.target.closest('.gdh-robinhood-rwa-link') : null;
+    if (!target) return;
+    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+    const url = target.dataset.gdhRobinhoodRwaUrl;
+    if (!url) return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   // ---- 标注人物持仓徽章 ----
@@ -6672,6 +6777,7 @@ ${flapTooltipText(info)}
     timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
     timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
     timed('robinhood-search-meta', () => { try { scanRobinhoodSearchBadges(); } catch { /* 不影响其余扫描 */ } });
+    timed('robinhood-rwa', () => { try { scanRobinhoodRwaPoolLinks(); } catch { /* 不影响其余扫描 */ } });
     timed('lightning', scanFrontrunLightning);
     timed('remind', scanRemindToasts);
     timed('surge', scanHoldingSurge);
@@ -6853,11 +6959,13 @@ ${flapTooltipText(info)}
   );
 
   document.addEventListener('pointermove', positionTooltip, true);
+  document.addEventListener('click', openRobinhoodRwaPoolLink, true);
+  document.addEventListener('keydown', openRobinhoodRwaPoolLink, true);
   document.addEventListener('scroll', scheduleScrollScan, true);
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;

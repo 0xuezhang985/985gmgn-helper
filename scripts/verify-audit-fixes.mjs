@@ -450,6 +450,61 @@ await test('Robinhood 底池与分红只扫描搜索弹层并适配新版中文�
   assert.ok(styles.includes('[data-gdh-robinhood-room="1"]'));
 });
 
+await test('Robinhood 池信息同时保留 base 与 quote 合约地址供 RWA 精确匹配', () => {
+  const fn = extractFunction(content, 'robinhoodSearchMeta');
+  const meta = evaluate([fn], `robinhoodSearchMeta(
+    {
+      address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'MEME',
+      pool: {
+        base_address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        quote_address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        quote_symbol: 'NVDA'
+      }
+    }, null, { security: {} }
+  )`);
+  assert.equal(meta.baseAddress, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(meta.baseSymbol, 'MEME');
+  assert.equal(meta.quoteAddress, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(meta.quoteSymbol, 'NVDA');
+});
+
+await test('RWA 目录只保留合法合约并压缩为底池点击所需字段', () => {
+  const fn = extractFunction(background, 'compactRobinhoodRwaCatalog');
+  const items = evaluate([fn], `compactRobinhoodRwaCatalog({ rwa: [
+    { c: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', s: 'NVDA', ds: '英伟达\\n资料' },
+    { c: 'not-an-address', s: 'FAKE', ds: '不能进入目录' },
+    { c: '0xcccccccccccccccccccccccccccccccccccccccc', s: '', ds: '无代码' }
+  ] })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(items)), [{
+    address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    symbol: 'NVDA',
+    description: '英伟达 资料',
+  }]);
+  assert.ok(background.includes("message?.type === 'robinhood-rwa-catalog'"));
+  assert.ok(background.includes('ROBINHOOD_RWA_CATALOG_TTL'));
+});
+
+await test('GMGN 详情只给地址命中的 RWA 池行加可点击深链', () => {
+  const urlFn = extractFunction(content, 'robinhoodRwaUrl');
+  assert.equal(
+    evaluate([urlFn], "robinhoodRwaUrl('0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')"),
+    'https://www.985monitor.xyz/rwa/?asset=0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  );
+  assert.equal(evaluate([urlFn], "robinhoodRwaUrl('NVDA')"), '');
+  const scan = extractFunction(content, 'scanRobinhoodRwaPoolLinks');
+  assert.ok(scan.includes("[data-sentry-component=\"PoolInfo\"]"));
+  assert.ok(scan.includes("[data-sentry-component=\"PairInfo\"]"));
+  assert.ok(scan.includes('robinhoodRwaCatalog.get(address)'));
+  assert.ok(scan.includes('shown !== expected'));
+  assert.ok(scan.includes('return void clearRobinhoodRwaPoolLinks()'));
+  assert.ok(!scan.includes('robinhoodRwaCatalog.get(expected)'));
+  const open = extractFunction(content, 'openRobinhoodRwaPoolLink');
+  assert.ok(open.includes("event.key !== 'Enter'"));
+  assert.ok(open.includes("window.open(url, '_blank', 'noopener,noreferrer')"));
+  assert.ok(styles.includes('.gdh-robinhood-rwa-link::after'));
+  assert.ok(styles.includes('html[data-theme="light"] .gdh-robinhood-rwa-link'));
+});
+
 await test('滚动限频使用单个延时器而不是逐帧空转', () => {
   const contentRun = extractFunction(content, 'runScheduledScan');
   const bridgeRun = extractFunction(bridge, 'runScheduledScan');
