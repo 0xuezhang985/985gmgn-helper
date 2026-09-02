@@ -5821,7 +5821,7 @@ ${flapTooltipText(info)}
   }
 
   function pollFomoFeed() {
-    if (!settings.enabled || settings.enableFomoFeed === false) return;
+    if (settings.enableFomoFeed === false) return;
     if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
     fomoFeedLastPollAt = Date.now();
     try {
@@ -5850,10 +5850,8 @@ ${flapTooltipText(info)}
   /** 站内跳转：请 MAIN world 的 page-bridge 走 Next 客户端路由（和点原生卡一致，
    *  不整页重载）；bridge 没装上/没响应时回退成普通跳转。 */
   function gdhSpaNavigate(url) {
-    if (location.pathname === url) return; // 已在目标页
-    // dispatchEvent 是同步的：bridge 在派发内就会调 router.push 改掉 pathname，
-    // 所以"跳没跳成"的基准必须在派发之前取，否则兜底会把刚跳完的页面再整页重载一遍
-    const before = location.pathname;
+    const targetPath = new URL(url, location.origin).pathname;
+    if (location.pathname === targetPath) return; // 已在目标页
     try {
       document.documentElement.setAttribute('data-gdh-nav', url);
       document.dispatchEvent(new Event('gdh-navigate'));
@@ -5862,7 +5860,9 @@ ${flapTooltipText(info)}
       return;
     }
     window.setTimeout(() => {
-      if (location.pathname === before) location.href = url;
+      // router 在 GMGN 某些构建中会把未识别的 push 错误归一到主页。
+      // 只要没到真正的目标代币路径，就用同源普通跳转纠正。
+      if (location.pathname !== targetPath) location.href = url;
     }, 450);
   }
 
@@ -6118,13 +6118,13 @@ ${flapTooltipText(info)}
 
   function clearFomoFeedShifts() {
     for (const el of fomoFeedShifted) {
-      if (el.isConnected) el.style.transform = '';
+      if (el.isConnected) el.style.translate = '';
     }
     fomoFeedShifted.clear();
   }
 
   function pollPumpFeed() {
-    if (!settings.enabled || settings.enablePumpFeed === false) return;
+    if (settings.enablePumpFeed === false) return;
     if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
     pumpFeedLastPollAt = Date.now();
     try {
@@ -6156,7 +6156,7 @@ ${flapTooltipText(info)}
   }
 
   /**
-   * 滚动时 Virtuoso 会先挂新行、稍后主扫描才重排。旧逻辑让新行短暂保持 transform=""，
+   * 滚动时 Virtuoso 会先挂新行、稍后主扫描才重排。旧逻辑让新行短暂保持 translate=""，
    * 直接压进绝对定位的 fomo 卡区域。这里只读取当前插卡阈值并修正已挂载行，
    * 不重新配对事件、不发请求，单帧工作量最多约 13 行 × 6 卡。
    */
@@ -6183,14 +6183,14 @@ ${flapTooltipText(info)}
     let collapsed = 0;
     for (const row of rows) {
       const amount = fomoFeedInsertionShift(row.top, inserts) + collapsed;
-      const shift = amount ? `translateY(${amount}px)` : '';
-      if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
+      const shift = amount ? `0 ${amount}px` : '';
+      if ((row.wrap.style.translate || '') !== shift) row.wrap.style.translate = shift;
       if (amount) { fomoFeedShifted.add(row.wrap); stillShifted.add(row.wrap); }
       if (row.card.dataset.gdhTokenBlocked === '1') collapsed -= row.h;
     }
     for (const el of [...fomoFeedShifted]) {
       if (!stillShifted.has(el)) {
-        if (el.isConnected) el.style.transform = '';
+        if (el.isConnected) el.style.translate = '';
         fomoFeedShifted.delete(el);
       }
     }
@@ -6205,7 +6205,30 @@ ${flapTooltipText(info)}
     });
   }
 
-  /** 追踪行的绝对定位包装（GMGN 实测：data-index 层 absolute + inline top/height 公式布局）。 */
+  /** 从 GMGN 虚拟行的原生 transform 中读取 Y 坐标；插件绝不改写这个属性。 */
+  function fomoFeedNativeTransformY(raw) {
+    const value = String(raw || '').trim();
+    if (!value || value === 'none') return Number.NaN;
+    let match = value.match(/translateY\(\s*(-?[\d.]+)px\s*\)/i);
+    if (match) return Number.parseFloat(match[1]);
+    match = value.match(/translate3d\(\s*-?[\d.]+px\s*,\s*(-?[\d.]+)px\s*,\s*-?[\d.]+px\s*\)/i);
+    if (match) return Number.parseFloat(match[1]);
+    match = value.match(/translate\(\s*-?[\d.]+px\s*,\s*(-?[\d.]+)px\s*\)/i);
+    if (match) return Number.parseFloat(match[1]);
+    match = value.match(/matrix\(\s*([^)]+)\)/i);
+    if (match) {
+      const parts = match[1].split(',').map((item) => Number.parseFloat(item));
+      if (parts.length === 6 && parts.every(Number.isFinite)) return parts[5];
+    }
+    match = value.match(/matrix3d\(\s*([^)]+)\)/i);
+    if (match) {
+      const parts = match[1].split(',').map((item) => Number.parseFloat(item));
+      if (parts.length === 16 && parts.every(Number.isFinite)) return parts[13];
+    }
+    return Number.NaN;
+  }
+
+  /** 追踪行的绝对定位包装（GMGN 可能用 inline top、transform 或两者共同定位）。 */
   function fomoFeedFixedRow(cardEl) {
     // 卡片模式:追踪卡的父层就是虚拟化外壳(行高 64.5)。
     // 表格模式:卡在 内容DIV → <a> → 外壳(行高 44)，隔了两层。所以向上找几层，
@@ -6213,9 +6236,13 @@ ${flapTooltipText(info)}
     let wrap = cardEl.parentElement;
     for (let level = 0; level < 4 && wrap instanceof HTMLElement; level += 1) {
       if ((wrap.style.position || '') === 'absolute') {
-        const top = Number.parseFloat(wrap.style.top);
+        const inlineTop = Number.parseFloat(wrap.style.top);
+        const transformY = fomoFeedNativeTransformY(wrap.style.transform);
+        const hasInlineTop = Number.isFinite(inlineTop);
+        const hasTransformY = Number.isFinite(transformY);
+        const top = (hasInlineTop ? inlineTop : 0) + (hasTransformY ? transformY : 0);
         const h = Number.parseFloat(wrap.style.height) || wrap.offsetHeight;
-        if (Number.isFinite(top) && h > 0) return { wrap, top, h };
+        if ((hasInlineTop || hasTransformY) && h > 0) return { wrap, top, h };
         return null;
       }
       wrap = wrap.parentElement;
@@ -6232,10 +6259,6 @@ ${flapTooltipText(info)}
   let fomoFeedLastMode = null;
 
   function scanFomoFeed() {
-    if (!settings.enabled) {
-      teardownFomoFeed();
-      return;
-    }
     // 屏蔽折叠和 fomo 混排是两件事：就算关掉了 fomo 推送，被屏蔽的行照样得折叠掉
     if (settings.enableFomoFeed === false && settings.enablePumpFeed === false) {
       teardownFomoFeed();
@@ -6354,11 +6377,10 @@ ${flapTooltipText(info)}
   }
 
   /**
-   * 固定行高模式的摆法。GMGN 追踪流的行包装是 position:absolute + top=index×行高
-   * 的公式布局（React 只写 top/height，从不写 transform）——行高改不了、行也推不动。
-   * 所以不动行的 top：给锚行之后的每个挂载行加 translateY 让位，fomo 卡绝对定位
-   * 塞进腾出的缝里。React 滚动/插新行时重写 top 不会碰 transform，两套定位互不
-   * 覆盖；锚行被卸载时卡和位移一起回收，视口之外的列表零影响。
+   * 固定行高模式的摆法。GMGN 追踪流的行包装是 position:absolute，原生版本可能用
+   * top、transform 或两者共同定位。插件不碰这两个属性，只用独立 CSS translate 给
+   * 锚行之后的挂载行让位，再把 fomo 卡绝对定位进空隙。React 重写原生坐标与插件
+   * 位移互不覆盖；锚行被卸载时卡和位移一起回收，视口之外的列表零影响。
    */
   /** 只做「把被屏蔽的行折叠掉」，复用混排那套位移；没有 fomo 事件时也要能跑。 */
   function collapseBlockedTrackerRows() {
@@ -6391,8 +6413,8 @@ ${flapTooltipText(info)}
     }
     cum = headInner;
     for (const row of rows) {
-      const shift = cum ? `translateY(${cum}px)` : '';
-      if ((row.wrap.style.transform || '') !== shift) row.wrap.style.transform = shift;
+      const shift = cum ? `0 ${cum}px` : '';
+      if ((row.wrap.style.translate || '') !== shift) row.wrap.style.translate = shift;
       if (cum) { fomoFeedShifted.add(row.wrap); stillShifted.add(row.wrap); }
       // 被屏蔽的币：这一行只是视觉隐藏，位置还占着（固定行高公式布局，行推不动）。
       // 给后面的行一个负位移把它这一格吃掉，屏蔽后就不会留一排空白了。
@@ -6416,10 +6438,10 @@ ${flapTooltipText(info)}
       }
       cum += inner;
     }
-    // 不再需要位移的行（锚卸载/事件走掉）把 transform 清掉
+    // 不再需要位移的行（锚卸载/事件走掉）只清插件自己的 translate
     for (const el of [...fomoFeedShifted]) {
       if (!stillShifted.has(el)) {
-        if (el.isConnected) el.style.transform = '';
+        if (el.isConnected) el.style.translate = '';
         fomoFeedShifted.delete(el);
       }
     }

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
+const read = (name) => fs.readFileSync(path.join(root, name), 'utf8').replace(/\r\n/g, '\n');
 const background = read('background.js');
 const content = read('content.js');
 const bridge = read('page-bridge.js');
@@ -316,6 +316,41 @@ await test('追踪流新挂载虚拟行会继承已有插卡位移', () => {
   assert.match(content, /scheduleFomoFeedRowReflow\(\);\s*\n\s*}\s*\n\s*if \(\!\(target instanceof Element\)/);
 });
 
+await test('GMGN 虚拟行的原生 transform 坐标不会被插件抹掉', () => {
+  const transformFn = extractFunction(content, 'fomoFeedNativeTransformY');
+  assert.equal(evaluate([transformFn], "fomoFeedNativeTransformY('translateY(129px)')"), 129);
+  assert.equal(evaluate([transformFn], "fomoFeedNativeTransformY('translate3d(0px, 258px, 0px)')"), 258);
+  assert.equal(evaluate([transformFn], "fomoFeedNativeTransformY('matrix(1, 0, 0, 1, 0, 64.5)')"), 64.5);
+
+  const fixedRowFn = extractFunction(content, 'fomoFeedFixedRow');
+  class FakeHTMLElement {
+    constructor(style = {}, parentElement = null) {
+      this.style = style;
+      this.parentElement = parentElement;
+      this.offsetHeight = 64.5;
+      this.dataset = {};
+    }
+  }
+  const result = evaluate([transformFn, fixedRowFn], `(() => {
+    const wrap = new HTMLElement({
+      position: 'absolute',
+      top: '0px',
+      height: '64.5px',
+      transform: 'translateY(129px)',
+    });
+    const card = new HTMLElement({}, wrap);
+    const row = fomoFeedFixedRow(card);
+    return { top: row.top, h: row.h, transform: row.wrap.style.transform };
+  })()`, { Number, HTMLElement: FakeHTMLElement });
+  assert.deepEqual({ ...result }, { top: 129, h: 64.5, transform: 'translateY(129px)' });
+
+  for (const name of ['clearFomoFeedShifts', 'refreshFomoFeedFixedRowShifts', 'layoutFomoFeedFixed']) {
+    const fn = extractFunction(content, name);
+    assert.ok(fn.includes('.style.translate'), `${name} must use independent style.translate`);
+    assert.ok(!fn.includes('.style.transform ='), `${name} must preserve GMGN native transform`);
+  }
+});
+
 await test('新 FOMO/Pump 推送直接插入且不再创建顶部暂存条', () => {
   const shiftFn = extractFunction(content, 'fomoFeedInsertionShift');
   assert.equal(evaluate([shiftFn], 'fomoFeedInsertionShift(0, [{ afterTop: 0, height: 66 }])'), 66);
@@ -526,6 +561,32 @@ await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.ok(bridge.includes('scanUnmarkedTrackerRows'));
   assert.match(bridge, /if \(!trackerSeen\.size\) scanUnmarkedTrackerRows\(trackerSeen, trackerData\)/);
   assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
+});
+
+await test('重点 Dev 高亮开关不再充当 FOMO/Pump 插卡总开关', () => {
+  assert.ok(extractFunction(content, 'applyCardState').includes('settings.enabled'));
+  assert.ok(!extractFunction(content, 'pollFomoFeed').includes('settings.enabled'));
+  assert.ok(!extractFunction(content, 'pollPumpFeed').includes('settings.enabled'));
+  assert.ok(!extractFunction(content, 'scanFomoFeed').includes('settings.enabled'));
+});
+
+await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
+  const fn = extractFunction(content, 'gdhSpaNavigate');
+  const target = '/robinhood/token/0x65eeaf07b545c9560dcbd8a72f239fa1ab961501';
+  const location = { origin: 'https://gmgn.ai', pathname: '/follow', href: '' };
+  let nav = '';
+  evaluate([fn], `gdhSpaNavigate('${target}')`, {
+    location,
+    URL,
+    Event: class Event {},
+    document: {
+      documentElement: { setAttribute: (_name, value) => { nav = value; } },
+      dispatchEvent: () => { location.pathname = '/'; },
+    },
+    window: { setTimeout: (callback) => callback() },
+  });
+  assert.equal(nav, target);
+  assert.equal(location.href, target);
 });
 
 await test('DeBot 只注入追踪桥、混排脚本和 FOMO 小窗样式', () => {
