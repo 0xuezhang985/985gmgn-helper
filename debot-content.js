@@ -101,6 +101,13 @@
   let translationDetector = null;
   let translationNeedsGesture = false;
   let translationGesture = false;
+  let debotRwaCatalog = new Map();
+  let debotRwaCatalogReady = false;
+  let debotRwaCatalogLoading = false;
+  let debotRwaCatalogRetryAt = 0;
+  let debotRwaPopover = null;
+  let debotRwaPopoverAnchor = null;
+  let debotRwaScanRaf = 0;
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -227,6 +234,247 @@
       document.dispatchEvent(new CustomEvent('gdh-debot-navigate', { detail: { href } }));
     });
     return link;
+  }
+
+  // ---- Robinhood 流动池：RWA 资产资料浮窗 ----
+  // DeBot 池表的当前代币地址来自页面路由，配对资产地址来自原生代币链接；
+  // 两者都必须再与 985monitor RWA 目录的合约和 symbol 同时匹配，避免同名币误标。
+  function debotTokenAddressFromHref(href, expectedChain) {
+    let url;
+    try { url = new URL(String(href || ''), location.origin); } catch { return ''; }
+    if (url.origin !== location.origin) return '';
+    const match = url.pathname.match(/^\/token\/([a-z0-9_-]+)\/([^/?#]+)/i);
+    if (!match || match[1].toLowerCase() !== String(expectedChain || '').toLowerCase()) return '';
+    let segment;
+    try { segment = decodeURIComponent(match[2]); } catch { segment = match[2]; }
+    return segment.match(/(0x[a-fA-F0-9]{40})$/)?.[1].toLowerCase() || '';
+  }
+
+  function requestDebotRwaCatalog() {
+    if (debotRwaCatalogReady || debotRwaCatalogLoading || Date.now() < debotRwaCatalogRetryAt) return;
+    debotRwaCatalogLoading = true;
+    chrome.runtime.sendMessage({ type: 'robinhood-rwa-catalog' }, (response) => {
+      debotRwaCatalogLoading = false;
+      if (chrome.runtime.lastError || !response?.ok || !Array.isArray(response.assets)) {
+        debotRwaCatalogRetryAt = Date.now() + 30000;
+        return;
+      }
+      debotRwaCatalog = new Map(response.assets
+        .filter((item) => /^0x[a-f0-9]{40}$/.test(String(item?.address || '')))
+        .map((item) => [String(item.address).toLowerCase(), item]));
+      debotRwaCatalogReady = debotRwaCatalog.size > 0;
+      scheduleDebotRwaPoolScan();
+    });
+  }
+
+  function clearDebotRwaLink(node) {
+    if (node === debotRwaPopoverAnchor) closeDebotRwaPopover();
+    node.classList.remove('gdh-debot-rwa-link');
+    node.removeAttribute('role');
+    node.removeAttribute('tabindex');
+    node.removeAttribute('title');
+    delete node.dataset.gdhDebotRwaAddress;
+  }
+
+  function clearDebotRwaPoolLinks(except) {
+    document.querySelectorAll('.gdh-debot-rwa-link').forEach((node) => {
+      if (!except?.has(node)) clearDebotRwaLink(node);
+    });
+  }
+
+  function markDebotRwaLink(node, address, asset, kept) {
+    if (!(node instanceof HTMLElement)) return;
+    const shown = safeText(node.textContent, 32).toUpperCase();
+    const expected = safeText(asset?.symbol, 32).toUpperCase();
+    if (!shown || shown !== expected) return;
+    node.classList.add('gdh-debot-rwa-link');
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    node.dataset.gdhDebotRwaAddress = address;
+    node.title = `${asset.symbol} · ${asset.description || 'Robinhood RWA 资产'}\n点击查看资产资料`;
+    kept.add(node);
+  }
+
+  function scanDebotRwaPoolLinks() {
+    const route = debotTokenRoute();
+    if (!route || route.chain !== 'robinhood') return void clearDebotRwaPoolLinks();
+    requestDebotRwaCatalog();
+    if (!debotRwaCatalogReady) return void clearDebotRwaPoolLinks();
+
+    const routeAddress = normalizeAddress(route.address);
+    const routeAsset = debotRwaCatalog.get(routeAddress);
+    const kept = new Set();
+    document.querySelectorAll('tbody tr').forEach((row) => {
+      if (!(row instanceof HTMLTableRowElement) || row.cells.length !== 3
+        || !row.querySelector('svg.tabler-icon-copy')) return;
+      const pairCell = row.cells[0];
+      if (routeAsset) {
+        const current = [...pairCell.querySelectorAll('[aria-label]')].find((node) => {
+          const shown = safeText(node.textContent, 32);
+          return shown && shown === safeText(node.getAttribute('aria-label'), 32)
+            && !node.closest('a');
+        });
+        markDebotRwaLink(current, routeAddress, routeAsset, kept);
+      }
+      pairCell.querySelectorAll('a[href*="/token/"]').forEach((link) => {
+        const address = debotTokenAddressFromHref(link.getAttribute('href'), route.chain);
+        const asset = debotRwaCatalog.get(address);
+        if (asset) markDebotRwaLink(link, address, asset, kept);
+      });
+    });
+    clearDebotRwaPoolLinks(kept);
+  }
+
+  function scheduleDebotRwaPoolScan() {
+    if (debotRwaScanRaf) return;
+    debotRwaScanRaf = window.requestAnimationFrame(() => {
+      debotRwaScanRaf = 0;
+      try { scanDebotRwaPoolLinks(); } catch { /* 不影响 DeBot 其它增强 */ }
+    });
+  }
+
+  function formatDebotRwaNumber(value, decimals = 2) {
+    const number = value === null || value === undefined || value === '' ? NaN : Number(value);
+    if (!Number.isFinite(number)) return '—';
+    const absolute = Math.abs(number);
+    if (absolute >= 1e9) return `${(number / 1e9).toFixed(2)}B`;
+    if (absolute >= 1e6) return `${(number / 1e6).toFixed(2)}M`;
+    if (absolute >= 1e3) return `${(number / 1e3).toFixed(2)}K`;
+    return number.toLocaleString('en-US', { maximumFractionDigits: decimals });
+  }
+
+  function formatDebotRwaMoney(value, price = false) {
+    const number = value === null || value === undefined || value === '' ? NaN : Number(value);
+    if (!Number.isFinite(number)) return '—';
+    return `$${formatDebotRwaNumber(number, price && Math.abs(number) < 1 ? 6 : 2)}`;
+  }
+
+  function closeDebotRwaPopover() {
+    debotRwaPopover?.remove();
+    debotRwaPopover = null;
+    debotRwaPopoverAnchor = null;
+  }
+
+  function positionDebotRwaPopover() {
+    if (!debotRwaPopover) return;
+    if (!debotRwaPopoverAnchor?.isConnected) {
+      closeDebotRwaPopover();
+      return;
+    }
+    const anchor = debotRwaPopoverAnchor.getBoundingClientRect();
+    const popover = debotRwaPopover.getBoundingClientRect();
+    const gap = 8;
+    let left = anchor.right + gap;
+    if (left + popover.width > window.innerWidth - gap) left = anchor.left - popover.width - gap;
+    if (left < gap) left = Math.min(window.innerWidth - popover.width - gap, gap);
+    const top = Math.min(Math.max(gap, anchor.top), window.innerHeight - popover.height - gap);
+    debotRwaPopover.style.left = `${Math.max(gap, left)}px`;
+    debotRwaPopover.style.top = `${Math.max(gap, top)}px`;
+  }
+
+  function showDebotRwaPopover(anchor, asset) {
+    if (debotRwaPopoverAnchor === anchor && debotRwaPopover) {
+      closeDebotRwaPopover();
+      return;
+    }
+    closeDebotRwaPopover();
+    const popover = document.createElement('section');
+    popover.className = 'gdh-debot-rwa-popover';
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', `${asset.symbol} RWA 资产资料`);
+
+    const top = document.createElement('div');
+    top.className = 'gdh-debot-rwa-popover__top';
+    const heading = document.createElement('div');
+    const source = document.createElement('div');
+    source.className = 'gdh-debot-rwa-popover__source';
+    source.textContent = '985monitor · RWA 资产';
+    const title = document.createElement('strong');
+    title.className = 'gdh-debot-rwa-popover__title';
+    title.textContent = asset.symbol;
+    heading.append(source, title);
+    const close = document.createElement('button');
+    close.className = 'gdh-debot-rwa-popover__close';
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭资产资料');
+    close.textContent = '×';
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDebotRwaPopover();
+    });
+    top.append(heading, close);
+    popover.append(top);
+
+    if (asset.description) {
+      const description = document.createElement('p');
+      description.className = 'gdh-debot-rwa-popover__description';
+      description.textContent = asset.description;
+      popover.append(description);
+    }
+
+    const premium = asset.premiumPct === null || asset.premiumPct === undefined
+      || asset.premiumPct === '' ? NaN : Number(asset.premiumPct);
+    const rows = [
+      ['链上价', formatDebotRwaMoney(asset.onchainPrice, true)],
+      ['标的价', formatDebotRwaMoney(asset.referencePrice, true)],
+      ['溢价', Number.isFinite(premium) ? `${premium > 0 ? '+' : ''}${premium.toFixed(2)}%` : '—', Number.isFinite(premium) ? (premium > 0 ? 'up' : premium < 0 ? 'down' : '') : ''],
+      ['流动性', formatDebotRwaMoney(asset.liquidityUsd)],
+      ['24h 成交', formatDebotRwaMoney(asset.volume24hUsd)],
+      ['链上市值', formatDebotRwaMoney(asset.onchainMarketCapUsd)],
+      ['正股市值', formatDebotRwaMoney(asset.referenceMarketCapUsd)],
+      ['链上流通量', formatDebotRwaNumber(asset.onchainSupply)],
+      ['正股占比', asset.referenceSharePct !== null && asset.referenceSharePct !== undefined
+        && asset.referenceSharePct !== '' && Number.isFinite(Number(asset.referenceSharePct))
+        ? `${Number(asset.referenceSharePct).toFixed(2)}%` : '—'],
+      ['部署日期', asset.deployedAt || '—'],
+    ];
+    const grid = document.createElement('dl');
+    grid.className = 'gdh-debot-rwa-popover__grid';
+    rows.forEach(([label, value, tone]) => {
+      const item = document.createElement('div');
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = label;
+      dd.textContent = value;
+      if (tone) dd.dataset.tone = tone;
+      item.append(dt, dd);
+      grid.append(item);
+    });
+    popover.append(grid);
+
+    const address = document.createElement('div');
+    address.className = 'gdh-debot-rwa-popover__address';
+    address.textContent = asset.address;
+    address.title = asset.address;
+    popover.append(address);
+
+    document.body.append(popover);
+    debotRwaPopover = popover;
+    debotRwaPopoverAnchor = anchor;
+    positionDebotRwaPopover();
+  }
+
+  function openDebotRwaPoolLink(event) {
+    if (event.type === 'keydown' && event.key === 'Escape') {
+      closeDebotRwaPopover();
+      return;
+    }
+    const target = event.target instanceof Element
+      ? event.target.closest('.gdh-debot-rwa-link') : null;
+    if (!target) {
+      if (event.type === 'click' && debotRwaPopover
+        && !(event.target instanceof Node && debotRwaPopover.contains(event.target))) {
+        closeDebotRwaPopover();
+      }
+      return;
+    }
+    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+    const asset = debotRwaCatalog.get(String(target.dataset.gdhDebotRwaAddress || '').toLowerCase());
+    if (!asset) return;
+    event.preventDefault();
+    event.stopPropagation();
+    showDebotRwaPopover(target, asset);
   }
 
   function pumpTokenKey(value) {
@@ -2010,6 +2258,7 @@
 
   function syncRoute() {
     syncPanel();
+    scheduleDebotRwaPoolScan();
     if (isTrackShellPage()) {
       pollFomo();
       pollPump();
@@ -2049,6 +2298,9 @@
     document.addEventListener('gdh-debot-track-ready', scheduleFeedLayout);
     window.addEventListener('popstate', syncRoute);
     window.addEventListener('resize', scheduleFeedLayout, { passive: true });
+    window.addEventListener('resize', positionDebotRwaPopover, { passive: true });
+    document.addEventListener('click', openDebotRwaPoolLink, true);
+    document.addEventListener('keydown', openDebotRwaPoolLink, true);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') syncRoute();
     });
@@ -2057,6 +2309,7 @@
       closeSpecialPalette();
     }, true);
     document.addEventListener('scroll', (event) => {
+      positionDebotRwaPopover();
       const table = trackTable();
       const scroller = trackScroller(table);
       const sidebarScroller = sidebarTrackLayout()?.scroller;
@@ -2064,16 +2317,17 @@
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element
-        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip')
-          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip'));
+        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip, .gdh-debot-rwa-link, .gdh-debot-rwa-popover')
+          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip')) return false;
+        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {
         syncPanel();
         scheduleFeedLayout();
+        scheduleDebotRwaPoolScan();
       }
     });
     feedObserver.observe(document.documentElement, { childList: true, subtree: true });

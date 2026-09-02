@@ -13,7 +13,7 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 ## 网络访问
 
 - `https://gmgn.ai/*`：读取页面数据、行情、持仓、同一账户的 App 持仓价格提醒开关，以及用户明确触发的钱包关注操作。
-- `https://debot.ai/*`：仅在 DeBot 追踪页插入 FOMO/Pump 事件，并在 DeBot 代币页显示 FOMO 小窗。扩展读取已渲染追踪行的链、代币、钱包、买卖方向、金额、时间和交易哈希用于排序与去重，并同源读取 DeBot 已公开展示的代币详情总供应量用于计算 FOMO 持仓占比；不读取或保存 DeBot 登录凭据，不新建 DeBot WebSocket，也不执行交易。
+- `https://debot.ai/*`：仅在 DeBot 追踪页插入 FOMO/Pump 事件，并在 DeBot 代币页显示 FOMO 小窗与 RWA 资料浮窗。扩展读取已渲染追踪行的链、代币、钱包、买卖方向、金额、时间和交易哈希用于排序与去重，同源读取 DeBot 已公开展示的代币详情总供应量用于计算 FOMO 持仓占比，并读取 DeBot 原生池表中的代币地址与 985monitor 公开 RWA 目录在浏览器内匹配；不读取或保存 DeBot 登录凭据，不新建 DeBot WebSocket，也不执行交易。
 - `https://prod-api.fomo.family/*`、`https://fomo.family/*`：读取 FOMO 数据并保活一个由站点 Privy SDK 自行续期的真实页面；扩展不直接请求 Privy sessions 接口。
 - `https://985monitor.xyz/*`：在用户已登录时签发 FOMO/Pump 专用只读会话，并读取服务端按该账号关注、屏蔽、事件类型、金额和代币过滤后的配置与事件流。账号会话失效时插件停止读取，不回退到公共全量 FOMO/Pump 源。默认标注人物持仓产物仍按公开静态文件读取；用户自己添加的标注人物不会自动上报服务器，而是在浏览器内直查 GMGN。
 - 用户填写自定义 BSC RPC 时，扩展会在确认后申请该 HTTPS 域名权限，并只发送公开链上只读调用。

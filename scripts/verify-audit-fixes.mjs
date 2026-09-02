@@ -1096,6 +1096,126 @@ await test('DeBot FOMO 持仓占比优先读取同源代币详情总供应量', 
   assert.match(privacy, /DeBot 已公开展示的代币详情总供应量/);
 });
 
+await test('DeBot Robinhood 池资产按原生地址精确匹配 RWA 并显示同页浮窗', () => {
+  const addressFn = extractFunction(debotContent, 'debotTokenAddressFromHref');
+  const address = evaluate([addressFn], `debotTokenAddressFromHref(
+    '/token/robinhood/231141_0x44c4f142009036cf477ed2d09932051843137cf1', 'robinhood'
+  )`, {
+    location: { origin: 'https://debot.ai' }, URL, decodeURIComponent,
+  });
+  assert.equal(address, '0x44c4f142009036cf477ed2d09932051843137cf1');
+  assert.equal(evaluate([addressFn], `debotTokenAddressFromHref(
+    '/token/base/0x44c4f142009036cf477ed2d09932051843137cf1', 'robinhood'
+  )`, { location: { origin: 'https://debot.ai' }, URL, decodeURIComponent }), '');
+
+  const scan = extractFunction(debotContent, 'scanDebotRwaPoolLinks');
+  assert.ok(scan.includes("svg.tabler-icon-copy"));
+  assert.ok(scan.includes('debotRwaCatalog.get(routeAddress)'));
+  assert.ok(scan.includes('debotTokenAddressFromHref'));
+  assert.ok(scan.includes('debotRwaCatalog.get(address)'));
+  assert.ok(scan.includes('clearDebotRwaPoolLinks(kept)'));
+  const mark = extractFunction(debotContent, 'markDebotRwaLink');
+  assert.ok(mark.includes('shown !== expected'));
+  assert.ok(mark.includes("node.classList.add('gdh-debot-rwa-link')"));
+  const open = extractFunction(debotContent, 'openDebotRwaPoolLink');
+  assert.ok(open.includes("event.key !== 'Enter'"));
+  assert.ok(open.includes("event.key === 'Escape'"));
+  assert.ok(open.includes('showDebotRwaPopover(target, asset)'));
+  assert.ok(!open.includes('window.open'));
+  const show = extractFunction(debotContent, 'showDebotRwaPopover');
+  assert.ok(show.includes("popover.setAttribute('role', 'dialog')"));
+  assert.ok(show.includes("source.textContent = '985monitor · RWA 资产'"));
+  assert.ok(show.includes("['链上价'"));
+  assert.ok(show.includes("['标的价'"));
+  assert.ok(show.includes("['流动性'"));
+  assert.ok(!debotContent.includes('https://www.985monitor.xyz/rwa/?asset='));
+  assert.ok(debotStyles.includes('.gdh-debot-rwa-link::after'));
+  assert.ok(debotStyles.includes('.gdh-debot-rwa-popover'));
+  assert.match(privacy, /DeBot 原生池表中的代币地址/);
+});
+
+await test('DeBot RWA 点击渲染本页资产浮窗且不触发原生跳转', () => {
+  class FakeElement {
+    constructor(tag = 'div') {
+      this.tagName = tag.toUpperCase();
+      this.children = [];
+      this.attributes = {};
+      this.dataset = {};
+      this.style = {};
+      this.className = '';
+      this.parent = null;
+      this.isConnected = false;
+      this.listeners = {};
+      this.textContent = '';
+    }
+    append(...nodes) {
+      nodes.forEach((node) => {
+        node.parent = this;
+        node.isConnected = true;
+        this.children.push(node);
+      });
+    }
+    remove() {
+      if (this.parent) this.parent.children = this.parent.children.filter((node) => node !== this);
+      this.isConnected = false;
+    }
+    setAttribute(name, value) { this.attributes[name] = String(value); }
+    addEventListener(type, listener) { this.listeners[type] = listener; }
+    contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
+    closest(selector) { return selector === '.gdh-debot-rwa-link' ? this : null; }
+    getBoundingClientRect() { return { left: 20, right: 70, top: 30, width: 300, height: 260 }; }
+  }
+  const body = new FakeElement('body');
+  body.isConnected = true;
+  const document = { body, createElement: (tag) => new FakeElement(tag) };
+  const asset = {
+    address: '0x44c4f142009036cf477ed2d09932051843137cf1',
+    symbol: 'ZM', onchainPrice: 103.93, referencePrice: 95.24, premiumPct: 9.12,
+    liquidityUsd: 40120, volume24hUsd: 236880, onchainMarketCapUsd: 64380000,
+    referenceMarketCapUsd: 27790000000, onchainSupply: 619430,
+    referenceSharePct: 2.74, deployedAt: '06-10', description: 'Zoom，视频会议软件',
+  };
+  const functions = [
+    'formatDebotRwaNumber', 'formatDebotRwaMoney', 'closeDebotRwaPopover',
+    'positionDebotRwaPopover', 'showDebotRwaPopover', 'openDebotRwaPoolLink',
+  ].map((name) => extractFunction(debotContent, name));
+  const result = evaluate(functions, `(() => {
+    const anchor = new Element('span');
+    anchor.className = 'gdh-debot-rwa-link';
+    anchor.dataset.gdhDebotRwaAddress = '${asset.address}';
+    anchor.isConnected = true;
+    anchor.getBoundingClientRect = () => ({ left: 900, right: 950, top: 30, width: 50, height: 20 });
+    const before = location.href;
+    const event = { type: 'click', target: anchor, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+    openDebotRwaPoolLink(event);
+    const popover = document.body.children[0];
+    const flatten = (node) => [node.textContent].concat(node.children.flatMap(flatten)).join(' ');
+    const tags = (node) => [node.tagName].concat(node.children.flatMap(tags));
+    const snapshot = { role: popover.attributes.role, text: flatten(popover), tags: tags(popover), left: popover.style.left, prevented: event.prevented, stopped: event.stopped, href: location.href };
+    closeDebotRwaPopover();
+    snapshot.closed = document.body.children.length === 0;
+    snapshot.unchanged = before === location.href;
+    return snapshot;
+  })()`, {
+    document,
+    window: { innerWidth: 1024, innerHeight: 768 },
+    location: { href: 'https://debot.ai/token/robinhood/231141_0x44c4f142009036cf477ed2d09932051843137cf1' },
+    Element: FakeElement,
+    Node: FakeElement,
+    debotRwaCatalog: new Map([[asset.address, asset]]),
+    debotRwaPopover: null,
+    debotRwaPopoverAnchor: null,
+  });
+  assert.equal(result.role, 'dialog');
+  assert.match(result.text, /ZM/);
+  assert.match(result.text, /链上价/);
+  assert.match(result.text, /\$103\.93/);
+  assert.match(result.text, /正股市值\s+\$27\.79B/);
+  assert.ok(!result.tags.includes('A'));
+  assert.ok(result.prevented && result.stopped && result.closed && result.unchanged);
+  assert.ok(Number.parseFloat(result.left) < 900, '右侧空间不足时浮窗应显示在资产左侧');
+});
+
 await test('版本变更后只刷新一次已打开的支持站点标签页', async () => {
   const fn = extractFunction(background, 'refreshSupportedTabsAfterVersionChange');
   const reloaded = [];
