@@ -3346,6 +3346,7 @@ ${flapTooltipText(info)}
   let fomoTrNeedsGesture = false;
   let fomoTrStuck = false;
   let fomoTrProgress = 0;
+  const fomoTrPendingLangs = new Set();
   const FOMO_TR_STUCK_MS = 15000;
 
   /** 浏览器分支：Edge 与 Chrome 的接口一样，但可用性和设置入口不同，提示要分开写。 */
@@ -3395,20 +3396,87 @@ ${flapTooltipText(info)}
   const fomoTrApi = () => { try { return globalThis.Translator || null; } catch { return null; } };
   const fomoDetApi = () => { try { return globalThis.LanguageDetector || null; } catch { return null; } };
 
-  /** 中文字符占比高就不用翻，省掉一次语言检测。 */
+  /**
+   * 只把真正的纯中文当成无需翻译。旧逻辑按中文占比判断，导致“中文 + English”
+   * 这类混排观点整段被跳过；这里抽出非汉字字母交给语言检测器。
+   */
+  function fomoForeignProbe(text) {
+    return String(text || '')
+      .replace(/https?:[/][/]\S+/gi, ' ')
+      .replace(/\b0x[a-f\d]+\b/gi, ' ')
+      .replace(/[一-鿿豈-﫿]+/g, ' ')
+      .replace(/[^A-Za-zÀ-ɏ\u0370-\u052f\u0590-\u06ff\u0900-\u097f\u3040-\u30ff\uac00-\ud7af\s\u0027-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function fomoLooksChinese(text) {
-    const cjk = (text.match(/[一-鿿]/g) || []).length;
-    return cjk > 0 && cjk / text.replace(/\s/g, '').length > 0.2;
+    return !fomoForeignProbe(text);
+  }
+
+  function fomoFallbackLang(text) {
+    if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+    if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+    return /[A-Za-z]/.test(text) ? 'en' : '';
   }
 
   async function fomoDetectLang(text) {
+    const probe = fomoForeignProbe(text);
+    if (!probe) return 'zh';
+    const fallback = fomoFallbackLang(probe);
     const api = fomoDetApi();
-    if (!api) return 'en';
-    if (!fomoDetector) fomoDetector = await api.create();
-    const list = await fomoDetector.detect(text);
-    const top = Array.isArray(list) ? list[0] : null;
-    if (!top || Number(top.confidence) < 0.5) return '';
-    return String(top.detectedLanguage || '').split('-')[0];
+    if (!api) return fallback;
+    try {
+      if (!fomoDetector) fomoDetector = await api.create();
+      const list = await fomoDetector.detect(probe);
+      const candidates = Array.isArray(list) ? list : [];
+      // 短口语、币圈缩写的置信度经常不到 0.5；只要检测器给出非中文候选就尝试翻译。
+      const detected = candidates.find((item) => {
+        const lang = String(item?.detectedLanguage || '').split('-')[0];
+        return lang && lang !== 'zh' && Number(item?.confidence) > 0;
+      });
+      return String(detected?.detectedLanguage || '').split('-')[0] || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** 必须在点击事件的同步调用栈里执行 create()，否则首次下载语言包会被浏览器拒绝。 */
+  function primeFomoTranslatorFromGesture(lang) {
+    const api = fomoTrApi();
+    if (!api || !lang || lang === 'zh' || fomoTranslators.has(lang)) return;
+    try {
+      const pending = api.create({ sourceLanguage: lang, targetLanguage: 'zh' })
+        .then((instance) => {
+          fomoTranslators.set(lang, instance);
+          fomoTrPendingLangs.delete(lang);
+          fomoTrNeedsGesture = false;
+          syncFomoTrButton();
+          return instance;
+        })
+        .catch(() => {
+          fomoTranslators.delete(lang);
+          fomoTrPendingLangs.add(lang);
+          fomoTrNeedsGesture = true;
+          syncFomoTrButton();
+          return null;
+        });
+      fomoTranslators.set(lang, pending);
+    } catch {
+      fomoTrPendingLangs.add(lang);
+      fomoTrNeedsGesture = true;
+      syncFomoTrButton();
+    }
+  }
+
+  function primeVisibleFomoTranslators() {
+    const nodes = fomoPanelEl?.querySelectorAll('.gdh-fomo__text, .gdh-fomo__htext') || [];
+    const langs = new Set(['en', ...fomoTrPendingLangs]);
+    nodes.forEach((node) => {
+      const lang = fomoFallbackLang(fomoForeignProbe(node.textContent));
+      if (lang) langs.add(lang);
+    });
+    langs.forEach(primeFomoTranslatorFromGesture);
   }
 
   async function fomoTranslatorFor(lang) {
@@ -3430,6 +3498,7 @@ ${flapTooltipText(info)}
       return null;
     }
     if (availability !== 'available' && !fomoTrGesture) {
+      fomoTrPendingLangs.add(lang);
       fomoTrNeedsGesture = true;
       syncFomoTrButton();
       return null;
@@ -3439,21 +3508,29 @@ ${flapTooltipText(info)}
     // 用「有没有收到下载进度」来区分「真在下载」和「悄悄卡住」：收到进度就耐心等，
     // 一直没进度就判定为卡住并按浏览器给出对应说明。
     let sawProgress = false;
-    const create = api.create({
-      sourceLanguage: lang,
-      targetLanguage: 'zh',
-      monitor(m) {
-        try {
-          m.addEventListener('downloadprogress', (event) => {
-            sawProgress = true;
-            fomoTrProgress = Math.round((Number(event.loaded) || 0) * 100);
-            syncFomoTrButton();
-          });
-        } catch {
-          // 该浏览器不支持进度回调
-        }
-      },
-    });
+    let create;
+    try {
+      create = api.create({
+        sourceLanguage: lang,
+        targetLanguage: 'zh',
+        monitor(m) {
+          try {
+            m.addEventListener('downloadprogress', (event) => {
+              sawProgress = true;
+              fomoTrProgress = Math.round((Number(event.loaded) || 0) * 100);
+              syncFomoTrButton();
+            });
+          } catch {
+            // 该浏览器不支持进度回调
+          }
+        },
+      });
+    } catch {
+      fomoTrPendingLangs.add(lang);
+      fomoTrNeedsGesture = true;
+      syncFomoTrButton();
+      return null;
+    }
     const stuck = new Promise((resolve) => {
       const tick = () => {
         if (sawProgress) return void window.setTimeout(tick, 5000);
@@ -3461,8 +3538,17 @@ ${flapTooltipText(info)}
       };
       window.setTimeout(tick, FOMO_TR_STUCK_MS);
     });
-    const translator = await Promise.race([create, stuck]);
+    let translator;
+    try {
+      translator = await Promise.race([create, stuck]);
+    } catch {
+      fomoTrPendingLangs.add(lang);
+      fomoTrNeedsGesture = true;
+      syncFomoTrButton();
+      return null;
+    }
     if (translator === 'stuck') {
+      fomoTrPendingLangs.add(lang);
       fomoTrStuck = true;
       fomoTrNeedsGesture = false;
       syncFomoTrButton();
@@ -3471,6 +3557,7 @@ ${flapTooltipText(info)}
     fomoTrStuck = false;
     fomoTrProgress = 0;
     fomoTranslators.set(lang, translator);
+    fomoTrPendingLangs.delete(lang);
     fomoTrNeedsGesture = false;
     syncFomoTrButton();
     return translator;
@@ -3512,11 +3599,11 @@ ${flapTooltipText(info)}
     fomoTrRunning = false;
   }
 
-  /** 把一段正文排进翻译队列（已是中文、太短、翻译没开都直接跳过）。 */
+  /** 把一段正文排进翻译队列（纯中文、翻译没开才跳过）。 */
   function queueFomoTranslate(el, text) {
     if (!settings.fomoTranslate || !fomoTrApi()) return;
     const raw = String(text || '').trim();
-    if (raw.length < 3 || fomoLooksChinese(raw)) return;
+    if (!raw || fomoLooksChinese(raw)) return;
     const cached = fomoTrCache.get(raw);
     if (cached !== undefined) { if (cached) paintTranslation(el, cached); return; }
     fomoTrQueue.push({ el, text: raw });
@@ -3972,7 +4059,7 @@ ${flapTooltipText(info)}
     const pct = fomoStats.supply > 0 ? (sumAmt / fomoStats.supply) * 100 : NaN;
 
     const thesis = Number.isFinite(fomoStats.thesisCount)
-      ? `${fomoStats.thesisCount} 条 thesis` : '—';
+      ? `${fomoStats.thesisCount} 条观点` : '—';
     const pctText = Number.isFinite(pct)
       ? `${loaded < total ? '≥' : ''}${pct < 0.01 ? '<0.01' : pct.toFixed(1)}%`
       : '—';
@@ -4210,6 +4297,7 @@ ${flapTooltipText(info)}
         fomoTrStuck = false;
         fomoTrGesture = true;
         fomoTranslators.clear();
+        primeVisibleFomoTranslators();
         syncFomoTrButton();
         refreshFomoTranslations();
         return;
@@ -4217,12 +4305,16 @@ ${flapTooltipText(info)}
       if (settings.fomoTranslate && fomoTrNeedsGesture) {
         fomoTrGesture = true;
         fomoTrNeedsGesture = false;
+        primeVisibleFomoTranslators();
         syncFomoTrButton();
         refreshFomoTranslations();
         return;
       }
       settings.fomoTranslate = !settings.fomoTranslate;
-      if (settings.fomoTranslate) fomoTrGesture = true;
+      if (settings.fomoTranslate) {
+        fomoTrGesture = true;
+        primeVisibleFomoTranslators();
+      }
       chrome.storage.local.set({ fomoTranslate: settings.fomoTranslate });
       syncFomoTrButton();
       refreshFomoTranslations();
@@ -5856,13 +5948,13 @@ ${flapTooltipText(info)}
     row.append(time, who, sym, amt, mc);
     card.appendChild(row);
 
-    // 观点/失败原因在表格模式下另起一行；只有观点正文需要翻译。
+    // 观点/失败原因在表格模式下另起一行，两类用户正文都进入中文翻译。
     if ((ev.type === 'thesis' || ev.type === 'refund') && ev.comment) {
       const text = document.createElement('div');
       text.className = 'gdh-fomofeed__thesis';
       text.textContent = ev.comment;
       card.appendChild(text);
-      if (ev.type === 'thesis') queueFomoTranslate(text, ev.comment);
+      queueFomoTranslate(text, ev.comment);
     }
   }
 
@@ -5979,7 +6071,7 @@ ${flapTooltipText(info)}
       text.className = 'gdh-fomofeed__thesis';
       text.textContent = ev.comment;
       card.appendChild(text);
-      if (ev.type === 'thesis') queueFomoTranslate(text, ev.comment);
+      queueFomoTranslate(text, ev.comment);
     }
 
     attachFomoFeedCardBehavior(ev, card);

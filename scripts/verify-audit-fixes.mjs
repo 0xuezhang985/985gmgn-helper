@@ -1032,4 +1032,55 @@ await test('FOMO 持仓占比在 GMGN 同源页面取全链供应量', async () 
   assert.equal(renders, 1);
 });
 
+await test('FOMO 翻译只跳过纯中文，混合中英和日韩文字继续翻译', () => {
+  const probe = extractFunction(content, 'fomoForeignProbe');
+  const looksChinese = extractFunction(content, 'fomoLooksChinese');
+  const fallback = extractFunction(content, 'fomoFallbackLang');
+  assert.equal(evaluate([probe, looksChinese], "fomoLooksChinese('这是纯中文观点')"), true);
+  assert.equal(evaluate([probe, looksChinese], "fomoLooksChinese('叙事很好 hold this gem')"), false);
+  assert.equal(evaluate([probe, looksChinese], "fomoLooksChinese('すごい銘柄')"), false);
+  assert.equal(evaluate([probe], "fomoForeignProbe('中文 hold https://example.com 0x1234567890abcdef')"), 'hold');
+  assert.equal(evaluate([fallback], "fomoFallbackLang('moon soon')"), 'en');
+  assert.equal(evaluate([fallback], "fomoFallbackLang('すごい')"), 'ja');
+  assert.equal(evaluate([fallback], "fomoFallbackLang('대박')"), 'ko');
+});
+
+await test('FOMO 短句低置信度与语言检测器异常都有翻译语言回退', async () => {
+  const probe = extractFunction(content, 'fomoForeignProbe');
+  const fallback = extractFunction(content, 'fomoFallbackLang');
+  const detect = extractFunction(content, 'fomoDetectLang');
+  const lowConfidenceApi = { create: async () => ({ detect: async () => [{ detectedLanguage: 'en', confidence: 0.12 }] }) };
+  const lowConfidence = await evaluate(
+    [probe, fallback, detect],
+    "fomoDetectLang('hold this gem')",
+    {
+      fomoDetector: null,
+      fomoDetApi: () => lowConfidenceApi,
+    },
+  );
+  assert.equal(lowConfidence, 'en');
+  const failedApi = { create: async () => { throw new Error('disabled'); } };
+  const detectorFailed = await evaluate(
+    [probe, fallback, detect],
+    "fomoDetectLang('moon soon')",
+    { fomoDetector: null, fomoDetApi: () => failedApi },
+  );
+  assert.equal(detectorFailed, 'en');
+});
+
+await test('DeBot FOMO 翻译支持混合文本、缓存重绘和真实点击下载', () => {
+  const probe = extractFunction(debotContent, 'translationForeignProbe');
+  assert.equal(evaluate([probe], "translationForeignProbe('中文 HODL and wait')"), 'HODL and wait');
+  assert.equal(evaluate([probe], "translationForeignProbe('纯中文')"), '');
+  const paint = extractFunction(debotContent, 'paintTranslatedText');
+  assert.ok(paint.includes('element?.parentNode'));
+  assert.ok(!paint.includes('element.isConnected'));
+  assert.ok(debotContent.includes('primeVisibleTranslators(root);'));
+  assert.ok(debotContent.includes("new Set(['en', ...translationPendingLangs])"));
+  assert.ok(content.includes("new Set(['en', ...fomoTrPendingLangs])"));
+  assert.ok(!debotContent.includes("/[一-鿿]/.test(raw)"));
+  assert.ok(content.includes('primeVisibleFomoTranslators();'));
+  assert.ok(content.includes('`${fomoStats.thesisCount} 条观点`'));
+});
+
 process.stdout.write(`1..${passed}\n`);

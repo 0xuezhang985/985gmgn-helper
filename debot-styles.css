@@ -741,6 +741,7 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
 
 .gdh-debot-fomo__translate { margin-left: auto; }
 .gdh-debot-fomo__translate.is-active { color: var(--text-brand, #f5b83d); }
+.gdh-debot-fomo__translate.is-wait { color: #f59e0b; }
 
 .gdh-debot-fomo__external {
   display: inline-flex;

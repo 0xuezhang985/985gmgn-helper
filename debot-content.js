@@ -96,7 +96,11 @@
   const pnlCache = new Map();
   const translationCache = new Map();
   const debotSupplyCache = new Map();
-  let translator = null;
+  const translators = new Map();
+  const translationPendingLangs = new Set();
+  let translationDetector = null;
+  let translationNeedsGesture = false;
+  let translationGesture = false;
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -1452,24 +1456,153 @@
     pnlObserver.observe(element);
   }
 
+  function translationForeignProbe(text) {
+    return String(text || '')
+      .replace(/https?:[/][/]\S+/gi, ' ')
+      .replace(/\b0x[a-f\d]+\b/gi, ' ')
+      .replace(/[一-鿿豈-﫿]+/g, ' ')
+      .replace(/[^A-Za-zÀ-ɏ\u0370-\u052f\u0590-\u06ff\u0900-\u097f\u3040-\u30ff\uac00-\ud7af\s\u0027-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function translationFallbackLang(text) {
+    if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+    if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+    return /[A-Za-z]/.test(text) ? 'en' : '';
+  }
+
+  async function detectTranslationLanguage(text) {
+    const probe = translationForeignProbe(text);
+    if (!probe) return 'zh';
+    const fallback = translationFallbackLang(probe);
+    const api = globalThis.LanguageDetector;
+    if (!api) return fallback;
+    try {
+      if (!translationDetector) translationDetector = await api.create();
+      const list = await translationDetector.detect(probe);
+      const detected = (Array.isArray(list) ? list : []).find((item) => {
+        const lang = String(item?.detectedLanguage || '').split('-')[0];
+        return lang && lang !== 'zh' && Number(item?.confidence) > 0;
+      });
+      return String(detected?.detectedLanguage || '').split('-')[0] || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function syncTranslationButton() {
+    const button = panel?.querySelector('.gdh-debot-fomo__translate');
+    if (!button) return;
+    const supported = !!globalThis.Translator;
+    button.classList.toggle('is-active', supported && settings.fomoTranslate && !translationNeedsGesture);
+    button.classList.toggle('is-wait', supported && settings.fomoTranslate && translationNeedsGesture);
+    button.title = !supported
+      ? '当前浏览器不支持内置本地翻译'
+      : translationNeedsGesture
+        ? '点一下下载中文语言包，之后自动翻译全部观点'
+        : settings.fomoTranslate ? '关闭中文翻译' : '开启中文翻译';
+  }
+
+  async function translatorFor(lang) {
+    if (!lang || lang === 'zh' || !globalThis.Translator) return null;
+    if (translators.has(lang)) return translators.get(lang);
+    const api = globalThis.Translator;
+    let availability = 'available';
+    try {
+      if (typeof api.availability === 'function') {
+        availability = String(await api.availability({ sourceLanguage: lang, targetLanguage: 'zh' }) || 'available');
+      }
+    } catch {
+      availability = 'available';
+    }
+    if (availability === 'unavailable') return null;
+    if (availability !== 'available' && !translationGesture) {
+      translationPendingLangs.add(lang);
+      translationNeedsGesture = true;
+      syncTranslationButton();
+      return null;
+    }
+    let instance;
+    try {
+      instance = await api.create({ sourceLanguage: lang, targetLanguage: 'zh' });
+    } catch {
+      translationPendingLangs.add(lang);
+      translationNeedsGesture = true;
+      syncTranslationButton();
+      return null;
+    }
+    translators.set(lang, instance);
+    translationPendingLangs.delete(lang);
+    translationNeedsGesture = false;
+    syncTranslationButton();
+    return instance;
+  }
+
+  /** 首次语言包下载要求真实点击手势，所以 create() 不能等异步语言检测之后才调用。 */
+  function primeTranslatorFromGesture(lang) {
+    const api = globalThis.Translator;
+    if (!api || !lang || lang === 'zh' || translators.has(lang)) return;
+    try {
+      const pending = api.create({ sourceLanguage: lang, targetLanguage: 'zh' })
+        .then((instance) => {
+          translators.set(lang, instance);
+          translationPendingLangs.delete(lang);
+          translationNeedsGesture = false;
+          syncTranslationButton();
+          return instance;
+        })
+        .catch(() => {
+          translators.delete(lang);
+          translationPendingLangs.add(lang);
+          translationNeedsGesture = true;
+          syncTranslationButton();
+          return null;
+        });
+      translators.set(lang, pending);
+    } catch {
+      translationPendingLangs.add(lang);
+      translationNeedsGesture = true;
+      syncTranslationButton();
+    }
+  }
+
+  function primeVisibleTranslators(root) {
+    const langs = new Set(['en', ...translationPendingLangs]);
+    root?.querySelectorAll('.gdh-debot-fomo__text').forEach((node) => {
+      const lang = translationFallbackLang(translationForeignProbe(node.textContent));
+      if (lang) langs.add(lang);
+    });
+    langs.forEach(primeTranslatorFromGesture);
+  }
+
+  function paintTranslatedText(element, translated) {
+    if (!translated || !element?.parentNode) return;
+    let zh = element.nextElementSibling;
+    if (!zh || !zh.classList.contains('gdh-debot-fomo__zh')) {
+      zh = document.createElement('div');
+      zh.className = 'gdh-debot-fomo__zh';
+      element.after(zh);
+    }
+    zh.textContent = translated;
+  }
+
   async function translateText(element, text) {
     const raw = safeText(text, 1500);
-    if (!settings.fomoTranslate || !raw || /[一-鿿]/.test(raw) || !globalThis.Translator) return;
+    if (!settings.fomoTranslate || !raw || !translationForeignProbe(raw) || !globalThis.Translator) return;
     try {
       let translated = translationCache.get(raw);
       if (!translated) {
-        if (!translator) translator = await globalThis.Translator.create({ sourceLanguage: 'en', targetLanguage: 'zh' });
+        const lang = await detectTranslationLanguage(raw);
+        const translator = await translatorFor(lang);
+        if (!translator) return;
         translated = safeText(await translator.translate(raw), 1500);
         if (translated) {
           translationCache.set(raw, translated);
           while (translationCache.size > 300) translationCache.delete(translationCache.keys().next().value);
         }
       }
-      if (!translated || !element.isConnected) return;
-      const zh = document.createElement('div');
-      zh.className = 'gdh-debot-fomo__zh';
-      zh.textContent = translated;
-      element.after(zh);
+      paintTranslatedText(element, translated);
     } catch {
       // 浏览器没有语言包或要求用户手势时保留原文。
     }
@@ -1774,13 +1907,24 @@
     translate.type = 'button';
     translate.className = 'gdh-debot-fomo__translate';
     translate.textContent = '译';
-    translate.classList.toggle('is-active', settings.fomoTranslate !== false);
-    translate.title = globalThis.Translator ? '开关本地中文翻译' : '当前浏览器不支持内置本地翻译';
     translate.addEventListener('click', () => {
+      if (settings.fomoTranslate && translationNeedsGesture) {
+        translationGesture = true;
+        translationNeedsGesture = false;
+        translators.clear();
+        primeVisibleTranslators(root);
+        syncTranslationButton();
+        renderItems(root.querySelector('.gdh-debot-fomo__list'), panelItems, panelTab);
+        return;
+      }
       settings.fomoTranslate = !settings.fomoTranslate;
+      if (settings.fomoTranslate) {
+        translationGesture = true;
+        primeVisibleTranslators(root);
+      }
       chrome.storage.local.set({ fomoTranslate: settings.fomoTranslate });
-      panelLoadedKey = '';
-      loadPanel(true);
+      syncTranslationButton();
+      renderItems(root.querySelector('.gdh-debot-fomo__list'), panelItems, panelTab);
     });
     const external = document.createElement('a');
     external.className = 'gdh-debot-fomo__external';
@@ -1815,6 +1959,7 @@
     root.append(bar, stats, list);
     root.classList.toggle('is-folded', settings.debotFomoPanelFolded === true);
     makePanelDraggable(bar);
+    queueMicrotask(syncTranslationButton);
     return root;
   }
 
