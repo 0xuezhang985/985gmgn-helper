@@ -262,8 +262,8 @@ function setBoundedMap(map, key, value, max) {
   while (map.size > max) map.delete(map.keys().next().value);
 }
 
-// 985monitor 的 Robinhood RWA 目录。只把 203 个资产的必要字段传给内容脚本，
-// 不把 1MB+ 的池子明细塞进消息；目录按合约地址匹配，绝不凭 symbol 猜。
+// 985monitor 的 Robinhood RWA 目录。只把 203 个资产及浮窗所需的核心字段
+// 传给内容脚本，不把 1MB+ 的池子明细塞进消息；目录按合约地址匹配，绝不凭 symbol 猜。
 const ROBINHOOD_RWA_CATALOG_URL = 'https://www.985monitor.xyz/rwa/data.json';
 const ROBINHOOD_RWA_CATALOG_TTL = 15 * 60 * 1000;
 let robinhoodRwaCatalogCache = null;
@@ -271,11 +271,26 @@ let robinhoodRwaCatalogPending = null;
 
 function compactRobinhoodRwaCatalog(payload) {
   return (Array.isArray(payload?.rwa) ? payload.rwa : [])
-    .map((item) => ({
-      address: String(item?.c || '').toLowerCase(),
-      symbol: String(item?.s || '').replace(/[\r\n\t]/g, '').slice(0, 24),
-      description: String(item?.ds || '').replace(/[\r\n\t]/g, ' ').slice(0, 240),
-    }))
+    .map((item) => {
+      const description = String(item?.ds || '').replace(/[\r\n\t]/g, ' ').slice(0, 240);
+      const numeric = (value) => value !== null && value !== undefined && value !== ''
+        && Number.isFinite(Number(value)) ? Number(value) : null;
+      return {
+        address: String(item?.c || '').toLowerCase(),
+        symbol: String(item?.s || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+        description: description.includes('\uFFFD') ? '' : description,
+        onchainPrice: numeric(item?.on),
+        referencePrice: numeric(item?.r),
+        premiumPct: numeric(item?.p),
+        liquidityUsd: numeric(item?.l),
+        volume24hUsd: numeric(item?.v),
+        onchainMarketCapUsd: numeric(item?.cmc),
+        referenceMarketCapUsd: numeric(item?.cap),
+        onchainSupply: numeric(item?.u),
+        referenceSharePct: numeric(item?.sh),
+        deployedAt: String(item?.dep || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      };
+    })
     .filter((item) => /^0x[a-f0-9]{40}$/.test(item.address) && item.symbol);
 }
 

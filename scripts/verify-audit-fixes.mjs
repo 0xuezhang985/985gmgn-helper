@@ -468,10 +468,10 @@ await test('Robinhood 池信息同时保留 base 与 quote 合约地址供 RWA �
   assert.equal(meta.quoteSymbol, 'NVDA');
 });
 
-await test('RWA 目录只保留合法合约并压缩为底池点击所需字段', () => {
+await test('RWA 目录只保留合法合约并压缩为资产浮窗所需字段', () => {
   const fn = extractFunction(background, 'compactRobinhoodRwaCatalog');
   const items = evaluate([fn], `compactRobinhoodRwaCatalog({ rwa: [
-    { c: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', s: 'NVDA', ds: '英伟达\\n资料' },
+    { c: '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', s: 'NVDA', ds: '英伟达\\n资料', on: 101.5, r: 100, p: 1.5, l: 2000, v: 3000, cmc: 4000, cap: null, u: 50, sh: 0.5, dep: '06-09' },
     { c: 'not-an-address', s: 'FAKE', ds: '不能进入目录' },
     { c: '0xcccccccccccccccccccccccccccccccccccccccc', s: '', ds: '无代码' }
   ] })`);
@@ -479,18 +479,22 @@ await test('RWA 目录只保留合法合约并压缩为底池点击所需字段'
     address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     symbol: 'NVDA',
     description: '英伟达 资料',
+    onchainPrice: 101.5,
+    referencePrice: 100,
+    premiumPct: 1.5,
+    liquidityUsd: 2000,
+    volume24hUsd: 3000,
+    onchainMarketCapUsd: 4000,
+    referenceMarketCapUsd: null,
+    onchainSupply: 50,
+    referenceSharePct: 0.5,
+    deployedAt: '06-09',
   }]);
   assert.ok(background.includes("message?.type === 'robinhood-rwa-catalog'"));
   assert.ok(background.includes('ROBINHOOD_RWA_CATALOG_TTL'));
 });
 
-await test('GMGN 详情只给地址命中的 RWA 池行加可点击深链', () => {
-  const urlFn = extractFunction(content, 'robinhoodRwaUrl');
-  assert.equal(
-    evaluate([urlFn], "robinhoodRwaUrl('0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')"),
-    'https://www.985monitor.xyz/rwa/?asset=0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-  );
-  assert.equal(evaluate([urlFn], "robinhoodRwaUrl('NVDA')"), '');
+await test('GMGN 详情只给地址命中的 RWA 池行加页面内资料浮窗', () => {
   const scan = extractFunction(content, 'scanRobinhoodRwaPoolLinks');
   assert.ok(scan.includes("[data-sentry-component=\"PoolInfo\"]"));
   assert.ok(scan.includes("[data-sentry-component=\"PairInfo\"]"));
@@ -500,9 +504,104 @@ await test('GMGN 详情只给地址命中的 RWA 池行加可点击深链', () =
   assert.ok(!scan.includes('robinhoodRwaCatalog.get(expected)'));
   const open = extractFunction(content, 'openRobinhoodRwaPoolLink');
   assert.ok(open.includes("event.key !== 'Enter'"));
-  assert.ok(open.includes("window.open(url, '_blank', 'noopener,noreferrer')"));
+  assert.ok(open.includes("event.key === 'Escape'"));
+  assert.ok(open.includes('showRobinhoodRwaPopover(target, asset)'));
+  assert.ok(!open.includes('window.open'));
+  const show = extractFunction(content, 'showRobinhoodRwaPopover');
+  assert.ok(show.includes("popover.setAttribute('role', 'dialog')"));
+  assert.ok(show.includes("source.textContent = '985monitor · RWA 资产'"));
+  assert.ok(show.includes("['链上价'"));
+  assert.ok(show.includes("['溢价'"));
+  assert.ok(show.includes("['流动性'"));
+  assert.ok(!content.includes('gdhRobinhoodRwaUrl'));
+  assert.ok(!content.includes('https://www.985monitor.xyz/rwa/?asset='));
+  const numberFn = extractFunction(content, 'formatRobinhoodRwaNumber');
+  assert.equal(evaluate([numberFn], 'formatRobinhoodRwaNumber(null)'), '—');
   assert.ok(styles.includes('.gdh-robinhood-rwa-link::after'));
+  assert.ok(styles.includes('.gdh-robinhood-rwa-popover'));
   assert.ok(styles.includes('html[data-theme="light"] .gdh-robinhood-rwa-link'));
+});
+
+await test('RWA 资产点击实际渲染本页浮窗且不会生成外部链接', () => {
+  class FakeElement {
+    constructor(tag = 'div') {
+      this.tagName = tag.toUpperCase();
+      this.children = [];
+      this.attributes = {};
+      this.dataset = {};
+      this.style = {};
+      this.className = '';
+      this.parent = null;
+      this.isConnected = false;
+      this.listeners = {};
+      this.textContent = '';
+    }
+    append(...nodes) {
+      nodes.forEach((node) => {
+        node.parent = this;
+        node.isConnected = true;
+        this.children.push(node);
+      });
+    }
+    remove() {
+      if (this.parent) this.parent.children = this.parent.children.filter((node) => node !== this);
+      this.isConnected = false;
+    }
+    setAttribute(name, value) { this.attributes[name] = String(value); }
+    addEventListener(type, listener) { this.listeners[type] = listener; }
+    contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
+    closest(selector) { return selector === '.gdh-robinhood-rwa-link' ? this : null; }
+    getBoundingClientRect() { return { left: 20, right: 70, top: 30, width: 300, height: 260 }; }
+  }
+  const body = new FakeElement('body');
+  body.isConnected = true;
+  const document = { body, createElement: (tag) => new FakeElement(tag) };
+  const asset = {
+    address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    symbol: 'NVDA', onchainPrice: 101.5, referencePrice: 100, premiumPct: 1.5,
+    liquidityUsd: 2000, volume24hUsd: 3000, onchainMarketCapUsd: 4000,
+    referenceMarketCapUsd: null, onchainSupply: 50, referenceSharePct: 0.5,
+    deployedAt: '06-09', description: '英伟达资料',
+  };
+  const functions = [
+    'formatRobinhoodRwaNumber', 'formatRobinhoodRwaMoney', 'closeRobinhoodRwaPopover',
+    'positionRobinhoodRwaPopover', 'showRobinhoodRwaPopover', 'openRobinhoodRwaPoolLink',
+  ].map((name) => extractFunction(content, name));
+  const result = evaluate(functions, `(() => {
+    const anchor = new Element('span');
+    anchor.className = 'gdh-robinhood-rwa-link';
+    anchor.dataset.gdhRobinhoodRwaAddress = '${asset.address}';
+    anchor.isConnected = true;
+    anchor.getBoundingClientRect = () => ({ left: 900, right: 950, top: 30, width: 50, height: 20 });
+    const before = location.href;
+    const event = { type: 'click', target: anchor, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+    openRobinhoodRwaPoolLink(event);
+    const popover = document.body.children[0];
+    const flatten = (node) => [node.textContent].concat(node.children.flatMap(flatten)).join(' ');
+    const tags = (node) => [node.tagName].concat(node.children.flatMap(tags));
+    const snapshot = { role: popover.attributes.role, text: flatten(popover), tags: tags(popover), left: popover.style.left, prevented: event.prevented, stopped: event.stopped, href: location.href };
+    closeRobinhoodRwaPopover();
+    snapshot.closed = document.body.children.length === 0;
+    snapshot.unchanged = before === location.href;
+    return snapshot;
+  })()`, {
+    document,
+    window: { innerWidth: 1024, innerHeight: 768 },
+    location: { href: 'https://gmgn.ai/robinhood/token/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    Element: FakeElement,
+    Node: FakeElement,
+    robinhoodRwaCatalog: new Map([[asset.address, asset]]),
+    robinhoodRwaPopover: null,
+    robinhoodRwaPopoverAnchor: null,
+  });
+  assert.equal(result.role, 'dialog');
+  assert.match(result.text, /NVDA/);
+  assert.match(result.text, /链上价/);
+  assert.match(result.text, /\$101\.5/);
+  assert.match(result.text, /正股市值\s+—/);
+  assert.ok(!result.tags.includes('A'));
+  assert.ok(result.prevented && result.stopped && result.closed && result.unchanged);
+  assert.ok(Number.parseFloat(result.left) < 900, '右侧空间不足时浮窗应显示在资产左侧');
 });
 
 await test('滚动限频使用单个延时器而不是逐帧空转', () => {

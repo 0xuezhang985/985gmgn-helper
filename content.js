@@ -1538,7 +1538,7 @@ ${flapTooltipText(info)}
     });
   }
 
-  // ---- Robinhood 代币详情：RWA 底池资产直达 985monitor 资料 ----
+  // ---- Robinhood 代币详情：RWA 底池资产资料浮窗 ----
   // GMGN 的 PairInfo DOM 只有 symbol，没有合约地址；地址取它自己的
   // mutil_window_token_info.pool，RWA 身份取 985monitor 目录。两边都用 address
   // 精确相交后才加链接，避免同名 meme 冒充股票资产。
@@ -1546,12 +1546,8 @@ ${flapTooltipText(info)}
   let robinhoodRwaCatalogReady = false;
   let robinhoodRwaCatalogLoading = false;
   let robinhoodRwaCatalogRetryAt = 0;
-
-  function robinhoodRwaUrl(address) {
-    const normalized = String(address || '').toLowerCase();
-    return /^0x[a-f0-9]{40}$/.test(normalized)
-      ? `https://www.985monitor.xyz/rwa/?asset=${encodeURIComponent(normalized)}` : '';
-  }
+  let robinhoodRwaPopover = null;
+  let robinhoodRwaPopoverAnchor = null;
 
   function requestRobinhoodRwaCatalog() {
     if (robinhoodRwaCatalogReady || robinhoodRwaCatalogLoading
@@ -1572,11 +1568,11 @@ ${flapTooltipText(info)}
   }
 
   function clearRobinhoodRwaLink(node) {
+    if (node === robinhoodRwaPopoverAnchor) closeRobinhoodRwaPopover();
     node.classList.remove('gdh-robinhood-rwa-link');
     node.removeAttribute('role');
     node.removeAttribute('tabindex');
     node.removeAttribute('title');
-    delete node.dataset.gdhRobinhoodRwaUrl;
     delete node.dataset.gdhRobinhoodRwaAddress;
   }
 
@@ -1612,29 +1608,158 @@ ${flapTooltipText(info)}
       const shown = String(cell?.textContent || '').trim().toUpperCase();
       const expected = String(poolAsset.symbol || '').trim().toUpperCase();
       if (!(cell instanceof HTMLElement) || !asset || !shown || shown !== expected) return;
-      const url = robinhoodRwaUrl(address);
-      if (!url) return;
       cell.classList.add('gdh-robinhood-rwa-link');
-      cell.setAttribute('role', 'link');
+      cell.setAttribute('role', 'button');
       cell.tabIndex = 0;
-      cell.dataset.gdhRobinhoodRwaUrl = url;
       cell.dataset.gdhRobinhoodRwaAddress = address;
-      cell.title = `${asset.symbol} · ${asset.description || 'Robinhood RWA 资产'}\n点击查看 985monitor 资料`;
+      cell.title = `${asset.symbol} · ${asset.description || 'Robinhood RWA 资产'}\n点击查看资产资料`;
       kept.add(cell);
     });
     clearRobinhoodRwaPoolLinks(kept);
   }
 
+  function formatRobinhoodRwaNumber(value, decimals = 2) {
+    const number = value === null || value === undefined || value === '' ? NaN : Number(value);
+    if (!Number.isFinite(number)) return '—';
+    const absolute = Math.abs(number);
+    if (absolute >= 1e9) return `${(number / 1e9).toFixed(2)}B`;
+    if (absolute >= 1e6) return `${(number / 1e6).toFixed(2)}M`;
+    if (absolute >= 1e3) return `${(number / 1e3).toFixed(2)}K`;
+    return number.toLocaleString('en-US', { maximumFractionDigits: decimals });
+  }
+
+  function formatRobinhoodRwaMoney(value, price = false) {
+    const number = value === null || value === undefined || value === '' ? NaN : Number(value);
+    if (!Number.isFinite(number)) return '—';
+    return `$${formatRobinhoodRwaNumber(number, price && Math.abs(number) < 1 ? 6 : 2)}`;
+  }
+
+  function closeRobinhoodRwaPopover() {
+    robinhoodRwaPopover?.remove();
+    robinhoodRwaPopover = null;
+    robinhoodRwaPopoverAnchor = null;
+  }
+
+  function positionRobinhoodRwaPopover() {
+    if (!robinhoodRwaPopover) return;
+    if (!robinhoodRwaPopoverAnchor?.isConnected) {
+      closeRobinhoodRwaPopover();
+      return;
+    }
+    const anchor = robinhoodRwaPopoverAnchor.getBoundingClientRect();
+    const popover = robinhoodRwaPopover.getBoundingClientRect();
+    const gap = 8;
+    let left = anchor.right + gap;
+    if (left + popover.width > window.innerWidth - gap) left = anchor.left - popover.width - gap;
+    if (left < gap) left = Math.min(window.innerWidth - popover.width - gap, gap);
+    const top = Math.min(Math.max(gap, anchor.top), window.innerHeight - popover.height - gap);
+    robinhoodRwaPopover.style.left = `${Math.max(gap, left)}px`;
+    robinhoodRwaPopover.style.top = `${Math.max(gap, top)}px`;
+  }
+
+  function showRobinhoodRwaPopover(anchor, asset) {
+    if (robinhoodRwaPopoverAnchor === anchor && robinhoodRwaPopover) {
+      closeRobinhoodRwaPopover();
+      return;
+    }
+    closeRobinhoodRwaPopover();
+    const popover = document.createElement('section');
+    popover.className = 'gdh-robinhood-rwa-popover';
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', `${asset.symbol} RWA 资产资料`);
+
+    const top = document.createElement('div');
+    top.className = 'gdh-robinhood-rwa-popover__top';
+    const heading = document.createElement('div');
+    const source = document.createElement('div');
+    source.className = 'gdh-robinhood-rwa-popover__source';
+    source.textContent = '985monitor · RWA 资产';
+    const title = document.createElement('strong');
+    title.className = 'gdh-robinhood-rwa-popover__title';
+    title.textContent = asset.symbol;
+    heading.append(source, title);
+    const close = document.createElement('button');
+    close.className = 'gdh-robinhood-rwa-popover__close';
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭资产资料');
+    close.textContent = '×';
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeRobinhoodRwaPopover();
+    });
+    top.append(heading, close);
+    popover.append(top);
+
+    if (asset.description) {
+      const description = document.createElement('p');
+      description.className = 'gdh-robinhood-rwa-popover__description';
+      description.textContent = asset.description;
+      popover.append(description);
+    }
+
+    const premium = asset.premiumPct === null || asset.premiumPct === undefined
+      || asset.premiumPct === '' ? NaN : Number(asset.premiumPct);
+    const rows = [
+      ['链上价', formatRobinhoodRwaMoney(asset.onchainPrice, true)],
+      ['标的价', formatRobinhoodRwaMoney(asset.referencePrice, true)],
+      ['溢价', Number.isFinite(premium) ? `${premium > 0 ? '+' : ''}${premium.toFixed(2)}%` : '—', Number.isFinite(premium) ? (premium > 0 ? 'up' : premium < 0 ? 'down' : '') : ''],
+      ['流动性', formatRobinhoodRwaMoney(asset.liquidityUsd)],
+      ['24h 成交', formatRobinhoodRwaMoney(asset.volume24hUsd)],
+      ['链上市值', formatRobinhoodRwaMoney(asset.onchainMarketCapUsd)],
+      ['正股市值', formatRobinhoodRwaMoney(asset.referenceMarketCapUsd)],
+      ['链上流通量', formatRobinhoodRwaNumber(asset.onchainSupply)],
+      ['正股占比', asset.referenceSharePct !== null && asset.referenceSharePct !== undefined
+        && asset.referenceSharePct !== '' && Number.isFinite(Number(asset.referenceSharePct))
+        ? `${Number(asset.referenceSharePct).toFixed(2)}%` : '—'],
+      ['部署日期', asset.deployedAt || '—'],
+    ];
+    const grid = document.createElement('dl');
+    grid.className = 'gdh-robinhood-rwa-popover__grid';
+    rows.forEach(([label, value, tone]) => {
+      const item = document.createElement('div');
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = label;
+      dd.textContent = value;
+      if (tone) dd.dataset.tone = tone;
+      item.append(dt, dd);
+      grid.append(item);
+    });
+    popover.append(grid);
+
+    const address = document.createElement('div');
+    address.className = 'gdh-robinhood-rwa-popover__address';
+    address.textContent = asset.address;
+    address.title = asset.address;
+    popover.append(address);
+
+    document.body.append(popover);
+    robinhoodRwaPopover = popover;
+    robinhoodRwaPopoverAnchor = anchor;
+    positionRobinhoodRwaPopover();
+  }
+
   function openRobinhoodRwaPoolLink(event) {
+    if (event.type === 'keydown' && event.key === 'Escape') {
+      closeRobinhoodRwaPopover();
+      return;
+    }
     const target = event.target instanceof Element
       ? event.target.closest('.gdh-robinhood-rwa-link') : null;
-    if (!target) return;
+    if (!target) {
+      if (event.type === 'click' && robinhoodRwaPopover
+        && !(event.target instanceof Node && robinhoodRwaPopover.contains(event.target))) {
+        closeRobinhoodRwaPopover();
+      }
+      return;
+    }
     if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-    const url = target.dataset.gdhRobinhoodRwaUrl;
-    if (!url) return;
+    const asset = robinhoodRwaCatalog.get(String(target.dataset.gdhRobinhoodRwaAddress || '').toLowerCase());
+    if (!asset) return;
     event.preventDefault();
     event.stopPropagation();
-    window.open(url, '_blank', 'noopener,noreferrer');
+    showRobinhoodRwaPopover(target, asset);
   }
 
   // ---- 标注人物持仓徽章 ----
@@ -6961,11 +7086,13 @@ ${flapTooltipText(info)}
   document.addEventListener('pointermove', positionTooltip, true);
   document.addEventListener('click', openRobinhoodRwaPoolLink, true);
   document.addEventListener('keydown', openRobinhoodRwaPoolLink, true);
+  window.addEventListener('resize', positionRobinhoodRwaPopover, { passive: true });
   document.addEventListener('scroll', scheduleScrollScan, true);
+  document.addEventListener('scroll', positionRobinhoodRwaPopover, true);
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
