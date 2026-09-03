@@ -286,7 +286,7 @@
     holdingSurgeCooldown: 60,
     holdingWatchList: [],
     addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
-    hideLightningTrade: true,
+    hideLightningTrade: false,
     watchedDevs: [],
     blockedCallers: [],
     blockedTokens: [],

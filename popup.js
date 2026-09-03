@@ -31,7 +31,7 @@ const DEFAULTS = {
     { address: '0xb9c970411d72584649c2a41c9d5996df582fcc06', name: '阿峰小号2' },
     { address: '0x2ce9d43d1cba6ae31d7f07bfe0098dfa2d833373', name: '枯坐' },
   ],
-  hideLightningTrade: true,
+  hideLightningTrade: false,
   watchedDevs: [],
   highlightColor: '#f5b83d',
 };

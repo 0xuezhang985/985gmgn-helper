@@ -74,6 +74,14 @@ const test = async (name, fn) => {
   process.stdout.write(`ok ${passed} - ${name}\n`);
 };
 
+await test('隐藏闪电交易按钮默认关闭且已保存选择仍优先', () => {
+  assert.match(popup, /hideLightningTrade:\s*false,/);
+  assert.match(content, /hideLightningTrade:\s*false,/);
+  assert.ok(popupHtml.includes('隐藏 frontrun 插件注入的"闪电交易"按钮（默认关）'));
+  assert.ok(popup.includes('chrome.storage.local.get(DEFAULTS, (stored) =>'));
+  assert.ok(content.includes('settings = { ...DEFAULTS, ...stored };'));
+});
+
 await test('部分卖出后的成本按累计买入数量计算并含手续费', () => {
   const fn = extractFunction(bridge, 'readHoldingCost');
   const result = evaluate([fn], 'readHoldingCost({ balance: 40, accu_amount: 100, accu_cost: 100, accu_fee: 2 })');
