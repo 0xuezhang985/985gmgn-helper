@@ -887,6 +887,52 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
   cursor: pointer;
 }
 
+.gdh-debot-fomo__guide-title { color: var(--text-primary, #e8ecf3); }
+.gdh-debot-fomo__guide-steps {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: gdh-debot-login-step;
+}
+.gdh-debot-fomo__guide-steps li {
+  position: relative;
+  min-height: 20px;
+  padding-left: 27px;
+  counter-increment: gdh-debot-login-step;
+}
+.gdh-debot-fomo__guide-steps li::before {
+  content: counter(gdh-debot-login-step);
+  position: absolute;
+  top: 1px;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #171208;
+  background: var(--text-brand, #f5b83d);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.gdh-debot-fomo__guide-steps b,
+.gdh-debot-fomo__guide-steps span { display: block; line-height: 1.4; }
+.gdh-debot-fomo__guide-steps b { color: var(--text-primary, #e8ecf3); font-weight: 600; }
+.gdh-debot-fomo__guide-steps span { color: var(--text-tertiary, #8a93a6); font-size: 11px; }
+.gdh-debot-fomo__guide-actions { display: flex; align-items: center; gap: 8px; }
+.gdh-debot-fomo__guide .gdh-debot-fomo__guide-open {
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #171208;
+  background: var(--text-brand, #f5b83d);
+  font-weight: 700;
+  text-align: center;
+}
+.gdh-debot-fomo__guide .gdh-debot-fomo__guide-retry { flex: 0 0 auto; }
+
 .gdh-debot-fomo.is-folded {
   height: auto !important;
   min-height: 0;

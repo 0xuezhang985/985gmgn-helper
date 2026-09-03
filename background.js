@@ -427,7 +427,14 @@ async function fomoRefreshSession() {
 
 function fomoBodyUnauthed(body) {
   const inner = Number(body?.statusCode);
-  return inner === 401 || inner === 403;
+  const error = String(body?.error || body?.message || '').trim();
+  return inner === 401 || inner === 403 || /\bunauthori[sz]ed\b|\bunauthenticated\b/i.test(error);
+}
+
+async function fomoResponseUnauthed(response) {
+  if (response?.status === 401) return true;
+  const probe = await response?.clone?.().json().catch(() => null);
+  return fomoBodyUnauthed(probe);
 }
 
 /** 带令牌打 fomo 接口：快过期先交给页面 SDK 续，被拒再等待镜像并重试。 */
@@ -448,22 +455,19 @@ async function fomoAuthedFetch(path) {
   };
   let res = await send(stored?.token);
   let renewed = false;
-  let bodyUnauthed = false;
-  if (res.ok) {
-    const probe = await res.clone().json().catch(() => null);
-    bodyUnauthed = fomoBodyUnauthed(probe);
-  }
-  if ((res.status === 401 || bodyUnauthed) && stored?.refresh) {
+  let unauthed = await fomoResponseUnauthed(res);
+  if (unauthed && stored?.refresh) {
     const next = await fomoRefreshSession();
     if (next?.token && next.token !== stored?.token) {
       renewed = true;
       stored = next;
       res = await send(next.token);
+      unauthed = await fomoResponseUnauthed(res);
     } else if (!(await chrome.storage.local.get('fomoToken')).fomoToken) {
       stored = null; // 会话已被 privy 作废，按「没有令牌」上报，引导重新登录
     }
   }
-  return { res, stored, renewed };
+  return { res, stored, renewed, unauthed };
 }
 
 async function fomoFetchToken({ tokenAddress, networkId, kind }) {
@@ -486,17 +490,18 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   try {
     // 复用浏览器里的 fomo 登录态（cookie）+ Bearer；过期时等待页面 SDK 续期并镜像。
     // credentials:'include' 同时让请求更像正常浏览器请求（fomo 在 Cloudflare 后面）。
-    const { res, stored, renewed } = await fomoAuthedFetch(path);
+    const { res, stored, renewed, unauthed } = await fomoAuthedFetch(path);
     token = stored?.token;
-    if (!res.ok && res.status === 401 && !token) {
-      return { ok: false, reason: 'no-token', status: 401, tokenAt: 0 };
+    if (!res.ok && unauthed && !token) {
+      return { ok: false, reason: 'no-token', status: res.status, tokenAt: 0 };
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const blocked = /cloudflare|cf-ray|<!DOCTYPE html/i.test(text);
       return {
         ok: false,
-        reason: blocked ? 'blocked' : (res.status === 401 ? 'expired' : `http-${res.status}`),
+        reason: unauthed ? (token ? 'expired' : 'no-token')
+          : (blocked ? 'blocked' : `http-${res.status}`),
         status: res.status,
         tokenAt: stored?.at || 0,
         renewed,
@@ -560,8 +565,8 @@ async function fomoUserPnl7d({ userId }) {
   const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const path = `/v2/userTokens/aggregatedSnapshot?userId=${encodeURIComponent(userId)}&timestamp=${encodeURIComponent(since)}`;
   try {
-    const { res } = await fomoAuthedFetch(path);
-    if (!res.ok) return { ok: false, reason: res.status === 401 ? 'expired' : `http-${res.status}` };
+    const { res, unauthed } = await fomoAuthedFetch(path);
+    if (!res.ok) return { ok: false, reason: unauthed ? 'expired' : `http-${res.status}` };
     const body = await res.json().catch(() => null);
     const inner = Number(body?.statusCode);
     if (body?.success === false || (Number.isFinite(inner) && inner !== 200)) {

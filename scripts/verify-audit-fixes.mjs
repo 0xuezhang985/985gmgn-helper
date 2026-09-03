@@ -1070,6 +1070,10 @@ await test('DeBot FOMO 小窗复用现有接口且登录入口不展示推荐码
   assert.ok(debotContent.includes("open.href = 'https://fomo.family/';"));
   assert.ok(debotContent.includes("window.open('https://fomo.family/r/Unipioneer'"));
   assert.ok(!debotContent.includes("textContent = 'Unipioneer'"));
+  assert.ok(debotContent.includes("? '需要登录 fomo'"));
+  assert.ok(debotContent.includes("['确认已登录', '未登录就完成登录；已经登录则刷新一次页面']"));
+  assert.ok(debotContent.includes("['返回 DeBot', '插件会自动同步，不需要复制任何令牌']"));
+  assert.ok(debotStyles.includes('.gdh-debot-fomo__guide-steps'));
   assert.ok(debotContent.includes("['holders', '持仓者']"));
   assert.ok(debotContent.includes("['thesis', '观点']"));
   assert.ok(debotContent.includes("['swaps', '交易']"));
@@ -1424,7 +1428,29 @@ await test('FOMO HTTP 200 鉴权错误被识别', () => {
   const fn = extractFunction(background, 'fomoBodyUnauthed');
   assert.equal(evaluate([fn], "fomoBodyUnauthed({ success: false, statusCode: 401 })"), true);
   assert.equal(evaluate([fn], "fomoBodyUnauthed({ statusCode: 403 })"), true);
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ error: 'unauthorized' })"), true);
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ message: 'Unauthenticated request' })"), true);
+  assert.equal(evaluate([fn], "fomoBodyUnauthed({ error: 'request headers too large' })"), false);
   assert.equal(evaluate([fn], "fomoBodyUnauthed({ success: true, statusCode: 200 })"), false);
+});
+
+await test('FOMO 非 2xx 的 430/431 unauthorized 也进入登录引导', async () => {
+  const bodyFn = extractFunction(background, 'fomoBodyUnauthed');
+  const responseFn = extractFunction(background, 'fomoResponseUnauthed');
+  const unauthorized = {
+    status: 431,
+    clone() { return this; },
+    async json() { return { error: 'unauthorized' }; },
+  };
+  const unrelated = {
+    status: 431,
+    clone() { return this; },
+    async json() { return { error: 'request headers too large' }; },
+  };
+  assert.equal(await evaluate([bodyFn, responseFn], 'fomoResponseUnauthed(response)', { response: unauthorized }), true);
+  assert.equal(await evaluate([bodyFn, responseFn], 'fomoResponseUnauthed(response)', { response: unrelated }), false);
+  assert.match(background, /if \(!res\.ok && unauthed && !token\)[\s\S]{0,160}reason: 'no-token'/);
+  assert.match(background, /reason: unauthed \? \(token \? 'expired' : 'no-token'\)/);
 });
 
 await test('后台不再裸调 Privy sessions 或携带公开标注口令', () => {

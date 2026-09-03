@@ -2033,15 +2033,40 @@
     const box = document.createElement('div');
     box.className = 'gdh-debot-fomo__guide';
     const title = document.createElement('strong');
-    const needsLogin = response?.reason === 'no-token' || response?.reason === 'expired';
-    title.textContent = needsLogin ? '需要同步 fomo 登录态' : `加载失败（${safeText(response?.reason || 'unknown', 40)}）`;
+    title.className = 'gdh-debot-fomo__guide-title';
+    const reason = String(response?.reason || 'unknown');
+    const needsLogin = reason === 'no-token' || reason === 'expired';
+    title.textContent = reason === 'no-token'
+      ? '需要登录 fomo'
+      : (reason === 'expired' ? 'fomo 登录已失效' : `加载失败（${safeText(reason, 40)}）`);
     const note = document.createElement('p');
-    note.textContent = needsLogin
-      ? '在 fomo 页面确认已登录并刷新一次，插件会自动接上，不需要复制令牌。'
+    note.textContent = reason === 'no-token'
+      ? '持仓者、观点和交易数据需要登录后读取；插件尚未拿到浏览器里的 fomo 登录态。'
+      : reason === 'expired'
+        ? '已保存的登录态失效，自动续期没有成功。重新进入 fomo 登录一次即可恢复。'
       : safeText(response?.message || '请稍后重试', 120);
     box.append(title, note);
     if (needsLogin) {
+      const steps = document.createElement('ol');
+      steps.className = 'gdh-debot-fomo__guide-steps';
+      [
+        ['打开 fomo', '点击下方按钮，会在新标签页打开'],
+        ['确认已登录', '未登录就完成登录；已经登录则刷新一次页面'],
+        ['返回 DeBot', '插件会自动同步，不需要复制任何令牌'],
+      ].forEach(([main, sub]) => {
+        const item = document.createElement('li');
+        const label = document.createElement('b');
+        const detail = document.createElement('span');
+        label.textContent = main;
+        detail.textContent = sub;
+        item.append(label, detail);
+        steps.appendChild(item);
+      });
+      box.appendChild(steps);
+      const actions = document.createElement('div');
+      actions.className = 'gdh-debot-fomo__guide-actions';
       const open = document.createElement('a');
+      open.className = 'gdh-debot-fomo__guide-open';
       open.href = 'https://fomo.family/';
       open.target = '_blank';
       open.rel = 'noreferrer';
@@ -2050,13 +2075,17 @@
         event.preventDefault();
         window.open('https://fomo.family/r/Unipioneer', '_blank', 'noopener,noreferrer');
       });
-      box.appendChild(open);
+      actions.appendChild(open);
+      box.appendChild(actions);
     }
     const retry = document.createElement('button');
     retry.type = 'button';
+    retry.className = 'gdh-debot-fomo__guide-retry';
     retry.textContent = '重试';
     retry.addEventListener('click', () => { panelLoadedKey = ''; loadPanel(true); });
-    box.appendChild(retry);
+    const actions = box.querySelector('.gdh-debot-fomo__guide-actions');
+    if (actions) actions.appendChild(retry);
+    else box.appendChild(retry);
     list.appendChild(box);
   }
 
