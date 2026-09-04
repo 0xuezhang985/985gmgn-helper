@@ -680,6 +680,104 @@ async function flapRpc(rpc, calls) {
   });
 }
 
+// ---- 代币的全部底池 ----
+// GMGN 自己的 token_pool_fee_info 只返回主池（实测 list 就一条），DexScreener 有全部，
+// 但它在大陆裸网连不上，所以走 985monitor 代取（那个域名本来就在权限里，服务器直通且带缓存）。
+const POOLS_URL = 'https://www.985monitor.xyz/api/extension/token-pools';
+const POOLS_TTL = 60000;
+const POOLS_MIN_GAP = 1500;          // 最小请求间隔，别把自己的服务器打爆
+const poolsCache = new Map();
+const poolsInflight = new Map();
+let poolsLastAt = 0;
+let poolsBackoffUntil = 0;
+
+// DexScreener 的链名和 GMGN 的路径段不一样（实测：sol→solana、eth→ethereum，其余同名）
+const DS_CHAIN = { bsc: 'bsc', sol: 'solana', eth: 'ethereum', base: 'base', robinhood: 'robinhood' };
+const DS_FAIL_COOLDOWN = 10 * 60000;
+let dsDirectFailedAt = 0;
+
+/** 直连 DexScreener。失败（多半是没代理连不上）返回 null，交给 985 代取兜底。 */
+async function dexScreenerDirect(chain, address) {
+  const dsChain = DS_CHAIN[chain];
+  if (!dsChain) return null;
+  // 连不上就冷却十分钟，别每个币都白等一次超时
+  if (Date.now() - dsDirectFailedAt < DS_FAIL_COOLDOWN) return null;
+  const lower = String(address).toLowerCase();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`,
+      { cache: 'no-store', signal: controller.signal }).finally(() => clearTimeout(timer));
+    if (!res.ok) throw new Error(`http-${res.status}`);
+    const body = await res.json();
+    const rows = [];
+    for (const p of (Array.isArray(body?.pairs) ? body.pairs : [])) {
+      if (String(p?.chainId || '') !== dsChain) continue;
+      // 同名币很多，必须按地址卡；且这个币可能在任一侧
+      const isBase = String(p?.baseToken?.address || '').toLowerCase() === lower;
+      if (!isBase && String(p?.quoteToken?.address || '').toLowerCase() !== lower) continue;
+      const other = isBase ? p.quoteToken : p.baseToken;
+      rows.push({
+        pair: String(p.pairAddress || '').slice(0, 80),
+        quote: String(other?.symbol || '').slice(0, 16),
+        dex: [String(p.dexId || '')].concat(Array.isArray(p.labels) ? p.labels : []).filter(Boolean).join(' ').slice(0, 24),
+        liq: Number(p?.liquidity?.usd) || 0,
+        vol24h: Number(p?.volume?.h24) || 0,
+        url: String(p.url || '').slice(0, 200),
+      });
+    }
+    rows.sort((a, b) => b.liq - a.liq);
+    const pools = rows.slice(0, 30);
+    dsDirectFailedAt = 0;
+    return { ok: true, via: 'direct', pools, total: pools.length, totalLiq: pools.reduce((sum, r) => sum + r.liq, 0) };
+  } catch {
+    dsDirectFailedAt = Date.now();
+    return null;
+  }
+}
+
+async function tokenPools({ chain, address }) {
+  const key = `${chain}|${String(address || '').toLowerCase()}`;
+  const hit = poolsCache.get(key);
+  if (hit && Date.now() - hit.at < POOLS_TTL) return hit.data;
+  const running = poolsInflight.get(key);
+  if (running) return running;
+  if (Date.now() < poolsBackoffUntil) return hit?.data || { ok: false, reason: 'backoff' };
+  const job = (async () => {
+    const wait = POOLS_MIN_GAP - (Date.now() - poolsLastAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    poolsLastAt = Date.now();
+    // 先用用户自己的网络直连 DexScreener（它的 CORS 是 *，不用申请新权限）。
+    // 通了就走本地，一点不碰服务器；大陆裸网连不上时才降级到 985 代取。
+    const direct = await dexScreenerDirect(chain, address);
+    if (direct) {
+      poolsBackoffUntil = 0;
+      poolsCache.set(key, { at: Date.now(), data: direct });
+      if (poolsCache.size > 200) for (const k of [...poolsCache.keys()].slice(0, 80)) poolsCache.delete(k);
+      return direct;
+    }
+    try {
+      const res = await fetch(`${POOLS_URL}?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}`, { cache: 'no-store' });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        // 429/5xx 一律退避，别继续硬打
+        poolsBackoffUntil = Date.now() + (res.status === 429 ? 60000 : 20000);
+        return { ok: false, reason: `http-${res.status}` };
+      }
+      poolsBackoffUntil = 0;
+      const data = { ok: true, via: 'proxy', pools: body.pools || [], total: Number(body.total) || 0, totalLiq: Number(body.totalLiq) || 0 };
+      poolsCache.set(key, { at: Date.now(), data });
+      if (poolsCache.size > 200) for (const k of [...poolsCache.keys()].slice(0, 80)) poolsCache.delete(k);
+      return data;
+    } catch (error) {
+      poolsBackoffUntil = Date.now() + 20000;
+      return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
+    }
+  })().finally(() => poolsInflight.delete(key));
+  poolsInflight.set(key, job);
+  return job;
+}
+
 async function flapTokenInfo({ token, rpc }) {
   const address = String(token || '').toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(address)) return { ok: false, reason: 'bad-token' };
@@ -1636,6 +1734,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'token-supply') {
     tokenSupply(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'token-pools') {
+    tokenPools(message.payload || {})
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

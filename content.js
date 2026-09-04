@@ -301,6 +301,7 @@
     ],
     enableMarkedHolders: true,
     enableFlapTax: true,
+    enableAllPools: true,
     flapRpc: '',
     enableFomoFeed: true,
     enablePumpFeed: true,
@@ -6884,6 +6885,132 @@ ${flapTooltipText(info)}
     refreshFomoFeedFixedRowShifts();
   }
 
+  // ---- 代币页：全部底池 ----
+  // GMGN 的「池信息」面板只显示主池（它自己的接口就只返回一条）。这里把 DexScreener
+  // 那份完整清单补在同一个位置，按流动性降序，点行直达 DexScreener。
+  const POOL_CHAINS = new Set(['bsc', 'sol', 'eth', 'base', 'robinhood']);
+  const POOLS_SHOW = 8;
+  const poolsState = new Map();
+  let poolsExpanded = false;
+
+  /** GMGN 的池信息面板。sentry 标记是构建期属性，部分用户没有，所以用文案兜底。 */
+  function gmgnPoolPanel() {
+    const marked = document.querySelector('[data-sentry-component="PoolInfo"]');
+    if (marked instanceof HTMLElement) return marked;
+    for (const el of document.querySelectorAll('div')) {
+      if (el.children.length > 4 || el.querySelector('.gdh-pools')) continue;
+      if (/池信息/.test((el.textContent || '').slice(0, 24))) return el;
+    }
+    return null;
+  }
+
+  function poolLiqText(value) {
+    const n = Number(value) || 0;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+    return `$${n.toFixed(0)}`;
+  }
+
+  function buildPoolsPanel(anchor, route, data) {
+    let panel = document.querySelector('.gdh-pools');
+    if (!panel) {
+      panel = document.createElement('div');
+      // 抄 GMGN 右栏每个分区的容器类，间距和分隔线才对得上
+      panel.className = 'gdh-pools px-14px py-12px flex flex-col gap-10px border-b-[1px] border-b-line-100';
+    }
+    if (panel.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', panel);
+    const key = `${route.chain}|${route.address}|${data.pools.length}|${poolsExpanded}`;
+    if (panel.dataset.gdhPoolsKey === key) return;
+    panel.dataset.gdhPoolsKey = key;
+    panel.replaceChildren();
+
+    const head = document.createElement('div');
+    head.className = 'gdh-pools__head';
+    const title = document.createElement('span');
+    title.className = 'gdh-pools__title';
+    title.textContent = `全部底池 · ${data.total}`;
+    const src = document.createElement('span');
+    src.className = 'gdh-pools__src';
+    src.textContent = 'DexScreener';
+    src.title = 'GMGN 只显示主池，这份清单来自 DexScreener';
+    head.append(title, src);
+
+    const sum = document.createElement('div');
+    sum.className = 'gdh-pools__sum';
+    sum.textContent = `合计流动性 ${poolLiqText(data.totalLiq)}`;
+
+    const list = document.createElement('div');
+    list.className = 'gdh-pools__list';
+    const shown = poolsExpanded ? data.pools : data.pools.slice(0, POOLS_SHOW);
+    for (const pool of shown) {
+      const row = document.createElement('a');
+      row.className = 'gdh-pools__row';
+      row.href = pool.url || '#';
+      row.target = '_blank';
+      row.rel = 'noreferrer';
+      const pair = document.createElement('span');
+      pair.className = 'gdh-pools__pair';
+      pair.textContent = pool.quote || '?';
+      const dex = document.createElement('span');
+      dex.className = 'gdh-pools__dex';
+      dex.textContent = pool.dex || '';
+      const liq = document.createElement('span');
+      liq.className = 'gdh-pools__liq';
+      liq.textContent = poolLiqText(pool.liq);
+      row.append(pair, dex, liq);
+      row.title = `24h 成交额 ${poolLiqText(pool.vol24h)}　点击在 DexScreener 打开`;
+      list.appendChild(row);
+    }
+    panel.append(head, sum, list);
+
+    if (data.pools.length > POOLS_SHOW) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'gdh-pools__more';
+      more.textContent = poolsExpanded ? '收起' : `还有 ${data.pools.length - POOLS_SHOW} 个`;
+      more.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        poolsExpanded = !poolsExpanded;
+        scheduleScan();
+      });
+      panel.appendChild(more);
+    }
+  }
+
+  function scanAllPools() {
+    if (settings.enableAllPools === false) {
+      document.querySelector('.gdh-pools')?.remove();
+      return;
+    }
+    const route = currentTokenRoute();
+    if (!route || !POOL_CHAINS.has(route.chain)) {
+      document.querySelector('.gdh-pools')?.remove();
+      return;
+    }
+    const anchor = gmgnPoolPanel();
+    if (!anchor) return;                       // 面板还没渲染，下一轮再说
+    const key = `${route.chain}|${route.address}`;
+    const state = poolsState.get(key);
+    if (!state) {
+      poolsState.set(key, { loading: true });
+      chrome.runtime.sendMessage({ type: 'token-pools', payload: { chain: route.chain, address: route.address } })
+        .then((res) => {
+          poolsState.set(key, res?.ok ? { data: res } : { failed: true, at: Date.now() });
+          scheduleScan();
+        })
+        .catch(() => { poolsState.set(key, { failed: true, at: Date.now() }); });
+      return;
+    }
+    // 失败 30 秒后允许重来一次；别永久钉死（Flap 徽章栽过这个坑）
+    if (state.failed) {
+      if (Date.now() - state.at > 30000) poolsState.delete(key);
+      return;
+    }
+    if (!state.data?.pools?.length) return;
+    buildPoolsPanel(anchor, route, state.data);
+  }
+
   let lastFullScanAt = 0;
   let scanCostEma = 0;
 
@@ -6920,6 +7047,7 @@ ${flapTooltipText(info)}
     timed('surge', scanHoldingSurge);
     timed('fomoPanel', scanFomoPanel);
     timed('fomoFeed', scanFomoFeed);
+    timed('pools', scanAllPools);
     const cost = performance.now() - t0;
     scanCostEma = scanCostEma ? scanCostEma * 0.7 + cost * 0.3 : cost;
     // 诊断口:总耗时|均值|top3 子任务。Console 里一句

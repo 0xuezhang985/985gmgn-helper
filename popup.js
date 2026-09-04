@@ -18,6 +18,7 @@ const DEFAULTS = {
   mergeFomoHolders: true,
   enableMarkedHolders: true,
   enableFlapTax: true,
+  enableAllPools: true,
   flapRpc: '',
   enableFomoFeed: true,
   enablePumpFeed: true,
@@ -59,6 +60,7 @@ const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
 const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
 const markedEnableInput = document.querySelector('#enable-marked-holders');
 const flapEnableInput = document.querySelector('#enable-flap-tax');
+const allPoolsInput = document.querySelector('#enable-all-pools');
 const flapRpcInput = document.querySelector('#flap-rpc');
 const fomoFeedEnableInput = document.querySelector('#enable-fomo-feed');
 const pumpFeedEnableInput = document.querySelector('#enable-pump-feed');
@@ -191,6 +193,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   mergeHoldersInput.checked = stored.mergeFomoHolders !== false;
   markedEnableInput.checked = stored.enableMarkedHolders !== false;
   flapEnableInput.checked = stored.enableFlapTax !== false;
+  allPoolsInput.checked = stored.enableAllPools !== false;
   flapRpcInput.value = String(stored.flapRpc || '');
   fomoFeedEnableInput.checked = stored.enableFomoFeed !== false;
   pumpFeedEnableInput.checked = stored.enablePumpFeed !== false;
@@ -254,6 +257,7 @@ saveButton.addEventListener('click', async () => {
     mergeFomoHolders: mergeHoldersInput.checked,
     enableMarkedHolders: markedEnableInput.checked,
     enableFlapTax: flapEnableInput.checked,
+    enableAllPools: allPoolsInput.checked,
     flapRpc: flapRpcInput.value.trim(),
     enableFomoFeed: fomoFeedEnableInput.checked,
     enablePumpFeed: pumpFeedEnableInput.checked,

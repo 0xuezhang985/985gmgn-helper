@@ -2422,6 +2422,32 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-fomofeed.is-thesis .gdh-fomofeed__tag { color: #c084fc; }
 /* 转入不是交易，用中性灰蓝，别跟买入的绿撞在一起 */
 .gdh-fomofeed.is-transfer .gdh-fomofeed__tag { color: #94a3b8; }
+
+/* 代币页「全部底池」：GMGN 只显示主池，这块补全部。容器类抄的 GMGN 右栏分区，
+   所以外边距和分隔线由它自己的样式管，这里只管内部。 */
+.gdh-pools__head { display: flex; align-items: center; gap: 6px; }
+.gdh-pools__title { font-size: 12px; font-weight: 500; color: #d6d9df; }
+.gdh-pools__src {
+  font-size: 9px; line-height: 12px; color: #6b7280;
+  border: 1px solid #374151; border-radius: 3px; padding: 0 3px; cursor: help;
+}
+.gdh-pools__sum { font-size: 12px; color: #8a93a6; margin-top: -4px; }
+.gdh-pools__list { display: flex; flex-direction: column; gap: 2px; }
+.gdh-pools__row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: #d6d9df; text-decoration: none;
+  padding: 3px 4px; border-radius: 4px;
+}
+.gdh-pools__row:hover { background: rgba(139, 147, 161, .12); }
+.gdh-pools__pair { flex: none; min-width: 52px; font-weight: 500; }
+.gdh-pools__dex { flex: 1 1 auto; color: #6b7280; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gdh-pools__liq { flex: none; color: #8a93a6; font-variant-numeric: tabular-nums; }
+.gdh-pools__more {
+  align-self: flex-start; background: none; border: 0; padding: 0;
+  color: #f5b83d; font-size: 11px; cursor: pointer;
+}
+.gdh-pools__more:hover { text-decoration: underline; }
+
 .gdh-fomofeed.is-refund .gdh-fomofeed__tag { color: #fb923c; }
 .gdh-fomofeed__src {
   flex: none;
