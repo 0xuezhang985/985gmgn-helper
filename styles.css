@@ -1940,6 +1940,44 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
 }
 
+.gdh-token-relation {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.gdh-token-relation.is-current {
+  border-color: rgba(67, 192, 122, 0.42);
+  background: rgba(67, 192, 122, 0.14);
+  color: #43c07a;
+}
+
+.gdh-token-relation.is-same-name {
+  border-color: rgba(239, 83, 80, 0.42);
+  background: rgba(239, 83, 80, 0.14);
+  color: #ef5350;
+}
+
+.gdh-token-relation.is-table {
+  min-width: 34px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
 /* 管理面板里的「屏蔽的币」一栏 */
 .gdh-sp-manage__blocked {
   /* 模态框是 overflow:hidden 的 flex 列：这一栏必须固定不收缩，

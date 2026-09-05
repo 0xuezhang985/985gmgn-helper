@@ -2213,8 +2213,10 @@ ${flapTooltipText(info)}
   let trackerCardsScanCache = null;
   let trackerCardsScanCacheActive = false;
   // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
-  // 表格模式下币种列只有 120px 且 overflow-hidden，徽章塞进去会盖住币名。
+  // 表格模式下币种列较窄且 overflow-hidden；关系徽章必须用紧凑尺寸放在最前，
+  // 不能绝对定位或挂到整行，否则会盖住币名/市值并破坏虚拟行宽度。
   const TRACKER_TABLE_HEADER = '[data-testid="follow-tracking-table-header"]';
+  const TRACKER_TOKEN_RELATION_SELECTOR = '.gdh-token-relation';
   function isTrackerTableMode() {
     if (document.querySelector(`${TRACKER_TABLE_HEADER}, ${TRACKER_TABLE_ITEM_SELECTOR}`)) return true;
     // 某些 A/B 布局同时去掉表头 testid 和 sentry 标记；固定行高 44px 仍是
@@ -2249,6 +2251,115 @@ ${flapTooltipText(info)}
     const cards = [...found];
     if (trackerCardsScanCacheActive) trackerCardsScanCache = cards;
     return cards;
+  }
+
+  function trackerTokenSymbol(raw) {
+    return String(raw || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toUpperCase();
+  }
+
+  function trackerTokenPageContext() {
+    const route = currentTokenRoute();
+    if (!route) return null;
+    const symbolEl = document.querySelector(
+      '#token-base-symbol[data-symbol], [data-testid="token-detail-symbol"]',
+    );
+    return {
+      chain: String(route.chain || '').trim().toLowerCase(),
+      address: trackingFeedNormalizedAddress(route.address),
+      symbol: trackerTokenSymbol(symbolEl?.dataset?.symbol || symbolEl?.textContent),
+    };
+  }
+
+  function trackerTokenRelation(address, symbol, chain, context) {
+    if (!context?.address) return '';
+    const rowAddress = trackingFeedNormalizedAddress(address);
+    const rowChain = String(chain || '').trim().toLowerCase();
+    if (rowAddress && rowChain && rowAddress === context.address && rowChain === context.chain) {
+      return 'current';
+    }
+    const rowSymbol = trackerTokenSymbol(symbol);
+    if (rowSymbol && context.symbol && rowSymbol === context.symbol
+      && (rowAddress !== context.address || rowChain !== context.chain)) {
+      return 'same-name';
+    }
+    return '';
+  }
+
+  function trackerCardTimeRow(card) {
+    for (const row of card.children) {
+      const last = row.lastElementChild;
+      if (!(last instanceof HTMLElement)) continue;
+      const text = String(last.textContent || '').trim();
+      if (/^(?:\d+\s*(?:s|m|h|d|秒|分|小时|天)|刚刚)/i.test(text)) return row;
+    }
+    return null;
+  }
+
+  function applyTrackerTokenRelation(
+    card,
+    address,
+    symbol,
+    chain,
+    tableMode = isTrackerTableMode(),
+    context = trackerTokenPageContext(),
+  ) {
+    const relation = trackerTokenRelation(address, symbol, chain, context);
+    let badge = card.querySelector(TRACKER_TOKEN_RELATION_SELECTOR);
+    if (!relation) {
+      badge?.remove();
+      delete card.dataset.gdhTokenRelation;
+      return;
+    }
+
+    const ownFeed = card.classList.contains('gdh-fomofeed');
+    const host = tableMode
+      ? card.querySelector(ownFeed ? '.gdh-fomofeed__tsym' : TRACKER_SYMBOL_CELL)
+      : (ownFeed ? card.querySelector('.gdh-fomofeed__r1') : trackerCardTimeRow(card));
+    if (!(host instanceof HTMLElement)) {
+      badge?.remove();
+      delete card.dataset.gdhTokenRelation;
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'gdh-token-relation';
+    }
+    badge.textContent = relation === 'current' ? '当前币' : '同名币';
+    badge.classList.toggle('is-current', relation === 'current');
+    badge.classList.toggle('is-same-name', relation === 'same-name');
+    badge.classList.toggle('is-table', tableMode);
+    card.dataset.gdhTokenRelation = relation;
+
+    if (tableMode) {
+      if (host.firstElementChild !== badge) host.prepend(badge);
+      return;
+    }
+    const time = ownFeed ? host.querySelector('.gdh-fomofeed__time') : host.lastElementChild;
+    if (time instanceof HTMLElement && time !== badge && time.previousElementSibling !== badge) {
+      host.insertBefore(badge, time);
+    }
+  }
+
+  function scanTrackerTokenRelations() {
+    const context = trackerTokenPageContext();
+    if (!context) {
+      document.querySelectorAll(TRACKER_TOKEN_RELATION_SELECTOR).forEach((badge) => badge.remove());
+      document.querySelectorAll('[data-gdh-token-relation]').forEach((card) => {
+        delete card.dataset.gdhTokenRelation;
+      });
+      return;
+    }
+    const tableMode = isTrackerTableMode();
+    trackerCards().forEach((card) => {
+      applyTrackerTokenRelation(
+        card,
+        card.dataset.gdhTrackAddr,
+        card.dataset.gdhTrackSymbol,
+        card.dataset.gdhTrackChain,
+        tableMode,
+        context,
+      );
+    });
   }
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
   const TRACK_TAB_CELL = '[data-testid="follow-tracking-wallet-tab"], [data-testid="follow-tracking-tab"]';
@@ -6203,6 +6314,30 @@ ${flapTooltipText(info)}
     return `key:${String(ev?.key || '')}`;
   }
 
+  const TRACKING_FEED_BURST_MS = 20000;
+
+  function trackingFeedBurstDuplicate(a, b) {
+    const type = String(a?.type || '').trim().toLowerCase();
+    if (type !== 'buy' && type !== 'sell') return false;
+    if (type !== String(b?.type || '').trim().toLowerCase()) return false;
+    if (String(a?.source || 'fomo') !== String(b?.source || 'fomo')) return false;
+    const address = trackingFeedNormalizedAddress(a?.addr);
+    if (!address || address !== trackingFeedNormalizedAddress(b?.addr)) return false;
+    const chainA = String(a?.chain || '').trim().toLowerCase();
+    const chainB = String(b?.chain || '').trim().toLowerCase();
+    if (chainA && chainB && chainA !== chainB) return false;
+    const principalA = trackingFeedNormalizedAddress(a?.pumpWallet || a?.handle);
+    const principalB = trackingFeedNormalizedAddress(b?.pumpWallet || b?.handle);
+    if (!principalA || principalA !== principalB) return false;
+    const tsA = Number(a?.ts) || 0;
+    const tsB = Number(b?.ts) || 0;
+    if (!tsA || !tsB || Math.abs(tsA - tsB) > TRACKING_FEED_BURST_MS) return false;
+    const usdA = Number(a?.usd) || 0;
+    const usdB = Number(b?.usd) || 0;
+    if (!(usdA > 0) || !(usdB > 0)) return false;
+    return Math.abs(usdA - usdB) <= Math.max(2, Math.max(usdA, usdB) * 0.05);
+  }
+
   function nativeTrackingFeedRows(cards) {
     return cards.map((card) => ({
       tx: trackingFeedNormalizedTx(card.getAttribute('data-gdh-track-tx')),
@@ -6253,11 +6388,15 @@ ${flapTooltipText(info)}
       }
     }
     const seen = new Set();
+    const accepted = [];
     return out.sort((a, b) => b.ts - a.ts).filter((ev) => {
       const identity = trackingFeedEventIdentity(ev);
       if (seen.has(identity)) return false;
       seen.add(identity);
-      return !nativeRows.some((row) => trackingFeedIsNativeDuplicate(ev, row));
+      if (accepted.some((item) => trackingFeedBurstDuplicate(ev, item))) return false;
+      if (nativeRows.some((row) => trackingFeedIsNativeDuplicate(ev, row))) return false;
+      accepted.push(ev);
+      return true;
     }).slice(0, FOMO_FEED_RENDER_CAP);
   }
 
@@ -6547,6 +6686,7 @@ ${flapTooltipText(info)}
     const timeEl = el.querySelector('.gdh-fomofeed__time');
     const next = fomoFeedRelTime(ev.ts);
     if (timeEl && timeEl.textContent !== next) timeEl.textContent = next;
+    applyTrackerTokenRelation(el, ev.addr, ev.symbol, ev.chain, el.classList.contains('is-table'));
     return el;
   }
 
@@ -7049,6 +7189,7 @@ ${flapTooltipText(info)}
       timed('callout', scanCalloutBlacklist);
       timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
       timed('special', scanSpecialWallets);
+      timed('token-relation', scanTrackerTokenRelations);
       // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
       // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
       // 「特别关注高亮」关掉就 return 的分支，于是用户一关特别关注，

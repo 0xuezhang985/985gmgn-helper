@@ -743,6 +743,9 @@ await test('SSE 重放同一交易即使换 key 也只通知一次', () => {
   const functions = [
     extractFunction(background, 'slimFomoEvent'),
     extractFunction(background, 'trackingFeedComparableId'),
+    extractFunction(background, 'trackingFeedNormalizedAddress'),
+    extractFunction(background, 'trackingFeedBurstDuplicate'),
+    extractFunction(background, 'trackingFeedDuplicate'),
     extractFunction(background, 'fomoSseIngest'),
   ];
   const raw = {
@@ -760,11 +763,56 @@ await test('SSE 重放同一交易即使换 key 也只通知一次', () => {
     FOMO_FEED_TYPE: { FOMO_BUY: 'buy' },
     FOMO_CHAIN_SLUG: { bsc: 'bsc' },
     FOMO_FEED_KEEP: 150,
+    TRACKING_FEED_BURST_MS: 20000,
     fomoFeedCache: { events: [], updatedAt: 0, fetchedAt: 0 },
     state,
     fomoSseNotifyTabs: () => { state.calls += 1; },
   });
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { calls: 1, length: 1, key: 'fomo:replayed' });
+});
+
+await test('插件连续同源近额成交在 20 秒内只保留最新一条', () => {
+  const contentFunctions = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'trackingFeedBurstDuplicate'),
+  ];
+  const base = {
+    key: 'fomo:new', source: 'fomo', type: 'buy', handle: 'trenchc908',
+    addr: '0x1111111111111111111111111111111111111111', chain: 'bsc', ts: 100000, usd: 148,
+  };
+  const duplicate = { ...base, key: 'fomo:old', ts: 95000, usd: 147 };
+  const run = (other) => evaluate(
+    contentFunctions,
+    `trackingFeedBurstDuplicate(${JSON.stringify(base)}, ${JSON.stringify(other)})`,
+    { TRACKING_FEED_BURST_MS: 20000 },
+  );
+  assert.equal(run(duplicate), true);
+  assert.equal(run({ ...duplicate, ts: 79000 }), false);
+  assert.equal(run({ ...duplicate, usd: 120 }), false);
+  assert.equal(run({ ...duplicate, type: 'sell' }), false);
+  assert.equal(run({ ...duplicate, handle: 'another-wallet' }), false);
+  assert.equal(run({ ...duplicate, addr: '0x2222222222222222222222222222222222222222' }), false);
+
+  const backgroundFunctions = [
+    extractFunction(background, 'trackingFeedComparableId'),
+    extractFunction(background, 'trackingFeedNormalizedAddress'),
+    extractFunction(background, 'trackingFeedBurstDuplicate'),
+    extractFunction(background, 'trackingFeedDuplicate'),
+    extractFunction(background, 'dedupeTrackingFeedEvents'),
+  ];
+  const unique = { ...base, key: 'fomo:unique', tx: '0x3', ts: 70000 };
+  const deduped = evaluate(
+    backgroundFunctions,
+    `dedupeTrackingFeedEvents(${JSON.stringify([
+      { ...base, tx: '0x2' }, { ...duplicate, tx: '0x1' }, unique,
+    ])})`,
+    { TRACKING_FEED_BURST_MS: 20000 },
+  );
+  assert.equal(deduped.length, 2);
+  assert.equal(deduped[0].key, 'fomo:new');
+  assert.equal(deduped[1].key, 'fomo:unique');
+  assert.ok(extractFunction(background, 'fetchFomoFeed').includes('dedupeTrackingFeedEvents'));
+  assert.ok(extractFunction(background, 'fetchPumpFeed').includes('dedupeTrackingFeedEvents'));
 });
 
 await test('插入事件会与 GMGN 原生追踪交易去重且不误伤观点事件', () => {
@@ -823,6 +871,35 @@ await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.ok(bridge.includes('scanUnmarkedTrackerRows'));
   assert.match(bridge, /if \(!trackerSeen\.size\) scanUnmarkedTrackerRows\(trackerSeen, trackerData\)/);
   assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
+});
+
+await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
+  const functions = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'trackerTokenSymbol'),
+    extractFunction(content, 'trackerTokenRelation'),
+  ];
+  const context = {
+    chain: 'robinhood', address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', symbol: 'FSD',
+  };
+  const run = (address, symbol, chain = 'robinhood') => evaluate(
+    functions,
+    `trackerTokenRelation(${JSON.stringify(address)}, ${JSON.stringify(symbol)}, ${JSON.stringify(chain)}, ${JSON.stringify(context)})`,
+  );
+  assert.equal(run('0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'FSD'), 'current');
+  assert.equal(run('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'ＦＳＤ'), 'same-name');
+  assert.equal(run('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'OTHER'), '');
+  assert.equal(run('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'FSD', 'base'), 'same-name');
+  const apply = extractFunction(content, 'applyTrackerTokenRelation');
+  assert.ok(apply.includes("'.gdh-fomofeed__tsym'"));
+  assert.ok(apply.includes("'.gdh-fomofeed__r1'"));
+  assert.ok(apply.includes('TRACKER_SYMBOL_CELL'));
+  assert.ok(apply.includes('trackerCardTimeRow(card)'));
+  assert.ok(extractFunction(content, 'scanVisibleCards').includes("timed('token-relation', scanTrackerTokenRelations)"));
+  assert.ok(extractFunction(content, 'fomoFeedCardFor').includes('applyTrackerTokenRelation'));
+  assert.match(styles, /\.gdh-token-relation\.is-current[\s\S]*?color:\s*#43c07a/);
+  assert.match(styles, /\.gdh-token-relation\.is-same-name[\s\S]*?color:\s*#ef5350/);
+  assert.ok(styles.includes('.gdh-token-relation.is-table'));
 });
 
 await test('GMGN 特别关注按交易哈希或绝对事件时间去重', () => {

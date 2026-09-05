@@ -1129,10 +1129,10 @@ async function fetchFomoFeed() {
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
-      const events = (Array.isArray(body?.events) ? body.events : [])
+      const events = dedupeTrackingFeedEvents((Array.isArray(body?.events) ? body.events : [])
         .map(slimFomoEvent)
         .filter(Boolean)
-        .sort((a, b) => b.ts - a.ts)
+        .sort((a, b) => b.ts - a.ts))
         .slice(0, FOMO_FEED_KEEP);
       fomoFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
       fomoFeedEtag = response.headers.get('ETag') || '';
@@ -1246,10 +1246,10 @@ async function fetchPumpFeed() {
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
-      const events = (Array.isArray(body?.events) ? body.events : [])
+      const events = dedupeTrackingFeedEvents((Array.isArray(body?.events) ? body.events : [])
         .map(slimPumpEvent)
         .filter(Boolean)
-        .sort((a, b) => b.ts - a.ts)
+        .sort((a, b) => b.ts - a.ts))
         .slice(0, PUMP_FEED_KEEP);
       pumpFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
       pumpFeedFailCount = 0;
@@ -1298,6 +1298,50 @@ function trackingFeedComparableId(ev) {
   return key ? `key:${key}` : '';
 }
 
+const TRACKING_FEED_BURST_MS = 20000;
+
+function trackingFeedNormalizedAddress(raw) {
+  const value = String(raw || '').trim();
+  return /^0x[a-fA-F0-9]+$/.test(value) ? value.toLowerCase() : value;
+}
+
+function trackingFeedBurstDuplicate(a, b) {
+  const type = String(a?.type || '').trim().toLowerCase();
+  if (type !== 'buy' && type !== 'sell') return false;
+  if (type !== String(b?.type || '').trim().toLowerCase()) return false;
+  if (String(a?.source || 'fomo') !== String(b?.source || 'fomo')) return false;
+  const address = trackingFeedNormalizedAddress(a?.addr);
+  if (!address || address !== trackingFeedNormalizedAddress(b?.addr)) return false;
+  const chainA = String(a?.chain || '').trim().toLowerCase();
+  const chainB = String(b?.chain || '').trim().toLowerCase();
+  if (chainA && chainB && chainA !== chainB) return false;
+  const principalA = trackingFeedNormalizedAddress(a?.pumpWallet || a?.handle);
+  const principalB = trackingFeedNormalizedAddress(b?.pumpWallet || b?.handle);
+  if (!principalA || principalA !== principalB) return false;
+  const tsA = Number(a?.ts) || 0;
+  const tsB = Number(b?.ts) || 0;
+  if (!tsA || !tsB || Math.abs(tsA - tsB) > TRACKING_FEED_BURST_MS) return false;
+  const usdA = Number(a?.usd) || 0;
+  const usdB = Number(b?.usd) || 0;
+  if (!(usdA > 0) || !(usdB > 0)) return false;
+  return Math.abs(usdA - usdB) <= Math.max(2, Math.max(usdA, usdB) * 0.05);
+}
+
+function trackingFeedDuplicate(a, b) {
+  if (a?.key && a.key === b?.key) return true;
+  const comparableId = trackingFeedComparableId(a);
+  if (comparableId && comparableId === trackingFeedComparableId(b)) return true;
+  return trackingFeedBurstDuplicate(a, b);
+}
+
+function dedupeTrackingFeedEvents(events) {
+  const out = [];
+  for (const event of events) {
+    if (!out.some((existing) => trackingFeedDuplicate(event, existing))) out.push(event);
+  }
+  return out;
+}
+
 function fomoSseNotifyTabs() {
   try {
     chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] }, (tabs) => {
@@ -1314,11 +1358,8 @@ function fomoSseNotifyTabs() {
 function fomoSseIngest(raw) {
   const ev = slimFomoEvent(raw);
   if (!ev) return;
-  const comparableId = trackingFeedComparableId(ev);
-  const duplicate = fomoFeedCache.events.some((item) => item.key === ev.key
-    || (comparableId && trackingFeedComparableId(item) === comparableId));
-  const rest = fomoFeedCache.events.filter((item) => item.key !== ev.key
-    && (!comparableId || trackingFeedComparableId(item) !== comparableId));
+  const duplicate = fomoFeedCache.events.some((item) => trackingFeedDuplicate(ev, item));
+  const rest = fomoFeedCache.events.filter((item) => !trackingFeedDuplicate(ev, item));
   rest.unshift(ev);
   rest.sort((a, b) => b.ts - a.ts);
   fomoFeedCache = { ...fomoFeedCache, events: rest.slice(0, FOMO_FEED_KEEP), updatedAt: Date.now() };
@@ -1341,11 +1382,8 @@ function pumpSseNotifyTabs() {
 function pumpSseIngest(raw) {
   const ev = slimPumpEvent(raw);
   if (!ev) return;
-  const comparableId = trackingFeedComparableId(ev);
-  const duplicate = pumpFeedCache.events.some((item) => item.key === ev.key
-    || (comparableId && trackingFeedComparableId(item) === comparableId));
-  const rest = pumpFeedCache.events.filter((item) => item.key !== ev.key
-    && (!comparableId || trackingFeedComparableId(item) !== comparableId));
+  const duplicate = pumpFeedCache.events.some((item) => trackingFeedDuplicate(ev, item));
+  const rest = pumpFeedCache.events.filter((item) => !trackingFeedDuplicate(ev, item));
   rest.unshift(ev);
   rest.sort((a, b) => b.ts - a.ts);
   pumpFeedCache = { ...pumpFeedCache, events: rest.slice(0, PUMP_FEED_KEEP), updatedAt: Date.now() };
