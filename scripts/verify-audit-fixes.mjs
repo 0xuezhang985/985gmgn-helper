@@ -612,10 +612,10 @@ await test('RWA 资产点击实际渲染本页浮窗且不会生成外部链接'
   assert.ok(Number.parseFloat(result.left) < 900, '右侧空间不足时浮窗应显示在资产左侧');
 });
 
-await test('滚动限频使用单个延时器而不是逐帧空转', () => {
+await test('滚动期间推迟全量扫描且只保留一个静止后延时器', () => {
   const contentRun = extractFunction(content, 'runScheduledScan');
   const bridgeRun = extractFunction(bridge, 'runScheduledScan');
-  const run = (fn, gap) => {
+  const run = (fn) => {
     const state = { scans: 0, schedules: 0, wait: 0 };
     return evaluate([fn], `(() => {
     runScheduledScan();
@@ -623,10 +623,8 @@ await test('滚动限频使用单个延时器而不是逐帧空转', () => {
   })()`, {
     scanRafId: 1,
     scanDelayTimer: 0,
-    lastScanAt: 100,
     scrollingUntil: 500,
     scanScheduled: true,
-    SCAN_MIN_GAP_SCROLLING: gap,
     Date: { now: () => 150 },
     Math,
     state,
@@ -635,10 +633,10 @@ await test('滚动限频使用单个延时器而不是逐帧空转', () => {
     scanCards: () => { state.scans += 1; },
   });
   };
-  const contentResult = run(contentRun, 120);
-  const bridgeResult = run(bridgeRun, 150);
-  assert.equal(`${contentResult.delay}|${contentResult.scans}|${contentResult.schedules}|${contentResult.wait}`, '7|0|0|70');
-  assert.equal(`${bridgeResult.delay}|${bridgeResult.scans}|${bridgeResult.schedules}|${bridgeResult.wait}`, '7|0|0|100');
+  const contentResult = run(contentRun);
+  const bridgeResult = run(bridgeRun);
+  assert.equal(`${contentResult.delay}|${contentResult.scans}|${contentResult.schedules}|${contentResult.wait}`, '7|0|0|350');
+  assert.equal(`${bridgeResult.delay}|${bridgeResult.scans}|${bridgeResult.schedules}|${bridgeResult.wait}`, '7|0|0|350');
 });
 
 await test('追踪流 mutation 重排合帧且隐藏标签不全量扫描', () => {
@@ -648,6 +646,46 @@ await test('追踪流 mutation 重排合帧且隐藏标签不全量扫描', () =
   assert.ok(content.includes("if (document.visibilityState === 'hidden') return;"));
   assert.ok(bridge.includes("if (document.visibilityState === 'hidden') return;"));
   assert.ok(content.includes("if (document.visibilityState !== 'hidden') scanVisibleCards();"));
+});
+
+await test('同一轮全量扫描复用追踪卡枚举并降低空闲兜底频率', () => {
+  const fn = extractFunction(content, 'trackerCards');
+  const state = { calls: 0 };
+  const row = {};
+  const result = evaluate([fn], `(() => {
+    const first = trackerCards();
+    const second = trackerCards();
+    trackerCardsScanCacheActive = false;
+    const third = trackerCards();
+    return { same: first === second, first: first.length, third: third.length, calls: state.calls };
+  })()`, {
+    trackerCardsScanCache: null,
+    trackerCardsScanCacheActive: true,
+    TRACKER_ITEM_SELECTOR: 'item',
+    TRACKER_DATA_SELECTOR: 'data',
+    TRACKER_SYMBOL_CELL: 'symbol',
+    TRACKER_MAKER_CELL: 'maker',
+    document: {
+      querySelectorAll: (selector) => {
+        state.calls += 1;
+        return selector === 'item' ? [row] : [];
+      },
+    },
+    state,
+    Set,
+    HTMLElement: class {},
+  });
+  assert.equal(`${result.same}|${result.first}|${result.third}|${result.calls}`, 'true|1|1|6');
+  assert.match(content, /window\.setInterval\(\(\) => \{\s*if \(document\.visibilityState !== 'hidden'\) scanVisibleCards\(\);\s*\}, 2500\);/);
+  assert.match(bridge, /window\.setInterval\(scheduleScan, 2500\);/);
+});
+
+await test('全部底池缓存有容量上限且 DeBot 滚动复用已知容器', () => {
+  assert.ok(content.includes('const POOLS_CACHE_MAX = 60;'));
+  assert.ok((content.match(/setBoundedMap\(\s*poolsState/g) || []).length >= 3);
+  assert.ok(debotContent.includes('const feedScrollTargets = new WeakSet();'));
+  assert.ok(debotContent.includes('feedScrollTargets.add(scroller);'));
+  assert.match(debotContent, /document\.addEventListener\('scroll',[\s\S]{0,220}feedScrollTargets\.has\(event\.target\)/);
 });
 
 await test('FOMO/Pump 插卡主文字继承 GMGN 明暗主题', () => {
@@ -1476,6 +1514,11 @@ await test('FOMO 登录按钮无感使用推荐注册链接', () => {
 await test('下载同步脚本拒绝恶意版本参数', () => {
   const python = process.platform === 'win32' ? 'python' : 'python3';
   const result = spawnSync(python, [path.join(root, 'scripts', 'sync-bgm-download.py'), '0.46.1;echo-pwned'], { encoding: 'utf8' });
+  if (result.error) {
+    assert.match(bgmSync, /re\.fullmatch\(r'\\d\+\\\.\\d\+\\\.\\d\+'/);
+    assert.ok(!bgmSync.includes('shell=True'));
+    return;
+  }
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /X\.Y\.Z/);
 });

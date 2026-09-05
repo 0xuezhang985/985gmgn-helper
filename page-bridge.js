@@ -751,7 +751,6 @@
   // 导致 scanCards 每次都从第一行崩掉（持仓行/追踪卡标记全部失效）。
   let scanRafId = 0;
   let scanDelayTimer = 0;
-  let lastScanAt = 0;
   let scrollingUntil = 0;
 
   function scanCards() {
@@ -811,9 +810,9 @@
   function runScheduledScan() {
     scanRafId = 0;
     const now = Date.now();
-    if (now < scrollingUntil && now - lastScanAt < 150) {
+    if (now < scrollingUntil) {
       if (!scanDelayTimer) {
-        const wait = Math.max(1, 150 - (now - lastScanAt));
+        const wait = Math.max(1, scrollingUntil - now);
         scanDelayTimer = window.setTimeout(() => {
           scanDelayTimer = 0;
           scanScheduled = false;
@@ -822,7 +821,6 @@
       }
       return;
     }
-    lastScanAt = now;
     scanCards();
   }
 
@@ -849,7 +847,7 @@
       attributeFilter: ['href', 'data-gmgn-fee-mode-card'],
     });
     scheduleScan();
-    window.setInterval(scheduleScan, 1200);
+    window.setInterval(scheduleScan, 2500);
   }
   if (document.documentElement) startDomScanner();
   else document.addEventListener('DOMContentLoaded', startDomScanner, { once: true });

@@ -72,6 +72,7 @@
   let feedRenderRaf = 0;
   let feedPollTimer = 0;
   let feedObserver = null;
+  const feedScrollTargets = new WeakSet();
   const feedCards = new Map();
   const sidebarFeedCards = new Map();
   const feedSeen = new Set();
@@ -733,7 +734,9 @@
   }
 
   function trackScroller(table) {
-    return table?.closest('[data-virtuoso-scroller="true"], [data-virtuoso-scroller]') || table?.parentElement || null;
+    const scroller = table?.closest('[data-virtuoso-scroller="true"], [data-virtuoso-scroller]') || table?.parentElement || null;
+    if (scroller instanceof Element) feedScrollTargets.add(scroller);
+    return scroller;
   }
 
   function clearFeedLayout(table = trackTable()) {
@@ -816,7 +819,9 @@
     const panelRoot = document.querySelector('[data-edge-dock-panel="track"]');
     const scroller = panelRoot?.querySelector('[data-testid="virtuoso-scroller"]');
     const list = scroller?.querySelector('[data-testid="virtuoso-item-list"]');
-    return scroller instanceof HTMLElement && list instanceof HTMLElement ? { scroller, list } : null;
+    if (!(scroller instanceof HTMLElement) || !(list instanceof HTMLElement)) return null;
+    feedScrollTargets.add(scroller);
+    return { scroller, list };
   }
 
   function sidebarTrackRows(list) {
@@ -2339,10 +2344,7 @@
     }, true);
     document.addEventListener('scroll', (event) => {
       positionDebotRwaPopover();
-      const table = trackTable();
-      const scroller = trackScroller(table);
-      const sidebarScroller = sidebarTrackLayout()?.scroller;
-      if ((scroller && event.target === scroller) || event.target === sidebarScroller) scheduleFeedLayout();
+      if (event.target instanceof Element && feedScrollTargets.has(event.target)) scheduleFeedLayout();
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element

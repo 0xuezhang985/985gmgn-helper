@@ -2210,6 +2210,8 @@ ${flapTooltipText(info)}
   const TRACKER_DATA_SELECTOR = '[data-gdh-track-addr][data-gdh-track-ts]';
   const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
   const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
+  let trackerCardsScanCache = null;
+  let trackerCardsScanCacheActive = false;
   // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
   // 表格模式下币种列只有 120px 且 overflow-hidden，徽章塞进去会盖住币名。
   const TRACKER_TABLE_HEADER = '[data-testid="follow-tracking-table-header"]';
@@ -2230,6 +2232,7 @@ ${flapTooltipText(info)}
    * 那一层，就是卡片本身。
    */
   function trackerCards() {
+    if (trackerCardsScanCacheActive && trackerCardsScanCache) return trackerCardsScanCache;
     const found = new Set();
     document.querySelectorAll(TRACKER_ITEM_SELECTOR).forEach((el) => found.add(el));
     // page-bridge 已读到 Fiber 的行是最稳的锚点，不再依赖任何 GMGN 类名/testid。
@@ -2243,7 +2246,9 @@ ${flapTooltipText(info)}
         el = el.parentElement;
       }
     });
-    return [...found];
+    const cards = [...found];
+    if (trackerCardsScanCacheActive) trackerCardsScanCache = cards;
+    return cards;
   }
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
   const TRACK_TAB_CELL = '[data-testid="follow-tracking-wallet-tab"], [data-testid="follow-tracking-tab"]';
@@ -6890,6 +6895,7 @@ ${flapTooltipText(info)}
   // 那份完整清单补在同一个位置，按流动性降序，点行直达 DexScreener。
   const POOL_CHAINS = new Set(['bsc', 'sol', 'eth', 'base', 'robinhood']);
   const POOLS_SHOW = 8;
+  const POOLS_CACHE_MAX = 60;
   const poolsState = new Map();
   let poolsExpanded = false;
 
@@ -6993,13 +6999,20 @@ ${flapTooltipText(info)}
     const key = `${route.chain}|${route.address}`;
     const state = poolsState.get(key);
     if (!state) {
-      poolsState.set(key, { loading: true });
+      setBoundedMap(poolsState, key, { loading: true }, POOLS_CACHE_MAX);
       chrome.runtime.sendMessage({ type: 'token-pools', payload: { chain: route.chain, address: route.address } })
         .then((res) => {
-          poolsState.set(key, res?.ok ? { data: res } : { failed: true, at: Date.now() });
+          setBoundedMap(
+            poolsState,
+            key,
+            res?.ok ? { data: res } : { failed: true, at: Date.now() },
+            POOLS_CACHE_MAX,
+          );
           scheduleScan();
         })
-        .catch(() => { poolsState.set(key, { failed: true, at: Date.now() }); });
+        .catch(() => {
+          setBoundedMap(poolsState, key, { failed: true, at: Date.now() }, POOLS_CACHE_MAX);
+        });
       return;
     }
     // 失败 30 秒后允许重来一次；别永久钉死（Flap 徽章栽过这个坑）
@@ -7029,25 +7042,32 @@ ${flapTooltipText(info)}
       const ms = performance.now() - s0;
       if (ms >= 1) parts.push([name, ms]);
     };
-    timed('trench', () => document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState));
-    timed('callout', scanCalloutBlacklist);
-    timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
-    timed('special', scanSpecialWallets);
-    // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
-    // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
-    // 「特别关注高亮」关掉就 return 的分支，于是用户一关特别关注，
-    // Flap 税收徽章和标注人物徽章就跟着一起没了（开关明明还开着）。
-    // 两个都要打网络、又要动第三方 DOM，各自兜住别把整轮扫描带塌。
-    timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
-    timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
-    timed('robinhood-search-meta', () => { try { scanRobinhoodSearchBadges(); } catch { /* 不影响其余扫描 */ } });
-    timed('robinhood-rwa', () => { try { scanRobinhoodRwaPoolLinks(); } catch { /* 不影响其余扫描 */ } });
-    timed('lightning', scanFrontrunLightning);
-    timed('remind', scanRemindToasts);
-    timed('surge', scanHoldingSurge);
-    timed('fomoPanel', scanFomoPanel);
-    timed('fomoFeed', scanFomoFeed);
-    timed('pools', scanAllPools);
+    trackerCardsScanCache = null;
+    trackerCardsScanCacheActive = true;
+    try {
+      timed('trench', () => document.querySelectorAll(CARD_SELECTOR).forEach(applyCardState));
+      timed('callout', scanCalloutBlacklist);
+      timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
+      timed('special', scanSpecialWallets);
+      // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
+      // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
+      // 「特别关注高亮」关掉就 return 的分支，于是用户一关特别关注，
+      // Flap 税收徽章和标注人物徽章就跟着一起没了（开关明明还开着）。
+      // 两个都要打网络、又要动第三方 DOM，各自兜住别把整轮扫描带塌。
+      timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
+      timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
+      timed('robinhood-search-meta', () => { try { scanRobinhoodSearchBadges(); } catch { /* 不影响其余扫描 */ } });
+      timed('robinhood-rwa', () => { try { scanRobinhoodRwaPoolLinks(); } catch { /* 不影响其余扫描 */ } });
+      timed('lightning', scanFrontrunLightning);
+      timed('remind', scanRemindToasts);
+      timed('surge', scanHoldingSurge);
+      timed('fomoPanel', scanFomoPanel);
+      timed('fomoFeed', scanFomoFeed);
+      timed('pools', scanAllPools);
+    } finally {
+      trackerCardsScanCacheActive = false;
+      trackerCardsScanCache = null;
+    }
     const cost = performance.now() - t0;
     scanCostEma = scanCostEma ? scanCostEma * 0.7 + cost * 0.3 : cost;
     // 诊断口:总耗时|均值|top3 子任务。Console 里一句
@@ -7063,18 +7083,16 @@ ${flapTooltipText(info)}
   // 滚动停下 200ms 内立即补一次全量扫描，保证不漏挂。
   let scanRafId = 0;
   let scanDelayTimer = 0;
-  let lastScanAt = 0;
   let scrollingUntil = 0;
-  const SCAN_MIN_GAP_SCROLLING = 120;
 
   function runScheduledScan() {
     scanRafId = 0;
     const now = Date.now();
-    if (now < scrollingUntil && now - lastScanAt < SCAN_MIN_GAP_SCROLLING) {
-      // 旧版会在这里逐帧重新挂 rAF，虽然没全扫也会空转约 60 次/秒。
-      // 改为只留一个延时器，到达 120ms 间隔后再进下一帧。
+    if (now < scrollingUntil) {
+      // 滚动时只保留追踪流的轻量行位移；完整 DOM 扫描等滚动静止 200ms 后再做。
+      // 这既避免逐帧空转，也避免每 120ms 把十余毫秒的全量扫描塞进滚动帧。
       if (!scanDelayTimer) {
-        const wait = Math.max(1, SCAN_MIN_GAP_SCROLLING - (now - lastScanAt));
+        const wait = Math.max(1, scrollingUntil - now);
         scanDelayTimer = window.setTimeout(() => {
           scanDelayTimer = 0;
           scanScheduled = false;
@@ -7083,7 +7101,6 @@ ${flapTooltipText(info)}
       }
       return;
     }
-    lastScanAt = now;
     scanCards();
   }
 
@@ -7392,7 +7409,7 @@ ${flapTooltipText(info)}
 
   window.setInterval(() => {
     if (document.visibilityState !== 'hidden') scanVisibleCards();
-  }, 1000);
+  }, 2500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'hidden') scheduleScan();
   });
