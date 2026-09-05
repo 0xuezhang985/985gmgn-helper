@@ -2143,6 +2143,45 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   vertical-align: middle;
 }
 
+/* 代币表头统计：放在地址后、原生社交图标前，避免误塞进 15px 浏览器图标链接。 */
+.gdh-token-header-badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gdh-token-header-badges .gdh-marked,
+.gdh-token-header-stat {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 16px;
+  margin: 0;
+  padding: 0 5px;
+  border: 1px solid rgba(139, 147, 161, 0.28);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  white-space: nowrap;
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+}
+
+.gdh-token-header-fomo {
+  border-color: rgba(142, 102, 255, 0.42);
+  background: rgba(142, 102, 255, 0.14);
+  color: #b89cff;
+}
+
+html[data-theme="light"] .gdh-token-header-fomo {
+  border-color: rgba(100, 66, 196, 0.34);
+  background: rgba(100, 66, 196, 0.1);
+  color: #6845bd;
+}
+
 /* Flap 代币税收徽章：带边框的小 chip，按税收去向着色 */
 .gdh-flap {
   cursor: pointer;

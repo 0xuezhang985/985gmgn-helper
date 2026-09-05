@@ -19,228 +19,87 @@
         <span id="version"></span>
       </header>
 
-      <section class="settings-section">
-        <h2>怎么用</h2>
+      <details class="settings-guide">
+        <summary>快速使用说明</summary>
         <ul class="gdh-howto">
-          <li><b>追踪流屏蔽某个币</b>：鼠标移到推送卡上，币名旁出现 🚫，<b>长按一秒</b>即屏蔽（防误触）。点 🔔 或在 ★ 面板里恢复。</li>
-          <li><b>特别关注</b>：推送卡/钱包行上悬停出现 ☆，点一下加入。追踪面板头部 <b>★N</b> 可管理全部关注与已屏蔽的币。</li>
-          <li><b>fomo 浮窗</b>：代币页右下角的 <b>fomo</b> 按钮，看该币在 fomo 上的持仓者与观点。<b>需要你自己的 fomo 登录态</b>，浮窗里有四步引导，之后会自动续期。</li>
-          <li><b>持仓暴涨提醒</b>：需要先打开一次 GMGN 持仓面板；成本收益达标、最近 5 分钟上涨且当前余额仍大于 0 才推送。切链后再开一次即可纳入该链。</li>
+          <li><b>追踪流屏蔽某个币</b>：移到推送卡上，长按 🚫 一秒。</li>
+          <li><b>特别关注</b>：点推送卡或钱包行上的 ☆；追踪面板头部 ★N 可管理。</li>
+          <li><b>fomo 浮窗</b>：代币页右下角点 fomo；需使用自己的 fomo 登录态。</li>
+          <li><b>持仓暴涨提醒</b>：先打开一次 GMGN 持仓面板，切链后也各打开一次。</li>
         </ul>
         <a class="gdh-howto-link" href="https://github.com/0xuezhang985/985gmgn-helper#功能" target="_blank" rel="noreferrer">完整功能说明 →</a>
-      </section>
+      </details>
 
       <section class="settings-section">
-        <h2>功能开关</h2>
+        <div class="section-heading"><div><h2>Dev 与喊单</h2><small>战壕识别、收藏和喊单辅助</small></div></div>
         <div class="feature-list">
-          <label class="switch-row">
-            <span>
-              <strong>重点 Dev 高亮</strong>
-              <small>显示卡片边框、底色和常显备注</small>
-            </span>
-            <input id="enabled" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>Dev 战绩常显</strong>
-              <small>显示迁移数、发币数和迁移比例</small>
-            </span>
-            <input id="show-dev-performance" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>重点 Dev 悬停详情</strong>
-              <small>悬停卡片时显示完整 Dev 战绩</small>
-            </span>
-            <input id="show-dev-tooltip" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>详情页一键收藏</strong>
-              <small>在开发者面板显示收藏 Dev 按钮</small>
-            </span>
-            <input id="enable-dev-bookmark" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>喊单黑名单</strong>
-              <small>显示屏蔽按钮并过滤卡片和顶部通知</small>
-            </span>
-            <input id="enable-callout-blacklist" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>新宣言弹窗</strong>
-              <small>新宣言出现时右上角弹窗，点击直达代币页</small>
-            </span>
-            <input id="enable-manifesto-toast" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>宣言列表标签</strong>
-              <small>喊单窗加"宣言"标签，按时间查看当前宣言</small>
-            </span>
-            <input id="enable-manifesto-tab" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>特别关注高亮</strong>
-              <small>GMGN / DeBot 钱包列表和追踪行悬停显 ⭐，颜色与置顶配置跨站共用</small>
-            </span>
-            <input id="enable-special-wallet" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>fomo 浮窗</strong>
-              <small>GMGN / DeBot 代币页右下角 fomo 按钮，看该币在 fomo 的观点/交易</small>
-            </span>
-            <input id="enable-fomo-panel" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>持仓暴涨提醒</strong>
-              <small>跟随同一 GMGN 账号的 App 开关；成本收益达标、最近 5 分钟上涨且当前仍有持仓时才弹窗</small>
-              <small id="gmgn-holding-sync-status" class="sync-status">尚未同步 GMGN App 开关</small>
-            </span>
-            <input id="enable-holding-surge" type="checkbox" />
-          </label>
-          <label class="color-row" for="holding-surge-threshold">
-            <span>暴涨阈值（较购买成本）</span>
-            <select id="holding-surge-threshold">
-              <option value="10">+10%</option>
-              <option value="20">+20%</option>
-              <option value="30">+30%</option>
-              <option value="50">+50%</option>
-              <option value="100">+100%</option>
-            </select>
-          </label>
-          <label class="color-row" for="holding-surge-cooldown">
-            <span>同一代币再次提醒间隔</span>
-            <select id="holding-surge-cooldown">
-              <option value="5">5 分钟</option>
-              <option value="15">15 分钟</option>
-              <option value="30">30 分钟</option>
-              <option value="60">1 小时</option>
-              <option value="180">3 小时</option>
-              <option value="360">6 小时</option>
-              <option value="1440">24 小时</option>
-            </select>
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>底池 / 分红徽章</strong>
-              <small>BSC Flap 币显示完整税收分配；Robinhood 搜索结果显示底池资产，有持币分红时额外显示分红徽章</small>
-            </span>
-            <input id="enable-flap-tax" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>全部底池</strong>
-              <small>GMGN 的「池信息」只显示主池；在它下面补一份完整清单，按流动性排序，点击直达 DexScreener</small>
-            </span>
-            <input id="enable-all-pools" type="checkbox" />
-          </label>
-          <label class="color-row" for="flap-rpc">
-            <span>自定义 BSC RPC（选填）</span>
-            <input id="flap-rpc" type="text" placeholder="留空用公共节点" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>fomo 推送混排进追踪流</strong>
-              <small>把 985monitor 的 fomo 买卖/观点事件按时间插进 GMGN / DeBot 追踪推送里。屏蔽的人、每人的事件开关直接沿用你在 985monitor 网页上的配置</small>
-            </span>
-            <input id="enable-fomo-feed" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>追踪页 Pump 推送插入</strong>
-              <small>把 985monitor 的 Pump 买卖成交按时间插进 GMGN / DeBot 追踪页；沿用 985monitor 的关注、屏蔽、买卖类型和最低成交额设置</small>
-              <small id="monitor-985-sync-status" class="sync-status">尚未连接 985monitor 账号配置</small>
-            </span>
-            <input id="enable-pump-feed" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>fomo 推送只看当前链</strong>
-              <small>默认关：追踪流本身是全链的，fomo 事件也全链显示（卡片按链跳对应站点代币页）。开了则只显示当前页面链的事件</small>
-            </span>
-            <input id="fomo-feed-chain-only" type="checkbox" />
-          </label>
-          <div class="color-row" style="align-items:center">
-            <span>fomo 推送事件类型</span>
-            <span style="display:flex;gap:10px;flex-wrap:wrap">
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-buy" type="checkbox" />买入</label>
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-sell" type="checkbox" />卖出</label>
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-swap" type="checkbox" />换仓</label>
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-thesis" type="checkbox" />观点</label>
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-transfer-in" type="checkbox" />转入</label>
-              <label style="display:flex;gap:3px;align-items:center"><input id="fomo-feed-refund" type="checkbox" />退款/失败</label>
-            </span>
+          <label class="switch-row"><span><strong>重点 Dev 高亮</strong><small>仅控制卡片边框、底色和常显备注，不是插件总开关</small></span><input id="enabled" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>Dev 战绩常显</strong><small>显示迁移数、发币数和迁移比例</small></span><input id="show-dev-performance" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>重点 Dev 悬停详情</strong><small>悬停卡片时显示完整 Dev 战绩</small></span><input id="show-dev-tooltip" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>详情页一键收藏</strong><small>在开发者面板显示收藏 Dev 按钮</small></span><input id="enable-dev-bookmark" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>喊单黑名单</strong><small>显示屏蔽按钮并过滤卡片和顶部通知</small></span><input id="enable-callout-blacklist" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>新宣言弹窗</strong><small>新宣言出现时右上角弹窗，点击直达代币页</small></span><input id="enable-manifesto-toast" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>宣言列表标签</strong><small>喊单窗加“宣言”标签，按时间查看</small></span><input id="enable-manifesto-tab" type="checkbox" /></label>
+          <div class="sub-settings">
+            <label class="field" for="dev-list"><span>Dev 钱包</span><small>每行一个地址，地址后可加备注</small></label>
+            <textarea id="dev-list" rows="4" spellcheck="false" placeholder="0x1234...abcd 重点团队 A&#10;0xabcd...1234"></textarea>
+            <label class="control-row" for="highlight-color"><span>高亮颜色</span><input id="highlight-color" type="color" value="#f5b83d" /></label>
           </div>
-          <label class="switch-row">
-            <span>
-              <strong>标注人物持仓徽章</strong>
-              <small>代币旁显示 👤N —— 有几个被标注的人持有它，悬停看是谁</small>
-            </span>
-            <input id="enable-marked-holders" type="checkbox" />
-          </label>
-          <label class="color-row" for="marked-list" style="align-items:flex-start">
-            <span>标注人物名单</span>
-            <textarea id="marked-list" rows="3" placeholder="0x地址 备注（一行一个）"></textarea>
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>fomo 持仓者标注链上名次</strong>
-              <small>在 fomo 浮窗的持仓者里标出「链上#N」——按持仓量在 GMGN 持有者表里排第几</small>
-            </span>
-            <input id="enable-merge-fomo-holders" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>价格提醒醒目化</strong>
-              <small>到价/市值提醒改为画面正中大卡片，涨绿跌红</small>
-            </span>
-            <input id="enable-remind-alert" type="checkbox" />
-          </label>
-          <label class="switch-row">
-            <span>
-              <strong>隐藏闪电交易按钮</strong>
-              <small>隐藏 frontrun 插件注入的"闪电交易"按钮（默认关）</small>
-            </span>
-            <input id="hide-lightning-trade" type="checkbox" />
-          </label>
         </div>
       </section>
 
-      <label class="field" for="dev-list">
-        <span>Dev 钱包</span>
-        <small>每行一个地址，地址后可加备注</small>
-      </label>
-      <textarea
-        id="dev-list"
-        rows="5"
-        spellcheck="false"
-        placeholder="0x1234...abcd 重点团队 A&#10;0xabcd...1234"
-      ></textarea>
-
-      <label class="color-row" for="highlight-color">
-        <span>高亮颜色</span>
-        <input id="highlight-color" type="color" value="#f5b83d" />
-      </label>
-
-      <section class="update-card">
-        <span>
-          <strong>版本更新</strong>
-          <small id="update-status">正在读取更新状态…</small>
-          <a id="release-link" href="#" hidden>查看最新版 GitHub 页面</a>
-        </span>
-        <button id="check-update" type="button">检查更新</button>
+      <section class="settings-section">
+        <div class="section-heading"><div><h2>追踪流与特别关注</h2><small>GMGN / DeBot 共用</small></div></div>
+        <div class="feature-list">
+          <label class="switch-row"><span><strong>特别关注高亮</strong><small>钱包列表和追踪行悬停显示 ⭐，颜色与置顶跨站共用</small></span><input id="enable-special-wallet" type="checkbox" /></label>
+          <div class="sub-settings compact">
+            <div class="option-row"><span><strong>新关注默认行为</strong><small>以后新加的钱包采用这些默认值</small></span></div>
+            <div class="check-grid two"><label><input id="special-wallet-default-highlight" type="checkbox" />高亮</label><label><input id="special-wallet-default-pin" type="checkbox" />置顶</label></div>
+            <label class="control-row" for="special-wallet-default-color"><span>默认高亮颜色</span><input id="special-wallet-default-color" type="color" value="#f5b83d" /></label>
+          </div>
+          <label class="switch-row"><span><strong>fomo 推送混排</strong><small>按 985monitor 账号的关注、屏蔽和类型配置插入追踪流</small></span><input id="enable-fomo-feed" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>Pump 推送混排</strong><small>按 985monitor 账号配置插入 GMGN / DeBot 追踪流</small><small id="monitor-985-sync-status" class="sync-status">尚未连接 985monitor 账号配置</small></span><input id="enable-pump-feed" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>推送只看当前链</strong><small>关闭时与原生追踪流一致，显示全链事件</small></span><input id="fomo-feed-chain-only" type="checkbox" /></label>
+          <div class="sub-settings compact">
+            <div class="option-row"><span><strong>fomo 事件类型</strong><small>每一种都可独立开关</small></span></div>
+            <div class="check-grid"><label><input id="fomo-feed-buy" type="checkbox" />买入</label><label><input id="fomo-feed-sell" type="checkbox" />卖出</label><label><input id="fomo-feed-swap" type="checkbox" />换仓</label><label><input id="fomo-feed-thesis" type="checkbox" />观点</label><label><input id="fomo-feed-transfer-in" type="checkbox" />转入</label><label><input id="fomo-feed-refund" type="checkbox" />退款/失败</label></div>
+          </div>
+        </div>
       </section>
 
-      <div id="status" aria-live="polite"></div>
-      <button id="save" type="button">保存设置</button>
+      <section class="settings-section">
+        <div class="section-heading"><div><h2>代币数据</h2><small>FOMO、标注人物与底池增强</small></div></div>
+        <div class="feature-list">
+          <label class="switch-row"><span><strong>fomo 浮窗与表头占比</strong><small>显示代币页 fomo 小窗，并在表头展示持仓占比徽章</small></span><input id="enable-fomo-panel" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>fomo 内容翻译</strong><small>观点、备注及失败原因自动显示中文译文</small></span><input id="fomo-translate" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>标注人物持仓徽章</strong><small>显示 👤人数与这些人物的合计持仓占比</small></span><input id="enable-marked-holders" type="checkbox" /></label>
+          <div class="sub-settings">
+            <label class="field" for="marked-list"><span>标注人物名单</span><small>每行：0x地址 备注</small></label>
+            <textarea id="marked-list" rows="4" placeholder="0x地址 备注（一行一个）"></textarea>
+          </div>
+          <label class="switch-row"><span><strong>fomo 持仓者链上名次</strong><small>按 GMGN 已加载持有者数据标出“链上 #N”</small></span><input id="enable-merge-fomo-holders" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>底池 / 分红徽章</strong><small>BSC 显示税收分配；Robinhood 显示底池资产与分红</small></span><input id="enable-flap-tax" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>全部底池</strong><small>在主池下补完整底池清单，按流动性排序</small></span><input id="enable-all-pools" type="checkbox" /></label>
+          <div class="sub-settings compact"><label class="control-row text-control" for="flap-rpc"><span>自定义 BSC RPC</span><input id="flap-rpc" type="text" placeholder="留空用公共节点" /></label></div>
+        </div>
+      </section>
 
-      <footer>数据直接读取当前 GMGN 战壕卡片，不使用 API Key。</footer>
+      <section class="settings-section">
+        <div class="section-heading"><div><h2>提醒与界面</h2><small>价格提醒和页面显示</small></div></div>
+        <div class="feature-list">
+          <label class="switch-row"><span><strong>持仓暴涨提醒</strong><small>成本收益达标、最近 5 分钟上涨且仍有持仓时提醒</small><small id="gmgn-holding-sync-status" class="sync-status">尚未同步 GMGN App 开关</small></span><input id="enable-holding-surge" type="checkbox" /></label>
+          <div class="sub-settings compact control-grid">
+            <label class="control-row" for="holding-surge-threshold"><span>较成本涨幅</span><select id="holding-surge-threshold"><option value="10">+10%</option><option value="20">+20%</option><option value="30">+30%</option><option value="50">+50%</option><option value="100">+100%</option></select></label>
+            <label class="control-row" for="holding-surge-cooldown"><span>再次提醒间隔</span><select id="holding-surge-cooldown"><option value="5">5 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="180">3 小时</option><option value="360">6 小时</option><option value="1440">24 小时</option></select></label>
+          </div>
+          <label class="switch-row"><span><strong>价格提醒醒目化</strong><small>到价 / 市值提醒改为画面正中大卡片</small></span><input id="enable-remind-alert" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>隐藏闪电交易按钮</strong><small>隐藏 frontrun 注入的“闪电交易”按钮（默认关闭）</small></span><input id="hide-lightning-trade" type="checkbox" /></label>
+        </div>
+      </section>
+
+      <section class="update-card"><span><strong>版本更新</strong><small id="update-status">正在读取更新状态…</small><a id="release-link" href="#" hidden>查看最新版 GitHub 页面</a></span><button id="check-update" type="button">检查更新</button></section>
+      <div class="save-bar"><div id="status" aria-live="polite"></div><button id="save" type="button">保存全部设置</button></div>
+      <footer>数据直接读取当前 GMGN / DeBot 页面，不使用 API Key。</footer>
     </main>
     <script src="popup.js"></script>
   </body>

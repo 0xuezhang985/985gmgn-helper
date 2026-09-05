@@ -77,7 +77,7 @@ const test = async (name, fn) => {
 await test('隐藏闪电交易按钮默认关闭且已保存选择仍优先', () => {
   assert.match(popup, /hideLightningTrade:\s*false,/);
   assert.match(content, /hideLightningTrade:\s*false,/);
-  assert.ok(popupHtml.includes('隐藏 frontrun 插件注入的"闪电交易"按钮（默认关）'));
+  assert.ok(popupHtml.includes('隐藏 frontrun 注入的“闪电交易”按钮（默认关闭）'));
   assert.ok(popup.includes('chrome.storage.local.get(DEFAULTS, (stored) =>'));
   assert.ok(content.includes('settings = { ...DEFAULTS, ...stored };'));
 });
@@ -935,6 +935,11 @@ await test('重点 Dev 高亮开关不再充当 FOMO/Pump 插卡总开关', () =
   assert.ok(!extractFunction(content, 'pollFomoFeed').includes('settings.enabled'));
   assert.ok(!extractFunction(content, 'pollPumpFeed').includes('settings.enabled'));
   assert.ok(!extractFunction(content, 'scanFomoFeed').includes('settings.enabled'));
+  assert.ok(!extractFunction(debotContent, 'visibleFeedEvents').includes('settings.enabled'));
+  assert.ok(!extractFunction(debotContent, 'layoutFeed').includes('settings.enabled'));
+  assert.ok(!extractFunction(debotContent, 'layoutSidebarFeed').includes('settings.enabled'));
+  assert.ok(!extractFunction(debotContent, 'pollFomo').includes('settings.enabled'));
+  assert.ok(!extractFunction(debotContent, 'pollPump').includes('settings.enabled'));
 });
 
 await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
@@ -1639,6 +1644,7 @@ await test('FOMO 持仓占比在 GMGN 同源页面取全链供应量', async () 
     }),
     chrome: { runtime: { sendMessage: async () => { backgroundCalls += 1; return { ok: false }; } } },
     renderFomoStats: () => { renders += 1; },
+    renderTokenHeaderBadges: () => {},
   });
   assert.equal(stats.supply, 1_000_000_000);
   assert.equal(backgroundCalls, 0);
@@ -1679,6 +1685,61 @@ await test('FOMO 短句低置信度与语言检测器异常都有翻译语言回
     { fomoDetector: null, fomoDetApi: () => failedApi },
   );
   assert.equal(detectorFailed, 'en');
+});
+
+await test('FOMO 持仓占比以独立徽章显示在 GMGN 代币表头', () => {
+  const scan = extractFunction(content, 'scanTokenHeaderBadges');
+  const render = extractFunction(content, 'renderTokenHeaderBadges');
+  const load = extractFunction(content, 'loadFomoHeaderStats');
+  assert.ok(scan.includes('renderTokenHeaderBadges()'));
+  assert.ok(scan.includes('loadFomoHeaderStats(route)'));
+  assert.ok(render.includes("#token-base-address[data-addr]"));
+  assert.ok(render.includes('`fomo ${fomoShare}`'));
+  assert.ok(load.includes("kind: 'holders'"));
+  assert.ok(load.includes('FOMO_REFRESH_MS'));
+  assert.match(styles, /\.gdh-token-header-badges\s*\{/);
+  assert.match(styles, /\.gdh-token-header-fomo\s*\{/);
+});
+
+await test('标注人物徽章显示合计持仓占比并兼容部分旧数据', () => {
+  const summaryFn = extractFunction(content, 'markedHoldingSummary');
+  const formatFn = extractFunction(content, 'holdingShareText');
+  const exact = evaluate(
+    [summaryFn],
+    "markedHoldingSummary([{name:'甲',amount:10,supply:1000},{name:'乙',amount:15,supply:1000}])",
+  );
+  assert.equal(exact.names.length, 2);
+  assert.equal(exact.pct, 2.5);
+  assert.equal(exact.lowerBound, false);
+  const partial = evaluate(
+    [summaryFn],
+    "markedHoldingSummary([{name:'甲',amount:10,supply:1000},'旧数据人物'])",
+  );
+  assert.equal(partial.lowerBound, true);
+  assert.equal(evaluate([formatFn], 'holdingShareText(0.006, true)'), '≥0.006%');
+  const badge = extractFunction(content, 'ensureMarkedBadge');
+  assert.ok(badge.includes("`👤${summary.names.length}${share ? ` · ${share}` : ''}`"));
+  assert.ok(content.includes('put(h.t, nameOf.get(person), h.u, h.b, h.q)'));
+  assert.ok(content.includes('h?.token?.total_supply'));
+});
+
+await test('设置面板按职责分组并展示全部功能开关', () => {
+  const ids = [
+    'enabled', 'show-dev-performance', 'show-dev-tooltip', 'enable-dev-bookmark',
+    'enable-callout-blacklist', 'enable-manifesto-toast', 'enable-manifesto-tab',
+    'enable-special-wallet', 'special-wallet-default-highlight', 'special-wallet-default-pin',
+    'enable-fomo-feed', 'enable-pump-feed', 'fomo-feed-chain-only', 'enable-fomo-panel',
+    'fomo-translate', 'enable-marked-holders', 'enable-merge-fomo-holders',
+    'enable-flap-tax', 'enable-all-pools', 'enable-holding-surge',
+    'enable-remind-alert', 'hide-lightning-trade',
+  ];
+  ids.forEach((id) => assert.ok(popupHtml.includes(`id="${id}"`), `missing setting ${id}`));
+  assert.ok(popup.includes("fomoTranslate: document.querySelector('#fomo-translate')"));
+  assert.ok(popup.includes('addWalletStarPref: {'));
+  assert.match(popupHtml, /<h2>Dev 与喊单<\/h2>/);
+  assert.match(popupHtml, /<h2>追踪流与特别关注<\/h2>/);
+  assert.match(popupHtml, /<h2>代币数据<\/h2>/);
+  assert.match(popupHtml, /<h2>提醒与界面<\/h2>/);
 });
 
 await test('DeBot FOMO 翻译支持混合文本、缓存重绘和真实点击下载', () => {

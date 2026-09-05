@@ -12,6 +12,7 @@ const DEFAULTS = {
   enableSpecialWallet: true,
   enableRemindAlert: true,
   enableFomoPanel: true,
+  fomoTranslate: true,
   enableHoldingSurge: true,
   holdingSurgeThreshold: 20,
   holdingSurgeCooldown: 60,
@@ -24,6 +25,7 @@ const DEFAULTS = {
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
+  addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
   markedHolders: [
     { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
     { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰大号1' },
@@ -48,7 +50,15 @@ const featureInputs = {
   enableSpecialWallet: document.querySelector('#enable-special-wallet'),
   enableRemindAlert: document.querySelector('#enable-remind-alert'),
   enableFomoPanel: document.querySelector('#enable-fomo-panel'),
+  fomoTranslate: document.querySelector('#fomo-translate'),
   enableHoldingSurge: document.querySelector('#enable-holding-surge'),
+  mergeFomoHolders: document.querySelector('#enable-merge-fomo-holders'),
+  enableMarkedHolders: document.querySelector('#enable-marked-holders'),
+  enableFlapTax: document.querySelector('#enable-flap-tax'),
+  enableAllPools: document.querySelector('#enable-all-pools'),
+  enableFomoFeed: document.querySelector('#enable-fomo-feed'),
+  enablePumpFeed: document.querySelector('#enable-pump-feed'),
+  fomoFeedChainOnly: document.querySelector('#fomo-feed-chain-only'),
   hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
 const devListInput = document.querySelector('#dev-list');
@@ -57,14 +67,10 @@ const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
 const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
-const mergeHoldersInput = document.querySelector('#enable-merge-fomo-holders');
-const markedEnableInput = document.querySelector('#enable-marked-holders');
-const flapEnableInput = document.querySelector('#enable-flap-tax');
-const allPoolsInput = document.querySelector('#enable-all-pools');
 const flapRpcInput = document.querySelector('#flap-rpc');
-const fomoFeedEnableInput = document.querySelector('#enable-fomo-feed');
-const pumpFeedEnableInput = document.querySelector('#enable-pump-feed');
-const fomoFeedChainOnlyInput = document.querySelector('#fomo-feed-chain-only');
+const specialWalletDefaultHighlightInput = document.querySelector('#special-wallet-default-highlight');
+const specialWalletDefaultPinInput = document.querySelector('#special-wallet-default-pin');
+const specialWalletDefaultColorInput = document.querySelector('#special-wallet-default-color');
 const fomoFeedTypeInputs = {
   buy: document.querySelector('#fomo-feed-buy'),
   sell: document.querySelector('#fomo-feed-sell'),
@@ -190,14 +196,12 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   colorInput.value = stored.highlightColor || DEFAULTS.highlightColor;
   surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
   surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
-  mergeHoldersInput.checked = stored.mergeFomoHolders !== false;
-  markedEnableInput.checked = stored.enableMarkedHolders !== false;
-  flapEnableInput.checked = stored.enableFlapTax !== false;
-  allPoolsInput.checked = stored.enableAllPools !== false;
   flapRpcInput.value = String(stored.flapRpc || '');
-  fomoFeedEnableInput.checked = stored.enableFomoFeed !== false;
-  pumpFeedEnableInput.checked = stored.enablePumpFeed !== false;
-  fomoFeedChainOnlyInput.checked = stored.fomoFeedChainOnly === true;
+  const starPref = stored.addWalletStarPref && typeof stored.addWalletStarPref === 'object'
+    ? stored.addWalletStarPref : DEFAULTS.addWalletStarPref;
+  specialWalletDefaultHighlightInput.checked = starPref.on === true;
+  specialWalletDefaultPinInput.checked = starPref.pin === true;
+  specialWalletDefaultColorInput.value = String(starPref.color || DEFAULTS.addWalletStarPref.color);
   const storedFomoTypes = stored.fomoFeedTypes && typeof stored.fomoFeedTypes === 'object'
     ? stored.fomoFeedTypes : DEFAULTS.fomoFeedTypes;
   for (const [key, input] of Object.entries(fomoFeedTypeInputs)) {
@@ -254,14 +258,12 @@ saveButton.addEventListener('click', async () => {
     highlightColor: colorInput.value || DEFAULTS.highlightColor,
     holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
     holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
-    mergeFomoHolders: mergeHoldersInput.checked,
-    enableMarkedHolders: markedEnableInput.checked,
-    enableFlapTax: flapEnableInput.checked,
-    enableAllPools: allPoolsInput.checked,
     flapRpc: flapRpcInput.value.trim(),
-    enableFomoFeed: fomoFeedEnableInput.checked,
-    enablePumpFeed: pumpFeedEnableInput.checked,
-    fomoFeedChainOnly: fomoFeedChainOnlyInput.checked,
+    addWalletStarPref: {
+      on: specialWalletDefaultHighlightInput.checked,
+      pin: specialWalletDefaultPinInput.checked,
+      color: specialWalletDefaultColorInput.value || DEFAULTS.addWalletStarPref.color,
+    },
     fomoFeedTypes: Object.fromEntries(
       Object.entries(fomoFeedTypeInputs).map(([key, input]) => [key, input.checked]),
     ),

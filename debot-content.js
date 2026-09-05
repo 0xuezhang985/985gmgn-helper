@@ -579,14 +579,14 @@
     const blocked = blockedTokenSet();
     const chain = settings.fomoFeedChainOnly === true ? currentTrackChain() : '';
     const out = [];
-    if (settings.enabled !== false && settings.enableFomoFeed !== false) {
+    if (settings.enableFomoFeed !== false) {
       for (const event of fomoEvents) {
         if (!event?.key || !Number(event.ts) || !fomoAllowed(event, blocked)) continue;
         if (chain && event.chain && event.chain !== chain) continue;
         out.push(event);
       }
     }
-    if (settings.enabled !== false && settings.enablePumpFeed !== false) {
+    if (settings.enablePumpFeed !== false) {
       for (const event of pumpEvents) {
         if (!event?.key || !Number(event.ts) || !pumpAllowed(event, blocked)) continue;
         if (chain && event.chain && event.chain !== chain) continue;
@@ -1049,7 +1049,7 @@
   function layoutFeed() {
     const table = trackTable();
     clearFeedLayout(table);
-    if (!isTrackPage() || !table || settings.enabled === false
+    if (!isTrackPage() || !table
       || (settings.enableFomoFeed === false && settings.enablePumpFeed === false)) return;
 
     const rows = nativeRows(table);
@@ -1123,7 +1123,7 @@
   function layoutSidebarFeed() {
     const layout = sidebarTrackLayout();
     clearSidebarFeedLayout(layout);
-    if (!isTrackShellPage() || !layout || settings.enabled === false
+    if (!isTrackShellPage() || !layout
       || (settings.enableFomoFeed === false && settings.enablePumpFeed === false)) return;
 
     const rows = sidebarTrackRows(layout.list);
@@ -1572,7 +1572,7 @@
   }
 
   async function pollFomo(force = false) {
-    if (!isTrackShellPage() || settings.enabled === false || settings.enableFomoFeed === false) return;
+    if (!isTrackShellPage() || settings.enableFomoFeed === false) return;
     if (!force && Date.now() - feedLastFomoAt < FEED_POLL_MS) return;
     feedLastFomoAt = Date.now();
     const response = await runtimeMessage({ type: 'fomo-feed' });
@@ -1582,7 +1582,7 @@
   }
 
   async function pollPump(force = false) {
-    if (!isTrackShellPage() || settings.enabled === false || settings.enablePumpFeed === false) return;
+    if (!isTrackShellPage() || settings.enablePumpFeed === false) return;
     if (!force && Date.now() - feedLastPumpAt < FEED_POLL_MS) return;
     feedLastPumpAt = Date.now();
     const response = await runtimeMessage({ type: 'pump-feed' });

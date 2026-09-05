@@ -1780,7 +1780,7 @@ ${flapTooltipText(info)}
   // 而是查这几个被标注的钱包各自持有哪些币（人数个请求，缓存复用），
   // 再给命中的代币卡片打上 👤N。
   const MARKED_TTL = 120000;
-  let markedMap = new Map();      // 当前链的 代币地址 -> [人名]
+  let markedMap = new Map();      // 当前链的 代币地址 -> [{ name, usd, amount, supply }]
   const markedByChain = new Map(); // chain -> { map, at }（按链各自缓存，来回切链不重拉）
   let markedLoading = false;
 
@@ -1848,11 +1848,17 @@ ${flapTooltipText(info)}
     markedLoading = true;
     const next = new Map();
     const MARKED_MIN_USD = 30; // 灰尘/空投仓不算"持有"，不然满屏误标
-    const put = (token, label) => {
+    const put = (token, name, usd = 0, amount = 0, supply = 0) => {
       const key = String(token).toLowerCase();
       if (!next.has(key)) next.set(key, []);
       const list = next.get(key);
-      if (!list.includes(label)) list.push(label);
+      if (list.some((item) => item.name === name)) return;
+      list.push({
+        name,
+        usd: Number.isFinite(Number(usd)) ? Number(usd) : 0,
+        amount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
+        supply: Number.isFinite(Number(supply)) ? Number(supply) : 0,
+      });
     };
     // ① 默认公开人物优先吃 985 服务器发布的完整持仓（3 分钟一轮、翻页拉全）。
     //    用户私有新增人物绝不上报，落到下方浏览器直拉；名字始终以本地备注为准。
@@ -1875,7 +1881,7 @@ ${flapTooltipText(info)}
           if (!nameOf.has(person)) continue;
           covered.add(person);
           if (!(Number(h.u) >= MARKED_MIN_USD)) continue;
-          put(h.t, `${nameOf.get(person)}(${fomoUsd(h.u)})`);
+          put(h.t, nameOf.get(person), h.u, h.b, h.q);
         }
       }
     } catch {
@@ -1918,7 +1924,14 @@ ${flapTooltipText(info)}
             if (!token) continue;
             const usd = Number(h?.usd_value);
             if (Number.isFinite(usd) && usd < MARKED_MIN_USD) continue;
-            put(token, Number.isFinite(usd) ? `${person.name}(${fomoUsd(usd)})` : person.name);
+            const amount = Number(h?.balance ?? deepPick(h, /^(balance|human_?amount|token_?amount|amount)$/i, 'number'));
+            const supply = Number(
+              h?.token?.total_supply
+              ?? h?.token?.max_supply
+              ?? h?.token_basic_stats?.total_supply
+              ?? h?.token_basic_stats?.max_supply,
+            );
+            put(token, person.name, usd, amount, supply);
           }
         } catch {
           // 单个人失败不影响其他人
@@ -1926,15 +1939,37 @@ ${flapTooltipText(info)}
       }
       markedMap = next;
       markedByChain.set(chain, { map: next, at: Date.now() });
+      scheduleScan();
     } finally {
       markedLoading = false;
     }
   }
 
+  function markedHoldingSummary(items) {
+    const entries = (Array.isArray(items) ? items : []).map((item) => (
+      typeof item === 'string' ? { name: item, usd: 0, amount: 0, supply: 0 } : item
+    ));
+    const names = entries.map((item) => String(item?.name || '')).filter(Boolean);
+    const known = entries.filter((item) => Number(item?.amount) > 0 && Number(item?.supply) > 0);
+    const amount = known.reduce((sum, item) => sum + Number(item.amount), 0);
+    const supply = known.length ? Number(known[0].supply) : 0;
+    const pct = supply > 0 ? (amount / supply) * 100 : NaN;
+    const lowerBound = known.length > 0 && known.length < entries.length;
+    return { entries, names, pct, lowerBound };
+  }
+
+  function holdingShareText(pct, lowerBound = false) {
+    if (!Number.isFinite(pct) || pct < 0) return '';
+    const value = pct > 0 && pct < 0.01
+      ? (lowerBound ? pct.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') : '<0.01')
+      : pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    return `${lowerBound ? '≥' : ''}${value}%`;
+  }
+
   function ensureMarkedBadge(host, tokenAddress) {
-    const names = markedMap.get(String(tokenAddress).toLowerCase());
+    const holdings = markedMap.get(String(tokenAddress).toLowerCase());
     let badge = host.querySelector(':scope > .gdh-marked');
-    if (!names || !names.length) {
+    if (!holdings || !holdings.length) {
       badge?.remove();
       return;
     }
@@ -1943,8 +1978,20 @@ ${flapTooltipText(info)}
       badge.className = 'gdh-marked';
       host.appendChild(badge);
     }
-    badge.textContent = `👤${names.length}`;
-    badge.title = `持有这个币的标注人物：${names.join('、')}`;
+    const summary = markedHoldingSummary(holdings);
+    const share = holdingShareText(summary.pct, summary.lowerBound);
+    badge.textContent = `👤${summary.names.length}${share ? ` · ${share}` : ''}`;
+    const details = summary.entries.map((item) => {
+      const itemShare = Number(item?.supply) > 0
+        ? holdingShareText((Number(item?.amount) / Number(item.supply)) * 100)
+        : '';
+      const usd = Number(item?.usd) > 0 ? fomoUsd(item.usd) : '';
+      return `${item.name}${itemShare ? ` ${itemShare}` : ''}${usd ? ` (${usd})` : ''}`;
+    });
+    badge.title = [
+      share ? `标注人物合计持仓占比：${share}` : '标注人物合计持仓占比：数据同步中',
+      `持有人：${details.join('、')}`,
+    ].join('\n');
   }
 
   function scanMarkedBadges() {
@@ -1972,9 +2019,15 @@ ${flapTooltipText(info)}
     // 搜索结果等其它地方：凡是指向代币页的链接都算一行，不依赖组件名。
     // 追踪流的行本身也是 <a href="/token/...">，必须排除——否则会在行上重复挂一个
     // 徽章、盖住币名（表格模式下尤其明显，那里没有 TrackerListItem 标记可认）。
+    const tokenHeader = tokenHeaderBlock();
+    tokenHeader?.querySelectorAll('.gdh-marked').forEach((badge) => {
+      if (!badge.closest('.gdh-token-header-badges')) badge.remove();
+    });
     document.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
       if (link.closest(TRACKER_ITEM_SELECTOR)) return;
       if (link.querySelector(TRACKER_SYMBOL_CELL) || link.querySelector(TRACKER_MAKER_CELL)) return;
+      // 代币表头由专用徽章组承载；排除浏览器/社交图标的小链接，避免宽徽章盖住图标。
+      if (tokenHeader?.contains(link)) return;
       const m = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/);
       if (!m) return;
       ensureMarkedBadge(link, m[1]);
@@ -4556,8 +4609,9 @@ ${flapTooltipText(info)}
   // ---- 浮窗顶部的 fomo 数据统计 ----
   // 持有人数 / thesis 条数来自两个接口的总数；持仓占比 = 已加载持仓量之和 ÷ 链上总供应量。
   // 只能看到前 N 名持仓者，所以占比标「≥」——这是下界，不是精确值。
-  let fomoStats = { key: '', holders: null, thesisCount: null, supply: 0 };
+  let fomoStats = { key: '', holders: null, thesisCount: null, supply: 0, updatedAt: 0 };
   let fomoSupplyLoadingKey = '';
+  let fomoHeaderRequest = { key: '', at: 0, loading: false };
   let fomoSelfHealTried = false;
 
   function fomoStatBlock(label, value, sub, accent) {
@@ -4597,30 +4651,125 @@ ${flapTooltipText(info)}
     return 0;
   }
 
-  function renderFomoStats() {
-    if (!fomoPanelEl) return;
-    const box = fomoPanelEl.querySelector('.gdh-fomo__stats');
-    if (!box) return;
+  function fomoHoldingSummary() {
     const h = fomoStats.holders;
-    if (!h) return void box.replaceChildren();
+    if (!h) return null;
 
     const loaded = h.items.length;
     const total = Number.isFinite(h.total) && h.total > 0 ? h.total : loaded;
     const sumUsd = h.items.reduce((a, x) => a + (Number(x?.value) || 0), 0);
     const sumAmt = h.items.reduce((a, x) => a + holderTokenAmount(x), 0);
     const pct = fomoStats.supply > 0 ? (sumAmt / fomoStats.supply) * 100 : NaN;
+    return { loaded, total, sumUsd, sumAmt, pct, lowerBound: loaded < total };
+  }
+
+  function renderFomoStats() {
+    if (!fomoPanelEl) return;
+    const box = fomoPanelEl.querySelector('.gdh-fomo__stats');
+    if (!box) return;
+    const summary = fomoHoldingSummary();
+    if (!summary) return void box.replaceChildren();
 
     const thesis = Number.isFinite(fomoStats.thesisCount)
       ? `${fomoStats.thesisCount} 条观点` : '—';
-    const pctText = Number.isFinite(pct)
-      ? `${loaded < total ? '≥' : ''}${pct < 0.01 ? '<0.01' : pct.toFixed(1)}%`
-      : '—';
-    const sub = `合计 ${fomoUsd(sumUsd) || '$0'} · ${loaded}/${total}`;
+    const pctText = holdingShareText(summary.pct, summary.lowerBound) || '—';
+    const sub = `合计 ${fomoUsd(summary.sumUsd) || '$0'} · ${summary.loaded}/${summary.total}`;
 
     box.replaceChildren(
-      fomoStatBlock('Fomo 持有人数', total.toLocaleString('en-US'), thesis, false),
+      fomoStatBlock('Fomo 持有人数', summary.total.toLocaleString('en-US'), thesis, false),
       fomoStatBlock('Fomo 持仓占比', pctText, sub, true),
     );
+  }
+
+  function tokenHeaderBlock() {
+    const symbol = document.querySelector('#token-base-symbol[data-symbol], [data-testid="token-detail-symbol"]');
+    const firstRow = symbol?.parentElement?.parentElement?.parentElement;
+    const block = firstRow?.parentElement;
+    return block instanceof HTMLElement && block.querySelector('#token-base-address[data-addr]') ? block : null;
+  }
+
+  function renderTokenHeaderBadges() {
+    const route = currentTokenRoute();
+    const block = tokenHeaderBlock();
+    document.querySelectorAll('.gdh-token-header-badges').forEach((node) => {
+      if (!block || !block.contains(node)) node.remove();
+    });
+    if (!route || !block) return;
+
+    const address = block.querySelector('#token-base-address[data-addr]');
+    const row = address?.parentElement?.parentElement;
+    if (!(row instanceof HTMLElement)) return;
+    let host = row.querySelector(':scope > .gdh-token-header-badges');
+    if (!host) {
+      host = document.createElement('span');
+      host.className = 'gdh-token-header-badges';
+      address.parentElement.insertAdjacentElement('afterend', host);
+    }
+
+    const statKey = `${route.chain}|${route.address}`;
+    const summary = fomoStats.key === statKey ? fomoHoldingSummary() : null;
+    let fomoBadge = host.querySelector(':scope > .gdh-token-header-fomo');
+    const fomoShare = settings.enableFomoPanel !== false && summary
+      ? holdingShareText(summary.pct, summary.lowerBound) : '';
+    if (!fomoShare) {
+      fomoBadge?.remove();
+    } else {
+      if (!fomoBadge) {
+        fomoBadge = document.createElement('span');
+        fomoBadge.className = 'gdh-token-header-stat gdh-token-header-fomo';
+        host.prepend(fomoBadge);
+      }
+      fomoBadge.textContent = `fomo ${fomoShare}`;
+      fomoBadge.title = [
+        `Fomo 持仓占比：${fomoShare}`,
+        `已加载 ${summary.loaded}/${summary.total} 位持仓者，合计 ${fomoUsd(summary.sumUsd) || '$0'}`,
+        summary.lowerBound ? '当前只取得前排持仓者，因此该值是下界。' : '',
+      ].filter(Boolean).join('\n');
+    }
+
+    if (settings.enableMarkedHolders === false) host.querySelector(':scope > .gdh-marked')?.remove();
+    else ensureMarkedBadge(host, route.address);
+    if (!host.children.length) host.remove();
+  }
+
+  async function loadFomoHeaderStats(route) {
+    if (!route || settings.enableFomoPanel === false) return;
+    const statKey = `${route.chain}|${route.address}`;
+    if (fomoStats.key !== statKey) {
+      fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0, updatedAt: 0 };
+      fomoSelfHealTried = false;
+    }
+    const now = Date.now();
+    if (fomoHeaderRequest.loading && fomoHeaderRequest.key === statKey) return;
+    if (fomoStats.holders && now - fomoStats.updatedAt < FOMO_REFRESH_MS) return;
+    if (fomoHeaderRequest.key === statKey && now - fomoHeaderRequest.at < FOMO_REFRESH_MS) return;
+    if (fomoLoading && fomoTab === 'holders') return;
+
+    fomoHeaderRequest = { key: statKey, at: now, loading: true };
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'fomo-token-feed',
+        payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'holders' },
+      }).catch(() => null);
+      if (!res?.ok || fomoStats.key !== statKey) return;
+      fomoStats.holders = { items: res.items || [], total: Number(res.total) };
+      fomoStats.updatedAt = Date.now();
+      loadFomoSupply(route);
+      renderFomoStats();
+      renderTokenHeaderBadges();
+    } finally {
+      if (fomoHeaderRequest.key === statKey) fomoHeaderRequest.loading = false;
+    }
+  }
+
+  function scanTokenHeaderBadges() {
+    const route = currentTokenRoute();
+    if (!route) {
+      document.querySelectorAll('.gdh-token-header-badges').forEach((node) => node.remove());
+      return;
+    }
+    renderTokenHeaderBadges();
+    loadFomoHeaderStats(route);
   }
 
   async function loadFomoSupply(route) {
@@ -4662,6 +4811,7 @@ ${flapTooltipText(info)}
       if (supply > 0 && fomoStats.key === statKey) {
         fomoStats.supply = supply;
         renderFomoStats();
+        renderTokenHeaderBadges();
       }
     } finally {
       if (fomoSupplyLoadingKey === statKey) fomoSupplyLoadingKey = '';
@@ -4699,13 +4849,17 @@ ${flapTooltipText(info)}
         fomoLastItems = res.items || [];
         const statKey = `${route.chain}|${route.address}`;
         if (fomoStats.key !== statKey) {
-          fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0 };
+          fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0, updatedAt: 0 };
           fomoSelfHealTried = false;
         }
-        if (fomoTab === 'holders') fomoStats.holders = { items: res.items || [], total: Number(res.total) };
+        if (fomoTab === 'holders') {
+          fomoStats.holders = { items: res.items || [], total: Number(res.total) };
+          fomoStats.updatedAt = Date.now();
+        }
         if (fomoTab === 'thesis') fomoStats.thesisCount = (res.items || []).length;
         loadFomoSupply(route);
         renderFomoStats();
+        renderTokenHeaderBadges();
         renderFomoItems(list, fomoLastItems, fomoTab);
         fomoPanelEl.classList.remove('has-error');
       } else {
@@ -7196,6 +7350,7 @@ ${flapTooltipText(info)}
       // Flap 税收徽章和标注人物徽章就跟着一起没了（开关明明还开着）。
       // 两个都要打网络、又要动第三方 DOM，各自兜住别把整轮扫描带塌。
       timed('marked', () => { try { scanMarkedBadges(); } catch { /* 不影响其余扫描 */ } });
+      timed('header-badges', () => { try { scanTokenHeaderBadges(); } catch { /* 不影响其余扫描 */ } });
       timed('flap', () => { try { scanFlapBadges(); } catch { /* 不影响其余扫描 */ } });
       timed('robinhood-search-meta', () => { try { scanRobinhoodSearchBadges(); } catch { /* 不影响其余扫描 */ } });
       timed('robinhood-rwa', () => { try { scanRobinhoodRwaPoolLinks(); } catch { /* 不影响其余扫描 */ } });
@@ -7390,7 +7545,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
