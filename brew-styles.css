@@ -1,0 +1,214 @@
+.gdh-brew-launcher,
+.gdh-brew-panel,
+.gdh-brew-panel * {
+  box-sizing: border-box;
+}
+
+.gdh-brew-launcher {
+  position: fixed;
+  right: 18px;
+  bottom: 88px;
+  z-index: 2147482900;
+  padding: 7px 12px;
+  border: 1px solid rgba(245, 184, 61, 0.45);
+  border-radius: 999px;
+  background: #15181d;
+  color: #c8cdd6;
+  box-shadow: 0 7px 22px rgba(0, 0, 0, 0.48);
+  font: 700 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.gdh-brew-launcher:hover,
+.gdh-brew-launcher.is-active {
+  border-color: #f5b83d;
+  background: rgba(245, 184, 61, 0.14);
+  color: #ffd77d;
+}
+
+.gdh-brew-panel {
+  position: fixed;
+  z-index: 2147482950;
+  width: 410px;
+  max-width: calc(100vw - 24px);
+  max-height: min(720px, calc(100vh - 110px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(139, 147, 161, 0.32);
+  border-radius: 12px;
+  background: #111419;
+  color: #d9dde5;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  font: 400 12px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.gdh-brew__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.18);
+  background: #15181e;
+  cursor: move;
+  user-select: none;
+}
+
+.gdh-brew__title {
+  flex: none;
+  color: #f5b83d;
+  font-size: 13px;
+}
+
+.gdh-brew__tabs {
+  display: flex;
+  min-width: 0;
+  margin-left: 3px;
+  gap: 3px;
+}
+
+.gdh-brew__tab,
+.gdh-brew__icon,
+.gdh-brew__retry {
+  border: 0;
+  background: transparent;
+  color: #8f98a7;
+  cursor: pointer;
+}
+
+.gdh-brew__tab {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gdh-brew__tab:hover,
+.gdh-brew__tab.is-active {
+  background: rgba(245, 184, 61, 0.13);
+  color: #ffd77d;
+}
+
+.gdh-brew__icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 5px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.gdh-brew__icon:first-of-type { margin-left: auto; }
+.gdh-brew__icon:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+
+.gdh-brew__status {
+  flex: none;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.13);
+  color: #747d8c;
+  font-size: 10px;
+}
+
+.gdh-brew__list {
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #3b414b transparent;
+}
+
+.gdh-brew__row {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(139, 147, 161, 0.13);
+  background: transparent;
+  cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 76px;
+}
+
+.gdh-brew__row:hover,
+.gdh-brew__row:focus-visible {
+  background: rgba(245, 184, 61, 0.055);
+  outline: none;
+}
+
+.gdh-brew__avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid rgba(245, 184, 61, 0.35);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #28200f, #171a21);
+  color: #f5b83d;
+  font: 800 10px/32px system-ui, sans-serif;
+  text-align: center;
+}
+
+.gdh-brew__body { min-width: 0; flex: 1; }
+.gdh-brew__head { display: flex; align-items: baseline; gap: 8px; }
+.gdh-brew__identity { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 6px; }
+.gdh-brew__symbol { max-width: 42%; overflow: hidden; color: #eef1f5; text-overflow: ellipsis; white-space: nowrap; }
+.gdh-brew__name { min-width: 0; overflow: hidden; color: #737c8b; text-overflow: ellipsis; white-space: nowrap; }
+.gdh-brew__age { flex: none; color: #7b8492; font-size: 10px; }
+
+.gdh-brew__metrics {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  margin-top: 3px;
+  color: #aeb5c0;
+  font-size: 11px;
+}
+
+.gdh-brew__metric { white-space: nowrap; }
+.gdh-brew__change { margin-left: auto; font-weight: 700; }
+.gdh-brew__change.is-up { color: #32d17d; }
+.gdh-brew__change.is-down { color: #ef6262; }
+
+.gdh-brew__pool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 6px;
+  padding: 4px 7px;
+  border: 1px solid rgba(76, 159, 254, 0.2);
+  border-radius: 5px;
+  background: rgba(76, 159, 254, 0.06);
+  color: #83b8f5;
+  text-decoration: none;
+}
+
+.gdh-brew__pool:hover { border-color: rgba(76, 159, 254, 0.55); background: rgba(76, 159, 254, 0.11); }
+.gdh-brew__pool-main { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gdh-brew__pool-liq { flex: none; color: #7f8998; font-size: 10px; white-space: nowrap; }
+
+.gdh-brew__empty {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #747d8c;
+  text-align: center;
+}
+
+.gdh-brew__empty.is-error { color: #e18484; }
+.gdh-brew__retry { padding: 5px 12px; border: 1px solid rgba(245, 184, 61, 0.45); border-radius: 6px; color: #f5b83d; }
+.gdh-brew__retry:hover { background: rgba(245, 184, 61, 0.1); }
+
+@media (max-width: 520px) {
+  .gdh-brew-panel { width: calc(100vw - 16px); max-width: none; }
+  .gdh-brew__bar { padding-left: 9px; }
+  .gdh-brew__title { font-size: 12px; }
+  .gdh-brew__tab { padding-inline: 5px; }
+}

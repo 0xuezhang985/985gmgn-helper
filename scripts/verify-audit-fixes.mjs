@@ -13,6 +13,8 @@ const bridge = read('page-bridge.js');
 const debotContent = read('debot-content.js');
 const debotBridge = read('debot-bridge.js');
 const debotStyles = read('debot-styles.css');
+const brewContent = read('brew-content.js');
+const brewStyles = read('brew-styles.css');
 const manifest = JSON.parse(read('manifest.json'));
 const releaseBuild = read('scripts/build-release.ps1');
 const popup = read('popup.js');
@@ -1824,7 +1826,7 @@ await test('设置面板按职责分组并展示全部功能开关', () => {
     'enable-fomo-trending',
     'fomo-translate', 'enable-marked-holders', 'enable-merge-fomo-holders',
     'enable-flap-tax', 'enable-all-pools', 'enable-holding-surge',
-    'enable-remind-alert', 'hide-lightning-trade',
+    'enable-remind-alert', 'hide-lightning-trade', 'enable-brew-panel',
   ];
   ids.forEach((id) => assert.ok(popupHtml.includes(`id="${id}"`), `missing setting ${id}`));
   assert.ok(popup.includes("fomoTranslate: document.querySelector('#fomo-translate')"));
@@ -1833,6 +1835,83 @@ await test('设置面板按职责分组并展示全部功能开关', () => {
   assert.match(popupHtml, /<h2>追踪流与特别关注<\/h2>/);
   assert.match(popupHtml, /<h2>代币数据<\/h2>/);
   assert.match(popupHtml, /<h2>提醒与界面<\/h2>/);
+});
+
+await test('Brew 官方发行快照按固定工厂和完整地址清洗', () => {
+  const fn = extractFunction(brewContent, 'compactBrewCheckpoint');
+  const factory = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
+  const valid = JSON.parse(JSON.stringify(evaluate(
+    [fn],
+    `compactBrewCheckpoint({factory: '${factory}', tokens: [
+      {address:'0x1111111111111111111111111111111111111111',pool:'0x2222222222222222222222222222222222222222',symbol:'BREW',name:'Brew',quoteSymbol:'WBNB',launchedAt:1000},
+      {address:'0x1111111111111111111111111111111111111111',pool:'0x3333333333333333333333333333333333333333',symbol:'DUP',name:'Duplicate',quoteSymbol:'USDT',launchedAt:900},
+      {address:'bad',pool:'0x4444444444444444444444444444444444444444',symbol:'BAD',launchedAt:800}
+    ]}, 2000)`,
+    { BREW_FACTORY: factory, ADDRESS_RE: /^0x[a-fA-F0-9]{40}$/ },
+  )));
+  assert.equal(valid.length, 1);
+  assert.equal(valid[0].address, '0x1111111111111111111111111111111111111111');
+  assert.equal(valid[0].pool, '0x2222222222222222222222222222222222222222');
+  const wrongFactory = evaluate(
+    [fn],
+    `compactBrewCheckpoint({factory:'0x0000000000000000000000000000000000000000',tokens:[]}, 2000)`,
+    { BREW_FACTORY: factory, ADDRESS_RE: /^0x[a-fA-F0-9]{40}$/ },
+  );
+  assert.equal(wrongFactory.length, 0);
+});
+
+await test('Brew 行情只匹配官方池与代币双重一致的交易对', () => {
+  const finite = extractFunction(brewContent, 'finiteBrewNumber');
+  assert.equal(evaluate([finite], 'finiteBrewNumber(null)'), null);
+  assert.equal(evaluate([finite], "finiteBrewNumber('')"), null);
+  const merge = extractFunction(brewContent, 'mergeBrewMarkets');
+  const address = '0x1111111111111111111111111111111111111111';
+  const pool = '0x2222222222222222222222222222222222222222';
+  const items = JSON.parse(JSON.stringify(evaluate(
+    [finite, merge],
+    `mergeBrewMarkets([{address:'${address}',pool:'${pool}',launchedAt:1000}], [
+      {pairAddress:'${pool}',baseToken:{address:'0x3333333333333333333333333333333333333333'},marketCap:999999,liquidity:{usd:999}},
+      {pairAddress:'${pool}',baseToken:{address:'${address}'},marketCap:12345,fdv:13000,volume:{h24:456},liquidity:{usd:789},priceChange:{h24:12.5},txns:{h24:{buys:8,sells:3}},dexId:'pancakeswap',labels:['v3']}
+    ])`,
+    { ADDRESS_RE: /^0x[a-fA-F0-9]{40}$/ },
+  )));
+  assert.equal(items.length, 1);
+  assert.equal(items[0].indexed, true);
+  assert.equal(items[0].marketCapUsd, 12345);
+  assert.equal(items[0].liquidityUsd, 789);
+  assert.equal(items[0].dexLabel, 'v3');
+});
+
+await test('Brew 三标签分别按创建、24h 成交额和市值排序', () => {
+  const sort = extractFunction(brewContent, 'sortBrewItems');
+  const source = `[
+    {symbol:'A',launchedAt:30,volume24hUsd:1,marketCapUsd:10,liquidityUsd:1},
+    {symbol:'B',launchedAt:20,volume24hUsd:30,marketCapUsd:20,liquidityUsd:2},
+    {symbol:'C',launchedAt:10,volume24hUsd:20,marketCapUsd:40,liquidityUsd:3}
+  ]`;
+  const symbols = (tab) => Array.from(evaluate([sort], `sortBrewItems(${source}, '${tab}').map(x=>x.symbol)`));
+  assert.deepEqual(symbols('new'), ['A', 'B', 'C']);
+  assert.deepEqual(symbols('hot'), ['B', 'C', 'A']);
+  assert.deepEqual(symbols('market'), ['C', 'B', 'A']);
+});
+
+await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () => {
+  assert.ok(brewContent.includes("[['new', '新创建'], ['hot', '热门'], ['market', '市值']]"));
+  assert.ok(brewContent.includes('https://brew.family/launch-checkpoint.json'));
+  assert.ok(brewContent.includes('https://api.dexscreener.com/latest/dex/pairs/bsc/'));
+  assert.ok(brewContent.includes('location.assign(`/token/${item.address}`)'));
+  assert.ok(brewContent.includes('https://dexscreener.com/bsc/${item.pool}'));
+  assert.ok(brewStyles.includes('.gdh-brew__pool'));
+  assert.ok(brewStyles.includes('content-visibility: auto'));
+  assert.ok(manifest.host_permissions.includes('https://brew.family/*'));
+  assert.ok(!manifest.host_permissions.includes('https://api.dexscreener.com/*'));
+  assert.ok(manifest.content_scripts.some((entry) => entry.matches.includes('https://brew.family/*')
+    && entry.js.includes('brew-content.js') && entry.css.includes('brew-styles.css')));
+  assert.ok(popup.includes("enableBrewPanel: document.querySelector('#enable-brew-panel')"));
+  assert.ok(releaseBuild.includes("'brew-content.js'"));
+  assert.ok(releaseBuild.includes("'brew-styles.css'"));
+  assert.ok(privacy.includes('/launch-checkpoint.json'));
+  assert.ok(privacy.includes('最多 30 个官方池一组'));
 });
 
 await test('DeBot FOMO 翻译支持混合文本、缓存重绘和真实点击下载', () => {
