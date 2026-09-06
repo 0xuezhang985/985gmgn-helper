@@ -1055,15 +1055,15 @@ await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
   assert.equal(location.href, target);
 });
 
-await test('DeBot 只注入追踪桥、混排脚本和 FOMO 小窗样式', () => {
+await test('DeBot 只注入追踪、FOMO 与独立 Brew 浮窗模块', () => {
   assert.ok(manifest.host_permissions.includes('https://debot.ai/*'));
   const debotScripts = manifest.content_scripts.filter((entry) => entry.matches.includes('https://debot.ai/*'));
   assert.equal(debotScripts.length, 2);
   const main = debotScripts.find((entry) => entry.world === 'MAIN');
   const isolated = debotScripts.find((entry) => entry.world !== 'MAIN');
   assert.deepEqual(main.js, ['debot-bridge.js']);
-  assert.deepEqual(isolated.js, ['debot-content.js']);
-  assert.deepEqual(isolated.css, ['debot-styles.css']);
+  assert.deepEqual(isolated.js, ['debot-content.js', 'brew-content.js']);
+  assert.deepEqual(isolated.css, ['debot-styles.css', 'brew-styles.css']);
   assert.ok(!isolated.js.includes('content.js'));
   for (const file of ['debot-bridge.js', 'debot-content.js', 'debot-styles.css']) {
     assert.ok(releaseBuild.includes(`'${file}'`), `release missing ${file}`);
@@ -1444,6 +1444,8 @@ await test('DeBot RWA 点击渲染本页资产浮窗且不触发原生跳转', (
 
 await test('版本变更后只刷新一次已打开的支持站点标签页', async () => {
   const fn = extractFunction(background, 'refreshSupportedTabsAfterVersionChange');
+  assert.ok(fn.includes("'https://gmgn.ai/*', 'https://debot.ai/*'"));
+  assert.ok(!fn.includes('https://brew.family/*'));
   const reloaded = [];
   const saved = {};
   await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
@@ -1899,14 +1901,28 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(brewContent.includes("[['new', '新创建'], ['hot', '热门'], ['market', '市值']]"));
   assert.ok(brewContent.includes('https://brew.family/launch-checkpoint.json'));
   assert.ok(brewContent.includes('https://api.dexscreener.com/latest/dex/pairs/bsc/'));
-  assert.ok(brewContent.includes('location.assign(`/token/${item.address}`)'));
+  const pathFn = extractFunction(brewContent, 'brewTokenPath');
+  const pathFor = (hostname) => evaluate(
+    [pathFn],
+    "brewTokenPath('0x1111111111111111111111111111111111111111')",
+    { ADDRESS_RE: /^0x[a-fA-F0-9]{40}$/, location: { hostname } },
+  );
+  assert.equal(pathFor('gmgn.ai'), '/bsc/token/0x1111111111111111111111111111111111111111');
+  assert.equal(pathFor('debot.ai'), '/token/bsc/0x1111111111111111111111111111111111111111');
+  assert.equal(pathFor('brew.family'), '');
   assert.ok(brewContent.includes('https://dexscreener.com/bsc/${item.pool}'));
   assert.ok(brewStyles.includes('.gdh-brew__pool'));
   assert.ok(brewStyles.includes('content-visibility: auto'));
   assert.ok(manifest.host_permissions.includes('https://brew.family/*'));
   assert.ok(!manifest.host_permissions.includes('https://api.dexscreener.com/*'));
-  assert.ok(manifest.content_scripts.some((entry) => entry.matches.includes('https://brew.family/*')
-    && entry.js.includes('brew-content.js') && entry.css.includes('brew-styles.css')));
+  assert.ok(!manifest.content_scripts.some((entry) => entry.matches.includes('https://brew.family/*')));
+  for (const origin of ['https://gmgn.ai/*', 'https://debot.ai/*']) {
+    assert.ok(manifest.content_scripts.some((entry) => entry.matches.includes(origin)
+      && entry.js.includes('brew-content.js') && entry.css.includes('brew-styles.css')));
+  }
+  assert.match(brewStyles, /\.gdh-brew-launcher\s*\{[\s\S]*?bottom:\s*44px/);
+  assert.match(brewStyles, /\.gdh-brew-launcher\.is-debot\s*\{[\s\S]*?bottom:\s*18px/);
+  assert.match(debotStyles, /\.gdh-debot-fomo-launcher\s*\{[\s\S]*?bottom:\s*60px/);
   assert.ok(popup.includes("enableBrewPanel: document.querySelector('#enable-brew-panel')"));
   assert.ok(releaseBuild.includes("'brew-content.js'"));
   assert.ok(releaseBuild.includes("'brew-styles.css'"));

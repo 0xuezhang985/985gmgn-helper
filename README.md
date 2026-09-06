@@ -1,6 +1,6 @@
 # better gmgn
 
-给 GMGN.ai 加一层交易辅助，把 FOMO/Pump 追踪流与 FOMO 小窗适配到 DeBot，并为 Brew 增加战壕浮窗的 Chrome 扩展（Manifest V3）。原名「985gmgn助手」，v0.28.0 起改名 **better gmgn**——扩展 ID 未变，升级后你的名单与配置都在。
+给 GMGN.ai 加一层交易辅助，把 FOMO/Pump 追踪流与 FOMO 小窗适配到 DeBot，并在 GMGN/DeBot 内提供 Brew 战壕浮窗的 Chrome 扩展（Manifest V3）。原名「985gmgn助手」，v0.28.0 起改名 **better gmgn**——扩展 ID 未变，升级后你的名单与配置都在。
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
@@ -81,7 +81,7 @@ DeBot 适配覆盖 `/track` 各标签和 `/token/<chain>/<token>` 代币页的�
 
 ### Brew 战壕
 
-在 `brew.family` 页面右下角点 `🍺 Brew`，打开可拖动、记住位置的战壕浮窗：
+在 GMGN 或 DeBot 页面中，`fomo` 按钮下方会显示 `🍺 Brew`；点击可打开可拖动、记住位置的战壕浮窗。插件不会在 Brew 官网显示按钮或浮窗：
 
 - **新创建**：按 Brew 官方发行时间倒序。
 - **热门**：按对应 Brew 官方底池的 24 小时成交额排序，不使用不透明的第三方热度分。

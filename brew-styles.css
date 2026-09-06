@@ -7,7 +7,7 @@
 .gdh-brew-launcher {
   position: fixed;
   right: 18px;
-  bottom: 88px;
+  bottom: 44px;
   z-index: 2147482900;
   padding: 7px 12px;
   border: 1px solid rgba(245, 184, 61, 0.45);
@@ -17,6 +17,14 @@
   box-shadow: 0 7px 22px rgba(0, 0, 0, 0.48);
   font: 700 12px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
+}
+
+.gdh-brew-launcher.is-debot {
+  right: 16px;
+  bottom: 18px;
+  width: 58px;
+  height: 34px;
+  padding: 0;
 }
 
 .gdh-brew-launcher:hover,
@@ -211,4 +219,5 @@
   .gdh-brew__bar { padding-left: 9px; }
   .gdh-brew__title { font-size: 12px; }
   .gdh-brew__tab { padding-inline: 5px; }
+  .gdh-brew-launcher.is-debot { right: 10px; bottom: 12px; }
 }

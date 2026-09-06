@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.45 - 2026-09-07
+
+- **修正 Brew 战壕展示位置**：Brew 按钮与浮窗不再注入 `brew.family` 官网，改为同时注入 GMGN 与 DeBot；两个站点都把 `🍺 Brew` 按钮固定放在现有 `fomo` 按钮正下方。DeBot 原 FOMO 按钮相应上移 42px，桌面和窄屏均保留 8px 间距，不会互相覆盖。
+- **卡片点击按当前站点跳转**：在 GMGN 打开 `/bsc/token/<address>`，在 DeBot 打开 `/token/bsc/<address>`；底池条仍指向该发行的 DexScreener 精确池。Brew 官网只作为公开 `launch-checkpoint.json` 数据源，不运行插件 UI，也不读取其登录态。
+- 更新清单注入、设置文案、隐私说明与回归断言；93 项完整自动化回归与 JavaScript 语法检查通过。Brew 三标签、官方池双重精确匹配、2 分钟缓存均保持不变，未修改 GMGN/DeBot 的 FOMO/Pump 插卡、过滤、去重、当前币、特别关注或持仓提醒逻辑。
+
 ## 0.46.44 - 2026-09-07
 
 - **Brew 平台新增独立战壕浮窗**：在 `brew.family` 页面右下角增加 `🍺 Brew` 入口，浮窗提供“新创建 / 热门 / 市值”三个标签，支持拖动和记住位置。新创建按 Brew 官方发行时间排序；热门按对应官方池 24 小时成交额排序；市值按 MC 排序，只有 MC 缺失时才明确使用 FDV。

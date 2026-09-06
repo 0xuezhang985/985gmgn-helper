@@ -194,12 +194,22 @@
     return element;
   }
 
+  function brewTokenPath(address) {
+    if (!ADDRESS_RE.test(String(address || ''))) return '';
+    if (location.hostname === 'gmgn.ai') return `/bsc/token/${address}`;
+    if (location.hostname === 'debot.ai') return `/token/bsc/${address}`;
+    return '';
+  }
+
   function renderBrewRow(item) {
     const row = document.createElement('article');
     row.className = 'gdh-brew__row';
     row.tabIndex = 0;
     row.title = `打开 Brew 原生代币页：${item.address}`;
-    const openToken = () => { location.assign(`/token/${item.address}`); };
+    const openToken = () => {
+      const path = brewTokenPath(item.address);
+      if (path) location.assign(path);
+    };
     row.addEventListener('click', openToken);
     row.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -389,6 +399,7 @@
     }
     if (!launcherEl || !document.contains(launcherEl)) {
       launcherEl = createText('button', 'gdh-brew-launcher', '🍺 Brew');
+      launcherEl.classList.toggle('is-debot', location.hostname === 'debot.ai');
       launcherEl.type = 'button';
       launcherEl.title = '打开 Brew 战壕';
       launcherEl.addEventListener('click', () => setBrewOpen(!settings.brewPanelOpen));

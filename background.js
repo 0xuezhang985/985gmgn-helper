@@ -17,7 +17,7 @@ async function refreshSupportedTabsAfterVersionChange() {
     const version = chrome.runtime.getManifest().version;
     const stored = await chrome.storage.local.get(RUNNING_VERSION_KEY);
     if (stored?.[RUNNING_VERSION_KEY] === version) return;
-    const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*', 'https://brew.family/*'] });
+    const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
     await Promise.allSettled(
       tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.tabs.reload(tab.id)),
     );

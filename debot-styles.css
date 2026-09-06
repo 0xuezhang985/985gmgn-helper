@@ -656,7 +656,7 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
 .gdh-debot-fomo-launcher {
   position: fixed;
   right: 16px;
-  bottom: 18px;
+  bottom: 60px;
   z-index: 2147482998;
   width: 46px;
   height: 34px;
@@ -1070,7 +1070,7 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
 
 @media (max-width: 760px) {
   .gdh-debot-fomo { right: 8px !important; left: 8px !important; width: auto; }
-  .gdh-debot-fomo-launcher { right: 10px; bottom: 12px; }
+  .gdh-debot-fomo-launcher { right: 10px; bottom: 54px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
