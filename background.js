@@ -354,6 +354,64 @@ async function fetchRobinhoodRwaCatalog() {
   return robinhoodRwaCatalogPending;
 }
 
+// StonkFun 的 Solana RWA 配对资产目录。只接受站点明确标为 xstock 的报价币，
+// 并保留大小写敏感的 Solana mint；不按 symbol/name 推断，避免同名币误命中。
+const STONKFUN_RWA_CATALOG_URL = 'https://www.stonkfun.xyz/api/quote-tokens';
+const STONKFUN_RWA_CATALOG_TTL = 15 * 60 * 1000;
+let stonkfunRwaCatalogCache = null;
+let stonkfunRwaCatalogPending = null;
+
+function compactStonkfunRwaCatalog(payload) {
+  return (Array.isArray(payload?.quoteTokens) ? payload.quoteTokens : [])
+    .map((item) => {
+      const address = String(item?.quoteMint || '').trim();
+      const symbol = String(item?.symbol || '').replace(/[\r\n\t]/g, '').slice(0, 24);
+      const name = String(item?.name || '').replace(/[\r\n\t]/g, ' ').slice(0, 80);
+      const decimals = Number(item?.decimals);
+      return {
+        address,
+        symbol,
+        name,
+        description: `${name || symbol} · StonkFun xStocks RWA 配对资产`,
+        category: String(item?.category || '').toLowerCase(),
+        decimals: Number.isInteger(decimals) && decimals >= 0 && decimals <= 18 ? decimals : null,
+        network: 'Solana',
+        source: 'stonkfun',
+      };
+    })
+    .filter((item) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(item.address)
+      && item.symbol && item.category === 'xstock');
+}
+
+async function fetchStonkfunRwaCatalog() {
+  if (stonkfunRwaCatalogCache
+    && Date.now() - stonkfunRwaCatalogCache.at < STONKFUN_RWA_CATALOG_TTL) {
+    return { ok: true, assets: stonkfunRwaCatalogCache.assets };
+  }
+  if (stonkfunRwaCatalogPending) return stonkfunRwaCatalogPending;
+  stonkfunRwaCatalogPending = (async () => {
+    try {
+      const response = await fetch(STONKFUN_RWA_CATALOG_URL, {
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const assets = compactStonkfunRwaCatalog(await response.json());
+      if (!assets.length) throw new Error('empty catalog');
+      stonkfunRwaCatalogCache = { at: Date.now(), assets };
+      return { ok: true, assets };
+    } catch (error) {
+      if (stonkfunRwaCatalogCache?.assets?.length) {
+        return { ok: true, stale: true, assets: stonkfunRwaCatalogCache.assets };
+      }
+      return { ok: false, reason: 'request', message: String(error?.message || '') };
+    } finally {
+      stonkfunRwaCatalogPending = null;
+    }
+  })();
+  return stonkfunRwaCatalogPending;
+}
+
 /** 递归找出响应里第一个「对象数组」，避开各层包装字段名的不确定性。 */
 function firstObjectArray(value, depth) {
   if (!value || typeof value !== 'object' || depth > 4) return null;
@@ -438,7 +496,7 @@ async function fomoResponseUnauthed(response) {
 }
 
 /** 带令牌打 fomo 接口：快过期先交给页面 SDK 续，被拒再等待镜像并重试。 */
-async function fomoAuthedFetch(path) {
+async function fomoAuthedFetch(path, init = {}) {
   let stored = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
   // 剩不到 10 秒才等待页面续期；更早等待只会让一次正常请求白卡 35 秒。
   if (stored?.refresh && stored.exp && stored.exp - Date.now() < 10000) {
@@ -449,9 +507,13 @@ async function fomoAuthedFetch(path) {
       || null;
   }
   const send = (token) => {
-    const headers = { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS };
+    const headers = {
+      Accept: 'application/json',
+      'X-Supported-Chains': FOMO_CHAINS,
+      ...(init.headers || {}),
+    };
     if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(`${FOMO_API}${path}`, { headers, credentials: 'include' });
+    return fetch(`${FOMO_API}${path}`, { ...init, headers, credentials: 'include' });
   };
   let res = await send(stored?.token);
   let renewed = false;
@@ -1085,6 +1147,95 @@ function normalizeFomoRankSnapshot(raw) {
     }
   }
   return { updatedAt: Math.max(0, Math.trunc(Number(raw?.updatedAt) || 0)), ranks };
+}
+
+const FOMO_TRENDING_CACHE_MS = 15000;
+let fomoTrendingCache = null;
+let fomoTrendingPending = null;
+
+function compactFomoTrendingItems(value) {
+  const chainByNetwork = new Map([
+    [1, 'eth'], [56, 'bsc'], [143, 'monad'], [4663, 'robinhood'],
+    [8453, 'base'], [1399811149, 'sol'],
+  ]);
+  const numeric = (input) => input !== null && input !== undefined && input !== ''
+    && Number.isFinite(Number(input)) ? Number(input) : null;
+  return (Array.isArray(value) ? value : []).slice(0, 50).map((item) => {
+    const networkId = Number(item?.token?.networkId);
+    const chain = chainByNetwork.get(networkId) || '';
+    const address = String(item?.token?.address || '').trim();
+    const evm = /^0x[a-fA-F0-9]{40}$/.test(address);
+    const sol = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+    const image = String(item?.token?.info?.imageSmallUrl
+      || item?.token?.info?.imageThumbUrl || '').trim();
+    return {
+      chain,
+      networkId,
+      address: evm ? address.toLowerCase() : address,
+      symbol: String(item?.token?.symbol || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      name: String(item?.token?.name || '').replace(/[\r\n\t]/g, ' ').slice(0, 80),
+      image: /^https:\/\//i.test(image) ? image.slice(0, 500) : '',
+      priceUsd: numeric(item?.priceUSD),
+      marketCapUsd: numeric(item?.marketCap),
+      change24Ratio: numeric(item?.change24),
+      holders: numeric(item?.holders),
+      liquidityUsd: numeric(item?.liquidity),
+      volume24Usd: numeric(item?.volume24),
+      createdAt: numeric(item?.createdAt),
+      valid: Boolean(chain && ((networkId === 1399811149 && sol)
+        || (networkId !== 1399811149 && evm))),
+    };
+  }).filter((item) => item.valid && item.symbol).map(({ valid, ...item }) => item);
+}
+
+async function fomoFetchTrending() {
+  if (fomoTrendingCache && Date.now() - fomoTrendingCache.at < FOMO_TRENDING_CACHE_MS) {
+    return fomoTrendingCache.data;
+  }
+  if (fomoTrendingPending) return fomoTrendingPending;
+  fomoTrendingPending = (async () => {
+    try {
+      const { res, stored, renewed, unauthed } = await fomoAuthedFetch(
+        '/proxy/trendingTokens',
+        { method: 'POST' },
+      );
+      const token = stored?.token;
+      if (!res.ok && unauthed && !token) {
+        return { ok: false, reason: 'no-token', status: res.status, tokenAt: 0 };
+      }
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: unauthed ? (token ? 'expired' : 'no-token') : `http-${res.status}`,
+          status: res.status,
+          tokenAt: stored?.at || 0,
+          renewed,
+        };
+      }
+      const body = await res.json().catch(() => null);
+      const inner = Number(body?.statusCode);
+      if (body?.success === false || (Number.isFinite(inner) && inner !== 200)) {
+        const unauth = inner === 401 || inner === 403;
+        return {
+          ok: false,
+          reason: unauth ? (token ? 'expired' : 'no-token') : `api-${inner || 'error'}`,
+          status: inner || res.status,
+          message: String(body?.message || '').slice(0, 120),
+          tokenAt: stored?.at || 0,
+          renewed,
+        };
+      }
+      const items = compactFomoTrendingItems(body?.responseObject);
+      const data = { ok: true, items, count: items.length, at: Date.now() };
+      fomoTrendingCache = { at: Date.now(), data };
+      return data;
+    } catch (error) {
+      return { ok: false, reason: 'network', message: String(error?.message || '').slice(0, 80) };
+    } finally {
+      fomoTrendingPending = null;
+    }
+  })();
+  return fomoTrendingPending;
 }
 
 function fomoRankSnapshotForStorage(snapshot = fomoRankSnapshot) {
@@ -1880,6 +2031,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'stonkfun-rwa-catalog') {
+    fetchStonkfunRwaCatalog()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
   if (message?.type === 'fomo-user-pnl') {
     fomoUserPnl7d(message.payload || {})
       .then(sendResponse)
@@ -1889,6 +2047,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'fomo-token-feed') {
     fomoFetchToken(message.payload || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'fomo-trending') {
+    fomoFetchTrending()
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

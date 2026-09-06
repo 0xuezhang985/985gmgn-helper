@@ -585,7 +585,8 @@ await test('GMGN 详情只给地址命中的 RWA 池行加页面内资料浮窗'
   assert.ok(!open.includes('window.open'));
   const show = extractFunction(content, 'showRobinhoodRwaPopover');
   assert.ok(show.includes("popover.setAttribute('role', 'dialog')"));
-  assert.ok(show.includes("source.textContent = '985monitor · RWA 资产'"));
+  assert.ok(show.includes("'985monitor · RWA 资产'"));
+  assert.ok(show.includes("'StonkFun · xStocks RWA'"));
   assert.ok(show.includes("['链上价'"));
   assert.ok(show.includes("['溢价'"));
   assert.ok(show.includes("['流动性'"));
@@ -1820,6 +1821,7 @@ await test('设置面板按职责分组并展示全部功能开关', () => {
     'enable-callout-blacklist', 'enable-manifesto-toast', 'enable-manifesto-tab',
     'enable-special-wallet', 'special-wallet-default-highlight', 'special-wallet-default-pin',
     'enable-fomo-feed', 'enable-pump-feed', 'fomo-feed-chain-only', 'enable-fomo-panel',
+    'enable-fomo-trending',
     'fomo-translate', 'enable-marked-holders', 'enable-merge-fomo-holders',
     'enable-flap-tax', 'enable-all-pools', 'enable-holding-surge',
     'enable-remind-alert', 'hide-lightning-trade',
@@ -1846,6 +1848,101 @@ await test('DeBot FOMO 翻译支持混合文本、缓存重绘和真实点击下
   assert.ok(!debotContent.includes("/[一-鿿]/.test(raw)"));
   assert.ok(content.includes('primeVisibleFomoTranslators();'));
   assert.ok(content.includes('`${fomoStats.thesisCount} 条观点`'));
+});
+
+await test('StonkFun RWA 目录只接受 xstock 且保留 Solana mint 大小写', () => {
+  const fn = extractFunction(background, 'compactStonkfunRwaCatalog');
+  const mint = 'XsaBXg8dU5cPM6ehmVctMkVqoiRG2ZjMo1cyBJ3AykQ';
+  const items = evaluate([fn], `compactStonkfunRwaCatalog({ quoteTokens: [
+    { quoteMint: '${mint}', symbol: 'KOx', name: 'COCA COLA', decimals: 8, category: 'xstock' },
+    { quoteMint: '9cwDTUQAEp2917QFBXkatiiUkpqGrPLi2QfF5HsxTEii', symbol: 'MEME', name: 'Meme', decimals: 6, category: 'custom' },
+    { quoteMint: 'bad', symbol: 'FAKE', name: 'Fake', category: 'xstock' }
+  ] })`);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].address, mint);
+  assert.equal(items[0].symbol, 'KOx');
+  assert.equal(items[0].name, 'COCA COLA');
+  assert.equal(items[0].decimals, 8);
+  assert.equal(items[0].source, 'stonkfun');
+  assert.ok(background.includes("message?.type === 'stonkfun-rwa-catalog'"));
+  assert.ok(manifest.host_permissions.includes('https://www.stonkfun.xyz/*'));
+  assert.ok(privacy.includes('/api/quote-tokens'));
+});
+
+await test('StonkFun 底池按精确 mint 匹配并在同页浮窗展示 Solana 池资料', () => {
+  const metaFn = extractFunction(content, 'stonkfunPoolMeta');
+  const meta = evaluate([metaFn], `stonkfunPoolMeta({
+    address: '9cwDTUQAEp2917QFBXkatiiUkpqGrPLi2QfF5HsxTEii', symbol: 'MENTOS',
+    pool: {
+      base_address: '9cwDTUQAEp2917QFBXkatiiUkpqGrPLi2QfF5HsxTEii', base_symbol: 'MENTOS',
+      quote_address: 'XsaBXg8dU5cPM6ehmVctMkVqoiRG2ZjMo1cyBJ3AykQ', quote_symbol: 'KOx',
+      pool_address: 'BqRRJtcbH9tiA6sYKmVBirjEbNASs5v1X7pf1HbP3Z8x', exchange: 'ray_clmm',
+      liquidity: '29496.95', base_reserve: '365158637', quote_reserve: '114.505',
+      initial_base_reserve: '13.015', initial_quote_reserve: '818241132',
+      base_reserve_value: '16388', quote_reserve_value: '0', creation_timestamp: 1785893862
+    }
+  })`);
+  assert.equal(meta.ok, true);
+  assert.equal(meta.quoteAddress, 'XsaBXg8dU5cPM6ehmVctMkVqoiRG2ZjMo1cyBJ3AykQ');
+  assert.equal(meta.quoteSymbol, 'KOx');
+  assert.equal(meta.exchange, 'ray_clmm');
+  assert.equal(meta.createdAtMs, 1785893862000);
+
+  const scan = extractFunction(content, 'scanStonkfunRwaPoolLinks');
+  assert.ok(scan.includes('stonkfunRwaCatalog.get(address)'));
+  assert.ok(scan.includes('shown !== expected'));
+  assert.ok(scan.includes('gdhStonkfunRwaMint'));
+  assert.ok(!scan.includes('toLowerCase()'));
+  const show = extractFunction(content, 'showRobinhoodRwaPopover');
+  assert.ok(show.includes("['池类型'"));
+  assert.ok(show.includes("['总流动性'"));
+  assert.ok(show.includes("['池中数量'"));
+  assert.ok(show.includes("['底池创建'"));
+});
+
+await test('FOMO 当前热门通过用户登录态 POST 拉取并压缩公开代币字段', () => {
+  const fn = extractFunction(background, 'compactFomoTrendingItems');
+  const items = evaluate([fn], `compactFomoTrendingItems([
+    { change24: '-0.1307', holders: 100, liquidity: '2000', marketCap: '3000', priceUSD: '0.82', volume24: '4000', createdAt: 123,
+      token: { address: '0x39dbed3a2bd333467115de45665cc57f813c4571', networkId: 4663, symbol: 'PONS', name: 'Pons', info: { imageSmallUrl: 'https://img.example/pons.png' } } },
+    { change24: '0.2', marketCap: '5000', priceUSD: '0.01',
+      token: { address: '9cwDTUQAEp2917QFBXkatiiUkpqGrPLi2QfF5HsxTEii', networkId: 1399811149, symbol: 'MENTOS', name: 'Mentos', info: {} } },
+    { token: { address: 'bad', networkId: 4663, symbol: 'FAKE' } }
+  ])`);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].chain, 'robinhood');
+  assert.equal(items[0].change24Ratio, -0.1307);
+  assert.equal(items[1].chain, 'sol');
+  assert.equal(items[1].address, '9cwDTUQAEp2917QFBXkatiiUkpqGrPLi2QfF5HsxTEii');
+  const fetchTrending = extractFunction(background, 'fomoFetchTrending');
+  assert.ok(fetchTrending.includes("'/proxy/trendingTokens'"));
+  assert.ok(fetchTrending.includes("{ method: 'POST' }"));
+  assert.ok(fetchTrending.includes("reason: 'no-token'"));
+  assert.ok(fetchTrending.includes('if (fomoTrendingPending) return fomoTrendingPending'));
+  assert.ok(fetchTrending.includes('fomoTrendingPending = null'));
+  assert.ok(background.includes("message?.type === 'fomo-trending'"));
+});
+
+await test('GMGN 热门面板新增 fomo 标签且登录失败时提供推荐登录引导', () => {
+  const mount = extractFunction(content, 'fomoTrendingMount');
+  const scan = extractFunction(content, 'scanFomoTrendingTab');
+  const poll = extractFunction(content, 'pollFomoTrending');
+  const render = extractFunction(content, 'renderFomoTrendingPanel');
+  assert.ok(mount.includes('[data-testid="filter-tag-trending"]'));
+  assert.ok(mount.includes('let cursor = tabs.parentElement'));
+  assert.ok(mount.includes('child.getBoundingClientRect().height >= 80'));
+  assert.ok(scan.includes("tab.textContent = 'fomo'"));
+  assert.ok(scan.includes('activateFomoTrending'));
+  const remove = extractFunction(content, 'removeFomoTrendingUi');
+  assert.ok(remove.includes('[data-testid="gdh-fomo-trending"], .gdh-fomo-trending-panel'));
+  assert.ok(remove.includes('.gdh-fomo-trending-native-hidden'));
+  assert.ok(poll.includes("type: 'fomo-trending'"));
+  assert.ok(render.includes("window.open('https://fomo.family/r/Unipioneer'"));
+  assert.ok(render.includes('gdhSpaNavigate(`/${targetChain}/token/${item.address}`)'));
+  assert.ok(styles.includes('.gdh-fomo-trending-native-hidden'));
+  assert.ok(styles.includes('.gdh-fomo-trending-panel.is-active'));
+  assert.ok(popup.includes("enableFomoTrending: document.querySelector('#enable-fomo-trending')"));
+  assert.ok(content.includes('enableFomoTrending: true'));
 });
 
 process.stdout.write(`1..${passed}\n`);

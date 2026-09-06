@@ -1940,6 +1940,163 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
 }
 
+/* GMGN 热门面板内的 fomo 当前热门标签。独立滚动，不碰原生虚拟列表尺寸。 */
+.gdh-fomo-trending-native-hidden {
+  display: none !important;
+}
+
+.gdh-fomo-trending-panel {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--color-text-100, #f2f4f7);
+  background: var(--color-bg-100, #101114);
+  contain: layout paint;
+}
+
+.gdh-fomo-trending-panel.is-active {
+  display: flex;
+  flex-direction: column;
+}
+
+.gdh-fomo-trending__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-line-100, rgba(128, 135, 150, 0.18));
+  color: var(--color-text-300, #8a93a6);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.gdh-fomo-trending__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.gdh-fomo-trending__row {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 18px 32px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 6px 12px 6px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--color-line-100, rgba(128, 135, 150, 0.13));
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gdh-fomo-trending__row:hover {
+  background: var(--color-hover-100, rgba(128, 135, 150, 0.09));
+}
+
+.gdh-fomo-trending__rank {
+  color: var(--color-text-400, #697184);
+  font-size: 10px;
+  text-align: center;
+}
+
+.gdh-fomo-trending__icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--color-line-200, rgba(128, 135, 150, 0.25));
+  border-radius: 50%;
+  color: var(--color-text-200, #c9cfda);
+  background: var(--color-bg-200, #191b20);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gdh-fomo-trending__icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gdh-fomo-trending__identity,
+.gdh-fomo-trending__stats {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gdh-fomo-trending__identity strong,
+.gdh-fomo-trending__stats strong {
+  overflow: hidden;
+  color: var(--color-text-100, #f2f4f7);
+  font-size: 12px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-fomo-trending__identity > span,
+.gdh-fomo-trending__stats > span {
+  color: var(--color-text-300, #8a93a6);
+  font-size: 11px;
+  line-height: 13px;
+}
+
+.gdh-fomo-trending__stats {
+  align-items: flex-end;
+  padding-left: 8px;
+  text-align: right;
+}
+
+.gdh-fomo-trending__stats > span[data-tone="up"] {
+  color: var(--color-green, #25d987);
+}
+
+.gdh-fomo-trending__stats > span[data-tone="down"] {
+  color: var(--color-red, #ff5b62);
+}
+
+.gdh-fomo-trending__state {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 150px;
+  padding: 28px 20px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text-300, #8a93a6);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.gdh-fomo-trending__state strong {
+  color: var(--color-text-100, #f2f4f7);
+  font-size: 13px;
+}
+
+.gdh-fomo-trending__state button {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-line-300, rgba(128, 135, 150, 0.35));
+  border-radius: 6px;
+  color: var(--color-text-100, #f2f4f7);
+  background: var(--color-bg-200, #191b20);
+  cursor: pointer;
+}
+
 .gdh-token-relation {
   display: inline-flex;
   flex: 0 0 auto;
