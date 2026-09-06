@@ -1443,12 +1443,14 @@ await test('DeBot RWA 点击渲染本页资产浮窗且不触发原生跳转', (
 });
 
 await test('版本变更后只刷新一次已打开的支持站点标签页', async () => {
+  const cleanupFn = extractFunction(background, 'cleanupLegacyBrewPageUi');
   const fn = extractFunction(background, 'refreshSupportedTabsAfterVersionChange');
   assert.ok(fn.includes("'https://gmgn.ai/*', 'https://debot.ai/*'"));
   assert.ok(!fn.includes('https://brew.family/*'));
   const reloaded = [];
+  const cleaned = [];
   const saved = {};
-  await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
+  await evaluate([cleanupFn, fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
       runtime: { getManifest: () => ({ version: '0.46.22' }) },
@@ -1457,17 +1459,21 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
         set: async (value) => Object.assign(saved, value),
       } },
       tabs: {
-        query: async () => [{ id: 7 }, { id: 9 }, { id: null }],
+        query: async ({ url }) => url.includes('https://brew.family/*')
+          ? [{ id: 5 }]
+          : [{ id: 7 }, { id: 9 }, { id: null }],
         reload: async (id) => { reloaded.push(id); },
       },
+      scripting: { executeScript: async ({ target }) => { cleaned.push(target.tabId); } },
     },
     Promise,
   });
   assert.deepEqual(reloaded, [7, 9]);
+  assert.deepEqual(cleaned, [5]);
   assert.equal(saved.gdhRunningVersion, '0.46.22');
 
   reloaded.length = 0;
-  await evaluate([fn], 'refreshSupportedTabsAfterVersionChange()', {
+  await evaluate([cleanupFn, fn], 'refreshSupportedTabsAfterVersionChange()', {
     RUNNING_VERSION_KEY: 'gdhRunningVersion',
     chrome: {
       runtime: { getManifest: () => ({ version: '0.46.22' }) },
@@ -1476,10 +1482,18 @@ await test('版本变更后只刷新一次已打开的支持站点标签页', as
         set: async () => {},
       } },
       tabs: { query: async () => [{ id: 7 }], reload: async (id) => { reloaded.push(id); } },
+      scripting: { executeScript: async () => {} },
     },
     Promise,
   });
   assert.deepEqual(reloaded, []);
+});
+
+await test('旧 Brew 页面只移除遗留面板，不刷新页面', async () => {
+  const fn = extractFunction(background, 'cleanupLegacyBrewPageUi');
+  assert.ok(fn.includes("'https://brew.family/*'"));
+  assert.ok(fn.includes(".gdh-brew-launcher, .gdh-brew-panel"));
+  assert.ok(!fn.includes('chrome.tabs.reload'));
 });
 
 await test('Pump 插卡沿用关注、屏蔽、类型与最低成交额过滤', () => {

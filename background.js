@@ -8,6 +8,26 @@ const CHECK_INTERVAL_MINUTES = 360;
 const RUNNING_VERSION_KEY = 'gdhRunningVersion';
 
 /**
+ * v0.46.44 曾把 Brew 面板误注入 brew.family。扩展升级会让旧脚本失效，
+ * 但它已插入的 DOM 不会自动消失；版本变化时只清理这些遗留节点，不刷新页面。
+ */
+async function cleanupLegacyBrewPageUi() {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['https://brew.family/*'] });
+    await Promise.allSettled(
+      tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          document.querySelectorAll('.gdh-brew-launcher, .gdh-brew-panel').forEach((node) => node.remove());
+        },
+      })),
+    );
+  } catch {
+    // 清理失败不影响 GMGN / DeBot 正常升级
+  }
+}
+
+/**
  * 一键升级会先替换扩展文件，再 chrome.runtime.reload()。已打开的支持站点
  * 页里还是旧 content script，扩展重载后它的 runtime 上下文已失效，不会
  * 自己变成新版。新后台首次启动时只刷新一次标签页，让新脚本真正注入。
@@ -17,6 +37,7 @@ async function refreshSupportedTabsAfterVersionChange() {
     const version = chrome.runtime.getManifest().version;
     const stored = await chrome.storage.local.get(RUNNING_VERSION_KEY);
     if (stored?.[RUNNING_VERSION_KEY] === version) return;
+    await cleanupLegacyBrewPageUi();
     const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
     await Promise.allSettled(
       tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.tabs.reload(tab.id)),
