@@ -6,6 +6,11 @@ const UPDATE_ALARM = '985gmgn-update-check';
 const MONITOR985_SYNC_ALARM = '985gmgn-account-sync';
 const CHECK_INTERVAL_MINUTES = 360;
 const RUNNING_VERSION_KEY = 'gdhRunningVersion';
+const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
+const BREW_CHECKPOINT_URL = 'https://brew.family/launch-checkpoint.json';
+const BREW_LOCAL_CACHE_MS = 2 * 60 * 1000;
+let brewLocalCache = null;
+let brewLocalPending = null;
 
 /**
  * v0.46.44 曾把 Brew 面板误注入 brew.family。扩展升级会让旧脚本失效，
@@ -49,6 +54,234 @@ async function refreshSupportedTabsAfterVersionChange() {
 }
 
 refreshSupportedTabsAfterVersionChange();
+
+function brewMarketNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+const BREW_ARTWORK_RE = /^onchain:\/\/56\/(0x[a-fA-F0-9]{40})$/;
+const BREW_ARTWORK_DATA_RE = /^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/;
+const BREW_ARTWORK_MAX_DATA_URL = 40000;
+const brewArtworkCache = new Map();
+
+function brewArtworkMime(bytes) {
+  if (bytes.length > 12 && bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70
+    && bytes[3] === 70 && bytes[8] === 87 && bytes[9] === 69 && bytes[10] === 66 && bytes[11] === 80) {
+    return 'image/webp';
+  }
+  if (bytes.length > 8 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) {
+    return 'image/png';
+  }
+  if (bytes.length > 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
+  return '';
+}
+
+function brewDecodeArtworkCode(code) {
+  const hex = String(code || '');
+  if (!hex.startsWith('0x00') || hex.length < 30 || hex.length > 47004 || (hex.length - 4) % 2 !== 0) return '';
+  const body = hex.slice(4);
+  const bytes = new Uint8Array(body.length / 2);
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = Number.parseInt(body.slice(index * 2, index * 2 + 2), 16);
+    if (!Number.isFinite(byte)) return '';
+    bytes[index] = byte;
+    binary += String.fromCharCode(byte);
+  }
+  const mime = brewArtworkMime(bytes);
+  return mime ? `data:${mime};base64,${btoa(binary)}` : '';
+}
+
+async function brewArtworkRpc(rpc, contracts) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(contracts.map((contract, index) => ({
+        jsonrpc: '2.0', id: index + 1, method: 'eth_getCode', params: [contract, 'latest'],
+      }))),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`http-${response.status}`);
+    const body = await response.json();
+    const list = Array.isArray(body) ? body : [body];
+    const byId = new Map(list.map((item) => [item.id, item]));
+    return contracts.map((_, index) => byId.get(index + 1)?.result || '');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function hydrateBrewArtwork(tokens) {
+  const list = Array.isArray(tokens) ? tokens : [];
+  const contracts = [...new Set(list.map((token) => String(token?.imageUrl || '').match(BREW_ARTWORK_RE)?.[1]?.toLowerCase())
+    .filter((contract) => contract && !brewArtworkCache.has(contract)))];
+  for (let index = 0; index < contracts.length; index += 30) {
+    const batch = contracts.slice(index, index + 30);
+    let codes = null;
+    for (const rpc of FLAP_RPCS) {
+      try {
+        codes = await brewArtworkRpc(rpc, batch);
+        break;
+      } catch {
+        // 当前公共节点不可用时换下一个，头像失败不影响代币与行情主体。
+      }
+    }
+    if (!codes) continue;
+    batch.forEach((contract, offset) => {
+      const dataUrl = brewDecodeArtworkCode(codes[offset]);
+      if (dataUrl) brewArtworkCache.set(contract, dataUrl);
+    });
+  }
+  return list.map((token) => {
+    const raw = String(token?.imageUrl || '');
+    const direct = raw.length <= BREW_ARTWORK_MAX_DATA_URL && BREW_ARTWORK_DATA_RE.test(raw) ? raw : '';
+    const contract = raw.match(BREW_ARTWORK_RE)?.[1]?.toLowerCase();
+    return { ...token, imageUrl: direct || (contract ? brewArtworkCache.get(contract) || '' : '') };
+  });
+}
+
+function compactBrewGmgnMarket(item) {
+  const address = String(item?.address || '').toLowerCase();
+  const pairAddress = String(item?.pool?.pool_address || item?.biggest_pool_address || '').toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(address) || !/^0x[a-f0-9]{40}$/.test(pairAddress)) return null;
+  const price = brewMarketNumber(item?.price?.price);
+  const price24h = brewMarketNumber(item?.price?.price_24h);
+  const circulatingSupply = brewMarketNumber(item?.circulating_supply);
+  const totalSupply = brewMarketNumber(item?.total_supply);
+  return {
+    pairAddress,
+    baseToken: { address },
+    priceUsd: price,
+    marketCap: price != null && circulatingSupply != null ? price * circulatingSupply : null,
+    fdv: price != null && totalSupply != null ? price * totalSupply : null,
+    volume: { h24: brewMarketNumber(item?.price?.volume_24h) },
+    liquidity: { usd: brewMarketNumber(item?.liquidity) },
+    priceChange: { h24: price != null && price24h > 0 ? ((price / price24h) - 1) * 100 : null },
+    txns: {
+      h24: {
+        buys: brewMarketNumber(item?.price?.buys_24h),
+        sells: brewMarketNumber(item?.price?.sells_24h),
+      },
+    },
+    dexId: String(item?.pool?.exchange || '').slice(0, 30),
+    labels: [],
+  };
+}
+
+async function requestBrewMarketsInGmgnPage(addresses) {
+  const batches = [];
+  for (let index = 0; index < addresses.length; index += 10) batches.push(addresses.slice(index, index + 10));
+  const items = [];
+  let failedBatches = 0;
+  for (let index = 0; index < batches.length; index += 4) {
+    const wave = await Promise.allSettled(batches.slice(index, index + 4).map(async (batch) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch('/api/v1/mutil_window_token_info', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ chain: 'bsc', addresses: batch }),
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || body?.code !== 0 || !Array.isArray(body?.data)) throw new Error(`HTTP ${response.status}`);
+        return body.data;
+      } finally {
+        clearTimeout(timer);
+      }
+    }));
+    for (const result of wave) {
+      if (result.status === 'fulfilled') items.push(...result.value);
+      else failedBatches += 1;
+    }
+  }
+  return { items, failedBatches, totalBatches: batches.length };
+}
+
+async function waitForBrewGmgnTab(tabId) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab?.status === 'complete') return true;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+async function fetchBrewGmgnMarkets(tokens) {
+  const addresses = [...new Set((Array.isArray(tokens) ? tokens : [])
+    .map((token) => String(token?.address || '').toLowerCase())
+    .filter((address) => /^0x[a-f0-9]{40}$/.test(address)))].slice(0, 300);
+  if (!addresses.length) return { pairs: [], failedBatches: 0, totalBatches: 0 };
+  let temporaryTabId = null;
+  try {
+    const openTabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*'] });
+    let tab = openTabs.find((candidate) => Number.isInteger(candidate.id) && candidate.status === 'complete')
+      || openTabs.find((candidate) => Number.isInteger(candidate.id));
+    if (!tab) {
+      tab = await chrome.tabs.create({ url: 'https://gmgn.ai/?chain=bsc', active: false });
+      temporaryTabId = tab?.id;
+    }
+    if (!Number.isInteger(tab?.id) || (tab.status !== 'complete' && !await waitForBrewGmgnTab(tab.id))) {
+      throw new Error('GMGN 本地资源页加载超时');
+    }
+    const execution = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: requestBrewMarketsInGmgnPage,
+      args: [addresses],
+    });
+    const result = execution?.[0]?.result;
+    if (!result || !Array.isArray(result.items)) throw new Error('GMGN 本地行情无响应');
+    return {
+      pairs: result.items.map(compactBrewGmgnMarket).filter(Boolean),
+      failedBatches: Number(result.failedBatches) || 0,
+      totalBatches: Number(result.totalBatches) || 0,
+    };
+  } catch {
+    return { pairs: [], failedBatches: 1, totalBatches: Math.ceil(addresses.length / 10) };
+  } finally {
+    if (Number.isInteger(temporaryTabId)) chrome.tabs.remove(temporaryTabId).catch(() => {});
+  }
+}
+
+async function fetchBrewTrenches() {
+  if (brewLocalCache && Date.now() - brewLocalCache.fetchedAt < BREW_LOCAL_CACHE_MS) return brewLocalCache;
+  if (brewLocalPending) return brewLocalPending;
+  brewLocalPending = (async () => {
+    try {
+      const response = await fetch(BREW_CHECKPOINT_URL, { cache: 'no-store', credentials: 'omit' });
+      const checkpoint = await response.json().catch(() => null);
+      if (!response.ok || String(checkpoint?.factory || '').toLowerCase() !== BREW_FACTORY
+        || !Array.isArray(checkpoint?.tokens)) throw new Error(`Brew HTTP ${response.status}`);
+      const [market, tokens] = await Promise.all([
+        fetchBrewGmgnMarkets(checkpoint.tokens),
+        hydrateBrewArtwork(checkpoint.tokens),
+      ]);
+      brewLocalCache = {
+        ok: true,
+        checkpoint: { ...checkpoint, tokens },
+        pairs: market.pairs,
+        marketPartial: market.failedBatches > 0,
+        fetchedAt: Date.now(),
+        localSource: true,
+      };
+      return brewLocalCache;
+    } catch (error) {
+      if (brewLocalCache) return { ...brewLocalCache, stale: true };
+      return { ok: false, reason: 'request', message: String(error?.message || '本地 Brew 数据暂时不可用') };
+    } finally {
+      brewLocalPending = null;
+    }
+  })();
+  return brewLocalPending;
+}
 
 /**
  * 985monitor 标签页可能在扩展升级前就已打开。扩展重载后旧 content script 的
@@ -2054,6 +2287,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'stonkfun-rwa-catalog') {
     fetchStonkfunRwaCatalog()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'brew-trenches') {
+    fetchBrewTrenches()
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

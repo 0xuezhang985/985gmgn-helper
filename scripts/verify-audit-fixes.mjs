@@ -1913,8 +1913,12 @@ await test('Brew 三标签分别按创建、24h 成交额和市值排序', () =>
 
 await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () => {
   assert.ok(brewContent.includes("[['new', '新创建'], ['hot', '热门'], ['market', '市值']]"));
-  assert.ok(brewContent.includes('https://brew.family/launch-checkpoint.json'));
-  assert.ok(brewContent.includes('https://api.dexscreener.com/latest/dex/pairs/bsc/'));
+  assert.ok(!brewContent.includes('https://brew.family/launch-checkpoint.json'));
+  assert.ok(!brewContent.includes('https://api.dexscreener.com/latest/dex/pairs/bsc/'));
+  assert.ok(!background.includes('api/extension/brew-trenches'));
+  assert.ok(background.includes('https://brew.family/launch-checkpoint.json'));
+  assert.ok(background.includes("fetch('/api/v1/mutil_window_token_info'"));
+  assert.ok(background.includes("message?.type === 'brew-trenches'"));
   const pathFn = extractFunction(brewContent, 'brewTokenPath');
   const pathFor = (hostname) => evaluate(
     [pathFn],
@@ -1926,6 +1930,8 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.equal(pathFor('brew.family'), '');
   assert.ok(brewContent.includes('https://dexscreener.com/bsc/${item.pool}'));
   assert.ok(brewStyles.includes('.gdh-brew__pool'));
+  assert.ok(brewStyles.includes('.gdh-brew__avatar img'));
+  assert.ok(brewStyles.includes('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto'));
   assert.ok(brewStyles.includes('content-visibility: auto'));
   assert.ok(manifest.host_permissions.includes('https://brew.family/*'));
   assert.ok(!manifest.host_permissions.includes('https://api.dexscreener.com/*'));
@@ -1941,7 +1947,137 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(releaseBuild.includes("'brew-content.js'"));
   assert.ok(releaseBuild.includes("'brew-styles.css'"));
   assert.ok(privacy.includes('/launch-checkpoint.json'));
-  assert.ok(privacy.includes('最多 30 个官方池一组'));
+  assert.ok(privacy.includes('每批最多 10 个'));
+});
+
+await test('Brew 页面脚本只向扩展后台请求本地快照', async () => {
+  const fn = extractFunction(brewContent, 'requestBrewTrenches');
+  const sent = [];
+  const response = await evaluate([fn], 'requestBrewTrenches()', {
+    chrome: { runtime: {
+      lastError: null,
+      sendMessage: (message, callback) => {
+        sent.push(message);
+        callback({ ok: true, checkpoint: { factory: 'x', tokens: [] }, pairs: [] });
+      },
+    } },
+    Promise,
+    Error,
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'brew-trenches');
+  assert.equal(response.ok, true);
+});
+
+await test('Brew 后台只读取用户本地官方快照与 GMGN 行情', async () => {
+  const fn = extractFunction(background, 'fetchBrewTrenches');
+  const calls = [];
+  const response = await evaluate([fn], 'fetchBrewTrenches()', {
+    BREW_FACTORY: '0xfactory',
+    BREW_CHECKPOINT_URL: 'https://brew.family/launch-checkpoint.json',
+    BREW_LOCAL_CACHE_MS: 120000,
+    brewLocalCache: null,
+    brewLocalPending: null,
+    fetchBrewGmgnMarkets: async () => ({ pairs: [{ pairAddress: '0xpool' }], failedBatches: 0 }),
+    hydrateBrewArtwork: async (tokens) => tokens,
+    fetch: async (url) => {
+      calls.push(url);
+      return { ok: true, status: 200, json: async () => ({ factory: '0xfactory', tokens: [] }) };
+    },
+    Date,
+  });
+  assert.deepEqual(calls, ['https://brew.family/launch-checkpoint.json']);
+  assert.equal(response.ok, true);
+  assert.equal(response.localSource, true);
+  assert.equal(response.pairs.length, 1);
+  assert.ok(brewContent.includes("cache.localSource ? ' · 本地 GMGN 行情' : ''"));
+});
+
+await test('Brew 链上头像由用户本地 BSC RPC 字节码解码且严格校验格式', () => {
+  const mimeFn = extractFunction(background, 'brewArtworkMime');
+  const decodeFn = extractFunction(background, 'brewDecodeArtworkCode');
+  const webp = Buffer.from('RIFF0000WEBP12', 'ascii').toString('hex');
+  const result = evaluate([mimeFn, decodeFn], `brewDecodeArtworkCode('0x00${webp}')`, {
+    Uint8Array,
+    Number,
+    btoa,
+  });
+  assert.match(result, /^data:image\/webp;base64,/);
+  assert.equal(evaluate([mimeFn, decodeFn], "brewDecodeArtworkCode('0x6000')", { Uint8Array, Number, btoa }), '');
+  const hydrateFn = extractFunction(background, 'hydrateBrewArtwork');
+  assert.ok(hydrateFn.includes('BREW_ARTWORK_RE'));
+  assert.ok(hydrateFn.includes('FLAP_RPCS'));
+  assert.ok(background.includes("method: 'eth_getCode'"));
+  assert.ok(!background.includes('api/extension/brew-trenches'));
+});
+
+await test('Brew 卡片使用真实头像并在 GMGN 复用主世界 SPA 路由', () => {
+  const navFn = extractFunction(brewContent, 'brewSpaNavigate');
+  const attrs = new Map();
+  const location = { hostname: 'gmgn.ai', pathname: '/', assigned: '', assign(path) { this.assigned = path; } };
+  const document = {
+    documentElement: {
+      setAttribute: (key, value) => attrs.set(key, value),
+    },
+    dispatchEvent: (event) => {
+      if (event.type === 'gdh-navigate') location.pathname = attrs.get('data-gdh-nav');
+    },
+  };
+  evaluate([navFn], "brewSpaNavigate('/bsc/token/0x1111111111111111111111111111111111111111')", {
+    location,
+    document,
+    Event,
+    window: { setTimeout: (callback) => callback() },
+  });
+  assert.equal(location.pathname, '/bsc/token/0x1111111111111111111111111111111111111111');
+  assert.equal(location.assigned, '');
+  assert.ok(brewContent.includes("image.loading = 'lazy'"));
+  assert.ok(brewContent.includes("image.decoding = 'async'"));
+});
+
+await test('Brew 本地 GMGN 行情按十地址批量且最多四路并发', async () => {
+  const fn = extractFunction(background, 'requestBrewMarketsInGmgnPage');
+  const batches = [];
+  const tokens = Array.from({ length: 11 }, (_, index) => ({
+    address: `0x${String(index + 1).padStart(40, '0')}`,
+  }));
+  const result = await evaluate([fn], `requestBrewMarketsInGmgnPage(${JSON.stringify(tokens.map((token) => token.address))})`, {
+    fetch: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      batches.push(body.addresses);
+      return { ok: true, status: 200, json: async () => ({ code: 0, data: body.addresses }) };
+    },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    Promise,
+    Set,
+    JSON,
+  });
+  assert.deepEqual(batches.map((batch) => batch.length), [10, 1]);
+  assert.equal(result.items.length, 11);
+  assert.equal(result.failedBatches, 0);
+  const localFn = extractFunction(background, 'fetchBrewGmgnMarkets');
+  assert.ok(localFn.includes("url: ['https://gmgn.ai/*']"));
+  assert.ok(localFn.includes("url: 'https://gmgn.ai/?chain=bsc', active: false"));
+  assert.ok(localFn.includes("world: 'MAIN'"));
+});
+
+await test('Brew 本地 GMGN 行情换算市值、涨幅与官方池字段', () => {
+  const numberFn = extractFunction(background, 'brewMarketNumber');
+  const compactFn = extractFunction(background, 'compactBrewGmgnMarket');
+  const pair = evaluate([numberFn, compactFn], `compactBrewGmgnMarket({
+    address:'0x1111111111111111111111111111111111111111',
+    biggest_pool_address:'0x2222222222222222222222222222222222222222',
+    circulating_supply:'1000',total_supply:'1200',liquidity:'456',
+    pool:{pool_address:'0x2222222222222222222222222222222222222222',exchange:'pancake_v3'},
+    price:{price:'2',price_24h:'1',volume_24h:'789',buys_24h:8,sells_24h:3}
+  })`);
+  assert.equal(pair.marketCap, 2000);
+  assert.equal(pair.fdv, 2400);
+  assert.equal(pair.priceChange.h24, 100);
+  assert.equal(pair.liquidity.usd, 456);
+  assert.equal(pair.dexId, 'pancake_v3');
 });
 
 await test('DeBot FOMO 翻译支持混合文本、缓存重绘和真实点击下载', () => {

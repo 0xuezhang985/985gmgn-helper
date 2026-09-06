@@ -126,36 +126,50 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: #3b414b transparent;
+  padding: 8px;
 }
 
 .gdh-brew__row {
   display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(139, 147, 161, 0.13);
-  background: transparent;
+  gap: 9px;
+  margin-bottom: 7px;
+  padding: 8px;
+  border: 1px solid rgba(139, 147, 161, 0.18);
+  border-radius: 8px;
+  background: #12151a;
   cursor: pointer;
   content-visibility: auto;
-  contain-intrinsic-size: 76px;
+  contain-intrinsic-size: 86px;
 }
 
 .gdh-brew__row:hover,
 .gdh-brew__row:focus-visible {
+  border-color: rgba(245, 184, 61, 0.45);
   background: rgba(245, 184, 61, 0.055);
   outline: none;
 }
 
 .gdh-brew__avatar {
-  width: 34px;
-  height: 34px;
+  position: relative;
+  width: 48px;
+  height: 48px;
   flex: none;
   overflow: hidden;
   border: 1px solid rgba(245, 184, 61, 0.35);
-  border-radius: 50%;
+  border-radius: 7px;
   background: linear-gradient(145deg, #28200f, #171a21);
   color: #f5b83d;
-  font: 800 10px/32px system-ui, sans-serif;
+  font: 800 11px/46px system-ui, sans-serif;
   text-align: center;
+}
+
+.gdh-brew__avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .gdh-brew__body { min-width: 0; flex: 1; }
@@ -166,16 +180,17 @@
 .gdh-brew__age { flex: none; color: #7b8492; font-size: 10px; }
 
 .gdh-brew__metrics {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-width: 0;
   margin-top: 3px;
   color: #aeb5c0;
   font-size: 11px;
 }
 
-.gdh-brew__metric { white-space: nowrap; }
+.gdh-brew__metric { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gdh-brew__change { margin-left: auto; font-weight: 700; }
 .gdh-brew__change.is-up { color: #32d17d; }
 .gdh-brew__change.is-down { color: #ef6262; }

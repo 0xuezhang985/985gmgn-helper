@@ -5,8 +5,6 @@
   window.__gdhBrewStarted = true;
 
   const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
-  const CHECKPOINT_URL = 'https://brew.family/launch-checkpoint.json';
-  const DEX_PAIRS_URL = 'https://api.dexscreener.com/latest/dex/pairs/bsc/';
   const CACHE_KEY = 'brewTrenchCacheV1';
   const CACHE_TTL_MS = 2 * 60 * 1000;
   const STALE_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -57,6 +55,8 @@
         quoteSymbol: String(token?.quoteSymbol || '').trim().slice(0, 40) || 'Quote',
         launchedAt,
         description: String(token?.description || '').trim().slice(0, 280),
+        imageUrl: /^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(String(token?.imageUrl || ''))
+          && String(token.imageUrl).length <= 40000 ? String(token.imageUrl) : '',
       });
     }
     return items.sort((a, b) => b.launchedAt - a.launchedAt).slice(0, 300);
@@ -107,30 +107,21 @@
     return list.sort((a, b) => b.launchedAt - a.launchedAt);
   }
 
-  function requestJson(url, timeoutMs = 8000) {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-      signal: controller.signal,
-    }).then(async (response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    }).finally(() => window.clearTimeout(timer));
-  }
-
-  async function fetchBrewMarkets(tokens) {
-    const batches = [];
-    for (let index = 0; index < tokens.length; index += 30) {
-      batches.push(tokens.slice(index, index + 30));
-    }
-    const results = await Promise.allSettled(batches.map(async (batch) => {
-      const pools = batch.map((item) => item.pool).sort().join(',');
-      const body = await requestJson(`${DEX_PAIRS_URL}${pools}`, 8000);
-      return Array.isArray(body?.pairs) ? body.pairs : [];
-    }));
-    return results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
+  function requestBrewTrenches() {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'brew-trenches' }, (response) => {
+          const runtimeError = chrome.runtime.lastError;
+          if (runtimeError) return reject(new Error(runtimeError.message || '后台连接失败'));
+          if (!response?.ok || !response?.checkpoint || !Array.isArray(response?.pairs)) {
+            return reject(new Error(response?.message || 'Brew 数据暂时不可用'));
+          }
+          return resolve(response);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   async function hydrateBrewCache() {
@@ -148,12 +139,15 @@
     if (!force && cache && Date.now() - Number(cache.fetchedAt || 0) < CACHE_TTL_MS) return cache;
     if (loading) return loading;
     loading = (async () => {
-      const checkpoint = await requestJson(CHECKPOINT_URL, 8000);
+      const response = await requestBrewTrenches();
+      const checkpoint = response.checkpoint;
       const tokens = compactBrewCheckpoint(checkpoint);
       if (!tokens.length) throw new Error('Brew 官方发行快照暂时为空');
-      const pairs = await fetchBrewMarkets(tokens);
+      const pairs = response.pairs;
       const next = {
         fetchedAt: Date.now(),
+        localSource: response.localSource === true,
+        marketPartial: response.marketPartial === true,
         complete: checkpoint?.complete === true,
         total: Number(checkpoint?.total) || tokens.length,
         indexed: pairs.length,
@@ -201,14 +195,32 @@
     return '';
   }
 
+  function brewSpaNavigate(path) {
+    if (!path || location.pathname === path) return;
+    if (location.hostname !== 'gmgn.ai') {
+      location.assign(path);
+      return;
+    }
+    try {
+      document.documentElement.setAttribute('data-gdh-nav', path);
+      document.dispatchEvent(new Event('gdh-navigate'));
+    } catch {
+      location.assign(path);
+      return;
+    }
+    window.setTimeout(() => {
+      if (location.pathname !== path) location.assign(path);
+    }, 450);
+  }
+
   function renderBrewRow(item) {
     const row = document.createElement('article');
     row.className = 'gdh-brew__row';
     row.tabIndex = 0;
-    row.title = `打开 Brew 原生代币页：${item.address}`;
+    row.title = `在当前站点打开代币：${item.address}`;
     const openToken = () => {
       const path = brewTokenPath(item.address);
-      if (path) location.assign(path);
+      if (path) brewSpaNavigate(path);
     };
     row.addEventListener('click', openToken);
     row.addEventListener('keydown', (event) => {
@@ -218,7 +230,16 @@
       }
     });
 
-    const avatar = createText('span', 'gdh-brew__avatar', item.symbol.slice(0, 2).toUpperCase());
+    const avatar = createText('span', 'gdh-brew__avatar', Array.from(item.symbol).slice(0, 2).join('').toUpperCase());
+    if (item.imageUrl) {
+      const image = document.createElement('img');
+      image.src = item.imageUrl;
+      image.alt = item.name;
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.addEventListener('error', () => image.remove(), { once: true });
+      avatar.appendChild(image);
+    }
     const body = document.createElement('div');
     body.className = 'gdh-brew__body';
     const head = document.createElement('div');
@@ -233,11 +254,13 @@
 
     const metrics = document.createElement('div');
     metrics.className = 'gdh-brew__metrics';
+    const price = createText('span', 'gdh-brew__metric', Number.isFinite(item.priceUsd)
+      ? `价格 ${money(item.priceUsd)}` : '价格 —');
     const cap = createText('span', 'gdh-brew__metric', item.marketCapKind
       ? `${item.marketCapKind} ${money(item.marketCapUsd)}` : '市值待收录');
     const volume = createText('span', 'gdh-brew__metric', Number.isFinite(item.volume24hUsd)
       ? `24h ${money(item.volume24hUsd)}` : '24h —');
-    metrics.append(cap, volume);
+    metrics.append(price, cap, volume);
     if (Number.isFinite(item.change24h)) {
       const change = createText('span', `gdh-brew__change ${item.change24h >= 0 ? 'is-up' : 'is-down'}`,
         `${item.change24h >= 0 ? '+' : ''}${item.change24h.toFixed(Math.abs(item.change24h) >= 100 ? 0 : 2)}%`);
@@ -288,7 +311,9 @@
     const sorted = sortBrewItems(cache.items, settings.brewPanelTab);
     const indexedCount = cache.items.filter((item) => item.indexed).length;
     const stale = state.error ? ' · 行情刷新失败，显示缓存' : '';
-    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${stale}`;
+    const local = cache.localSource ? ' · 本地 GMGN 行情' : '';
+    const partial = cache.marketPartial ? ' · 部分行情待收录' : '';
+    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${local}${partial}${stale}`;
     const fragment = document.createDocumentFragment();
     sorted.forEach((item) => fragment.appendChild(renderBrewRow(item)));
     list.replaceChildren(fragment);
