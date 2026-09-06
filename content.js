@@ -3795,7 +3795,7 @@ ${flapTooltipText(info)}
   const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143 };
   const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol', robinhood: 'robinhood', monad: 'monad' };
   const FOMO_GMGN_CHAIN = { 1: 'eth', 56: 'bsc', 143: 'monad', 4663: 'robinhood', 8453: 'base', 1399811149: 'sol' };
-  const FOMO_REFRESH_MS = 30000;
+  const FOMO_REFRESH_MS = 2 * 60 * 1000;
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
   let fomoLoadedKey = '';
@@ -3817,7 +3817,7 @@ ${flapTooltipText(info)}
   // ---- GMGN 热门面板：fomo 当前热门代币 ----
   // 只在用户主动打开此标签时请求；使用后台已有的 FOMO Bearer 续期链路。
   // 自己挂独立列表，不克隆/改写 GMGN 虚拟列表，切回任一原生标签即可原样恢复。
-  const FOMO_TRENDING_REFRESH_MS = 15000;
+  const FOMO_TRENDING_REFRESH_MS = 60 * 1000;
   let fomoTrendingActive = false;
   let fomoTrendingLoading = false;
   let fomoTrendingItems = [];
@@ -5069,6 +5069,10 @@ ${flapTooltipText(info)}
       why.textContent = stored?.refresh
         ? '已尝试自动续期但没成功（通常是 fomo 那边把会话作废了）。照下面走一遍就能重新拿到，之后仍会自动续。'
         : '这份令牌是在支持自动续期之前存下的，缺少续期凭证。照下面走一遍，新的令牌以后就能自动续了。';
+    } else if (reason === 'rate-limited') {
+      const minutes = Math.max(1, Math.ceil(Number(res?.retryAfterMs || 0) / 60000));
+      title.textContent = 'fomo 暂时限流，插件已停止请求';
+      why.textContent = `约 ${minutes} 分钟后会自动恢复；冷却期间点重试也不会继续访问 fomo，避免把限流时间越拖越长。`;
     } else if (reason === 'blocked') {
       title.textContent = '被 fomo 的风控挡了';
       why.textContent = `请求返回 ${res?.status || 403}（Cloudflare）。多半是短时间请求太密，等一会儿再点重试；一直这样就截图发我。`;

@@ -50,7 +50,7 @@
   const FEED_HEAD_CAP = 6;
   const SIDEBAR_FEED_VISIBLE_CAP = 8;
   const SIDEBAR_FEED_HEAD_CAP = 3;
-  const PANEL_REFRESH_MS = 30000;
+  const PANEL_REFRESH_MS = 2 * 60 * 1000;
   const SPECIAL_COLOR_PALETTE = [
     '#f5b83d', '#ef5350', '#43c07a', '#4c9ffe', '#b48ae0', '#ed6ba4', '#3ec6c6',
   ];
@@ -2043,13 +2043,19 @@
     const needsLogin = reason === 'no-token' || reason === 'expired';
     title.textContent = reason === 'no-token'
       ? '需要登录 fomo'
-      : (reason === 'expired' ? 'fomo 登录已失效' : `加载失败（${safeText(reason, 40)}）`);
+      : reason === 'expired'
+        ? 'fomo 登录已失效'
+        : reason === 'rate-limited'
+          ? 'fomo 暂时限流，插件已停止请求'
+          : `加载失败（${safeText(reason, 40)}）`;
     const note = document.createElement('p');
     note.textContent = reason === 'no-token'
       ? '持仓者、观点和交易数据需要登录后读取；插件尚未拿到浏览器里的 fomo 登录态。'
       : reason === 'expired'
         ? '已保存的登录态失效，自动续期没有成功。重新进入 fomo 登录一次即可恢复。'
-      : safeText(response?.message || '请稍后重试', 120);
+        : reason === 'rate-limited'
+          ? `约 ${Math.max(1, Math.ceil(Number(response?.retryAfterMs || 0) / 60000))} 分钟后自动恢复；冷却期间不会继续访问 fomo。`
+          : safeText(response?.message || '请稍后重试', 120);
     box.append(title, note);
     if (needsLogin) {
       const steps = document.createElement('ol');

@@ -4,7 +4,7 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 
 ## 本地保存的数据
 
-- 重点 Dev、特别关注、备注、功能开关、颜色、黑名单、标注人物、持仓提醒清单、Brew 公开行情缓存和最近 100 条推送历史保存在浏览器本地 `chrome.storage.local`。Brew 缓存只包含公开的代币、官方池地址、公开市场数据与官方代币头像；提醒历史只包含提醒类型、代币简称、触发值、时间和 GMGN 站内代币路径，不包含钱包地址或账号标识。
+- 重点 Dev、特别关注、备注、功能开关、颜色、黑名单、标注人物、持仓提醒清单、Brew 公开行情缓存、Fomo 限流截止时间和最近 100 条推送历史保存在浏览器本地 `chrome.storage.local`。Fomo 限流状态只包含截止时间、退避等级和最近命中时间，不包含令牌或响应内容；Brew 缓存只包含公开的代币、官方池地址、公开市场数据与官方代币头像；提醒历史只包含提醒类型、代币简称、触发值、时间和 GMGN 站内代币路径，不包含钱包地址或账号标识。
 - FOMO 页面使用 Privy 登录。扩展会把页面已有的 access token 与 refresh token 镜像到扩展本地存储；令牌只用于请求 `fomo.family` 自己的 API。续期由一个真实 FOMO 页面中的 Privy SDK 完成，扩展不把令牌发给 985monitor 或其他第三方。
 - GMGN 的钱包类接口和 App 通知配置接口需要站点自己的 Bearer。扩展只在 `gmgn.ai` 页面内读取 `localStorage.tgInfo`，只把该令牌发回 `gmgn.ai`；通知配置只读取 `holding_signal` 的逐链开关，令牌和账号标识均不写入扩展存储。
 - 985monitor 的 FOMO/Pump 屏蔽名单、事件偏好、关注钱包和金额/代币过滤会从该站点账号同步到扩展本地，用于 GMGN 与 DeBot 追踪页过滤。网页钱包主令牌只随同源绑定请求发回 985monitor，不写入扩展；服务器另行签发用途受限的随机只读会话，原始会话保存在扩展本地，服务器仅保存 SHA-256 哈希。FOMO/Pump 页面本地偏好会按登录账号保存到 985monitor，以便关闭网页后继续同步。
@@ -14,7 +14,7 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 
 - `https://gmgn.ai/*`：读取页面数据、行情、持仓、同一账户的 App 持仓价格提醒开关，以及用户明确触发的钱包关注操作。Brew 浮窗打开时，扩展后台还会把 Brew 官方代币地址按每批最多 10 个提交给 GMGN 官方 `mutil_window_token_info`，只读取公开的池地址、价格、供应量、流动性、成交量、涨幅和 DEX 字段；不发送 985monitor 数据。
 - `https://debot.ai/*`：仅在 DeBot 追踪页插入 FOMO/Pump 事件，并在 DeBot 代币页显示 FOMO 小窗与 RWA 资料浮窗。扩展读取已渲染追踪行的链、代币、钱包、买卖方向、金额、时间和交易哈希用于排序与去重，同源读取 DeBot 已公开展示的代币详情总供应量用于计算 FOMO 持仓占比，并读取 DeBot 原生池表中的代币地址与 985monitor 公开 RWA 目录在浏览器内匹配；不读取或保存 DeBot 登录凭据，不新建 DeBot WebSocket，也不执行交易。
-- `https://prod-api.fomo.family/*`、`https://fomo.family/*`：读取 FOMO 持仓者、观点、交易与当前热门代币数据，并保活一个由站点 Privy SDK 自行续期的真实页面；扩展不直接请求 Privy sessions 接口。热门数据只在用户打开 GMGN 的 `fomo` 热门标签时读取，后台以 15 秒缓存和并发合并减少重复请求。
+- `https://prod-api.fomo.family/*`、`https://fomo.family/*`：读取 FOMO 持仓者、观点、交易与当前热门代币数据，并保活一个由站点 Privy SDK 自行续期的真实页面；扩展不直接请求 Privy sessions 接口。所有 Fomo 官方 API 请求全局串行且至少间隔 1.5 秒，同一代币同一标签合并并发请求；热门数据只在用户打开 GMGN 的 `fomo` 热门标签时读取并缓存 60 秒。收到 429 后插件在本地断路退避，冷却期不再请求官方接口。
 - `https://www.stonkfun.xyz/*`：只读取公开的 `/api/quote-tokens` 目录，并只保留站点明确标记为 `xstock` 的 Solana mint、简称、名称与小数位，用于在 GMGN 的 Solana 底池中精确识别 RWA 配对资产；不向 StonkFun 发送 GMGN 登录态或用户配置。
 - `https://brew.family/*`：不在 Brew 官网注入内容，也不读取 Brew 钱包、登录态或交易数据。Brew 浮窗打开时，扩展后台通过用户本地网络读取公开 `/launch-checkpoint.json`；该权限还用于扩展升级时清除 v0.46.44 可能遗留的插件按钮/浮窗。清理只匹配插件自己的两个私有类名，不刷新页面。
 - `https://bsc-dataseed.bnbchain.org/*` 等现有 BSC RPC：只对 Brew 官方快照声明的链上图片合约批量调用只读 `eth_getCode`，在浏览器本地验证 PNG/JPEG/WebP 文件头并生成头像，不发送账号、钱包、登录态或 985monitor 数据。

@@ -537,9 +537,92 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 const FOMO_API = 'https://prod-api.fomo.family';
 // fomo 自己每个请求都带这个头（少了它 /hodlers/top 会返回空）：eth,bnb,monad,robinhood,base,solana
 const FOMO_CHAINS = '1,56,143,4663,8453,1399811149';
-const FOMO_CACHE_MS = 20000;
+const FOMO_CACHE_MS = 90 * 1000;
 const FOMO_CACHE_MAX = 60;
 const fomoCache = new Map();
+const fomoTokenPending = new Map();
+// Fomo 首次打开持仓者页时还会补每个用户的 7 天 PnL。旧版由 GMGN/DeBot
+// 各自并发发送，请求会瞬间堆到官方 API，命中 Cloudflare 429 后又被 30 秒轮询
+// 持续续打，导致限流一直无法自行解除。所有 Fomo API 请求统一走这条串行闸门。
+const FOMO_REQUEST_GAP_MS = 1500;
+const FOMO_429_BASE_MS = 5 * 60 * 1000;
+const FOMO_429_MAX_MS = 30 * 60 * 1000;
+const FOMO_RATE_LIMIT_KEY = 'fomoRateLimitStateV1';
+let fomoRequestTail = Promise.resolve();
+let fomoNextRequestAt = 0;
+let fomoRateLimitUntil = 0;
+let fomoRateLimitLevel = 0;
+let fomoRateLimitLastAt = 0;
+let fomoRateLimitReady = null;
+
+async function fomoLoadRateLimit() {
+  if (fomoRateLimitReady) return fomoRateLimitReady;
+  fomoRateLimitReady = chrome.storage.local.get(FOMO_RATE_LIMIT_KEY).then((stored) => {
+    const state = stored?.[FOMO_RATE_LIMIT_KEY];
+    const now = Date.now();
+    const until = Number(state?.until) || 0;
+    if (until > now) fomoRateLimitUntil = Math.min(until, now + FOMO_429_MAX_MS);
+    fomoRateLimitLevel = Math.max(0, Math.min(4, Math.trunc(Number(state?.level) || 0)));
+    fomoRateLimitLastAt = Math.max(0, Number(state?.lastAt) || 0);
+  }).catch(() => {});
+  return fomoRateLimitReady;
+}
+
+function fomoRetryAfterMs(response, now = Date.now()) {
+  const raw = String(response?.headers?.get?.('Retry-After') || '').trim();
+  let serverDelay = 0;
+  if (/^\d+$/.test(raw)) serverDelay = Number(raw) * 1000;
+  else if (raw) {
+    const at = Date.parse(raw);
+    if (Number.isFinite(at)) serverDelay = Math.max(0, at - now);
+  }
+  const exponential = FOMO_429_BASE_MS * (2 ** Math.max(0, fomoRateLimitLevel - 1));
+  return Math.min(FOMO_429_MAX_MS, Math.max(FOMO_429_BASE_MS, serverDelay, exponential));
+}
+
+function fomoBackoffResponse(now = Date.now()) {
+  const seconds = Math.max(1, Math.ceil((fomoRateLimitUntil - now) / 1000));
+  return new Response(JSON.stringify({ error: 'rate_limited' }), {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': String(seconds),
+      'X-GDH-Fomo-Backoff': '1',
+    },
+  });
+}
+
+async function fomoQueuedFetch(run) {
+  await fomoLoadRateLimit();
+  const task = fomoRequestTail.then(async () => {
+    let now = Date.now();
+    if (now < fomoRateLimitUntil) return fomoBackoffResponse(now);
+    const wait = Math.max(0, fomoNextRequestAt - now);
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    now = Date.now();
+    if (now < fomoRateLimitUntil) return fomoBackoffResponse(now);
+
+    const response = await run();
+    fomoNextRequestAt = Date.now() + FOMO_REQUEST_GAP_MS;
+    if (response?.status === 429) {
+      const hitAt = Date.now();
+      if (hitAt - fomoRateLimitLastAt > FOMO_429_MAX_MS) fomoRateLimitLevel = 0;
+      fomoRateLimitLevel = Math.min(4, fomoRateLimitLevel + 1);
+      fomoRateLimitLastAt = hitAt;
+      fomoRateLimitUntil = hitAt + fomoRetryAfterMs(response, hitAt);
+      await chrome.storage.local.set({
+        [FOMO_RATE_LIMIT_KEY]: {
+          until: fomoRateLimitUntil,
+          level: fomoRateLimitLevel,
+          lastAt: fomoRateLimitLastAt,
+        },
+      }).catch(() => {});
+    }
+    return response;
+  });
+  fomoRequestTail = task.catch(() => {});
+  return task;
+}
 
 function setBoundedMap(map, key, value, max) {
   if (map.has(key)) map.delete(key);
@@ -767,7 +850,11 @@ async function fomoAuthedFetch(path, init = {}) {
       ...(init.headers || {}),
     };
     if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(`${FOMO_API}${path}`, { ...init, headers, credentials: 'include' });
+    return fomoQueuedFetch(() => fetch(`${FOMO_API}${path}`, {
+      ...init,
+      headers,
+      credentials: 'include',
+    }));
   };
   let res = await send(stored?.token);
   let renewed = false;
@@ -814,11 +901,14 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       const blocked = /cloudflare|cf-ray|<!DOCTYPE html/i.test(text);
+      const rateLimited = res.status === 429;
       return {
         ok: false,
-        reason: unauthed ? (token ? 'expired' : 'no-token')
+        reason: rateLimited ? 'rate-limited'
+          : unauthed ? (token ? 'expired' : 'no-token')
           : (blocked ? 'blocked' : `http-${res.status}`),
         status: res.status,
+        retryAfterMs: rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
         tokenAt: stored?.at || 0,
         renewed,
       };
@@ -866,6 +956,17 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
   }
 }
 
+function fomoFetchTokenShared(payload) {
+  const key = `${String(payload?.kind || '')}|${Number(payload?.networkId) || 0}|${String(payload?.tokenAddress || '')}`;
+  const existing = fomoTokenPending.get(key);
+  if (existing) return existing;
+  const request = fomoFetchToken(payload || {});
+  fomoTokenPending.set(key, request);
+  return request.finally(() => {
+    if (fomoTokenPending.get(key) === request) fomoTokenPending.delete(key);
+  });
+}
+
 // ---- 单个用户的 7 天盈亏（给持仓者打标记用）----
 // fomo 悬浮卡是「实时余额算的累计 PnL − 7 天前快照的 PnL」，要两个请求。
 // 这里用同一条快照序列的首末差，一个请求就够，代价是最多滞后一小时——打标记足够了。
@@ -882,7 +983,12 @@ async function fomoUserPnl7d({ userId }) {
   const path = `/v2/userTokens/aggregatedSnapshot?userId=${encodeURIComponent(userId)}&timestamp=${encodeURIComponent(since)}`;
   try {
     const { res, unauthed } = await fomoAuthedFetch(path);
-    if (!res.ok) return { ok: false, reason: unauthed ? 'expired' : `http-${res.status}` };
+    if (!res.ok) return {
+      ok: false,
+      reason: res.status === 429 ? 'rate-limited' : (unauthed ? 'expired' : `http-${res.status}`),
+      status: res.status,
+      retryAfterMs: res.status === 429 ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
+    };
     const body = await res.json().catch(() => null);
     const inner = Number(body?.statusCode);
     if (body?.success === false || (Number.isFinite(inner) && inner !== 200)) {
@@ -1403,7 +1509,7 @@ function normalizeFomoRankSnapshot(raw) {
   return { updatedAt: Math.max(0, Math.trunc(Number(raw?.updatedAt) || 0)), ranks };
 }
 
-const FOMO_TRENDING_CACHE_MS = 15000;
+const FOMO_TRENDING_CACHE_MS = 60 * 1000;
 let fomoTrendingCache = null;
 let fomoTrendingPending = null;
 
@@ -1458,10 +1564,13 @@ async function fomoFetchTrending() {
         return { ok: false, reason: 'no-token', status: res.status, tokenAt: 0 };
       }
       if (!res.ok) {
+        const rateLimited = res.status === 429;
         return {
           ok: false,
-          reason: unauthed ? (token ? 'expired' : 'no-token') : `http-${res.status}`,
+          reason: rateLimited ? 'rate-limited'
+            : (unauthed ? (token ? 'expired' : 'no-token') : `http-${res.status}`),
           status: res.status,
+          retryAfterMs: rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
           tokenAt: stored?.at || 0,
           renewed,
         };
@@ -2307,7 +2416,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'fomo-token-feed') {
-    fomoFetchToken(message.payload || {})
+    fomoFetchTokenShared(message.payload || {})
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

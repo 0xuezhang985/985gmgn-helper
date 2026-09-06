@@ -1680,7 +1680,8 @@ await test('FOMO 非 2xx 的 430/431 unauthorized 也进入登录引导', async 
   assert.equal(await evaluate([bodyFn, responseFn], 'fomoResponseUnauthed(response)', { response: unauthorized }), true);
   assert.equal(await evaluate([bodyFn, responseFn], 'fomoResponseUnauthed(response)', { response: unrelated }), false);
   assert.match(background, /if \(!res\.ok && unauthed && !token\)[\s\S]{0,160}reason: 'no-token'/);
-  assert.match(background, /reason: unauthed \? \(token \? 'expired' : 'no-token'\)/);
+  assert.match(background, /unauthed \? \(token \? 'expired' : 'no-token'\)/);
+  assert.ok(background.includes("reason: rateLimited ? 'rate-limited'"));
 });
 
 await test('后台不再裸调 Privy sessions 或携带公开标注口令', () => {
@@ -2188,6 +2189,111 @@ await test('GMGN 热门面板新增 fomo 标签且登录失败时提供推荐登
   assert.ok(styles.includes('.gdh-fomo-trending-panel.is-active'));
   assert.ok(popup.includes("enableFomoTrending: document.querySelector('#enable-fomo-trending')"));
   assert.ok(content.includes('enableFomoTrending: true'));
+});
+
+await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {
+  const functions = [
+    extractFunction(background, 'fomoLoadRateLimit'),
+    extractFunction(background, 'fomoRetryAfterMs'),
+    extractFunction(background, 'fomoBackoffResponse'),
+    extractFunction(background, 'fomoQueuedFetch'),
+  ];
+  const persisted = [];
+  const result = await evaluate(functions, `(async () => {
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const request = async (status) => {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 8));
+      active -= 1;
+      return new Response('', {
+        status,
+        headers: status === 429 ? { 'Retry-After': '120' } : {},
+      });
+    };
+    const normal = await Promise.all([
+      fomoQueuedFetch(() => request(200)),
+      fomoQueuedFetch(() => request(200)),
+    ]);
+    const limited = await fomoQueuedFetch(() => request(429));
+    let blockedCalls = 0;
+    const blocked = await fomoQueuedFetch(() => {
+      blockedCalls += 1;
+      return request(200);
+    });
+    return {
+      maxActive,
+      calls,
+      normal: normal.map((response) => response.status),
+      limited: limited.status,
+      blocked: blocked.status,
+      blockedCalls,
+      synthetic: blocked.headers.get('X-GDH-Fomo-Backoff'),
+      retryAfter: Number(blocked.headers.get('Retry-After')),
+      persisted: persisted.length,
+    };
+  })()`, {
+    Response,
+    setTimeout,
+    FOMO_REQUEST_GAP_MS: 5,
+    FOMO_429_BASE_MS: 60 * 1000,
+    FOMO_429_MAX_MS: 30 * 60 * 1000,
+    FOMO_RATE_LIMIT_KEY: 'fomoRateLimitStateV1',
+    fomoRequestTail: Promise.resolve(),
+    fomoNextRequestAt: 0,
+    fomoRateLimitUntil: 0,
+    fomoRateLimitLevel: 0,
+    fomoRateLimitLastAt: 0,
+    fomoRateLimitReady: null,
+    persisted,
+    chrome: {
+      storage: { local: {
+        get: async () => ({}),
+        set: async (value) => { persisted.push(value); },
+      } },
+    },
+  });
+  assert.equal(result.maxActive, 1);
+  assert.deepEqual([...result.normal], [200, 200]);
+  assert.equal(result.limited, 429);
+  assert.equal(result.blocked, 429);
+  assert.equal(result.blockedCalls, 0);
+  assert.equal(result.calls, 3);
+  assert.equal(result.synthetic, '1');
+  assert.ok(result.retryAfter >= 60);
+  assert.equal(result.persisted, 1);
+  assert.ok(background.includes("rateLimited ? 'rate-limited'"));
+  assert.ok(content.includes("reason === 'rate-limited'"));
+  assert.ok(debotContent.includes("reason === 'rate-limited'"));
+
+  const sharedState = { calls: 0 };
+  const shared = await evaluate(
+    [extractFunction(background, 'fomoFetchTokenShared')],
+    `(async () => {
+      const payload = { kind: 'holders', networkId: 56, tokenAddress: '0xabc' };
+      const values = await Promise.all([fomoFetchTokenShared(payload), fomoFetchTokenShared(payload)]);
+      return { values, pending: fomoTokenPending.size };
+    })()`,
+    {
+      fomoTokenPending: new Map(),
+      fomoFetchToken: async () => {
+        sharedState.calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 8));
+        return { ok: true, count: 1 };
+      },
+      setTimeout,
+    },
+  );
+  assert.equal(sharedState.calls, 1);
+  assert.equal(shared.values.length, 2);
+  assert.equal(shared.pending, 0);
+  assert.match(background, /FOMO_CACHE_MS = 90 \* 1000/);
+  assert.match(content, /FOMO_REFRESH_MS = 2 \* 60 \* 1000/);
+  assert.match(content, /FOMO_TRENDING_REFRESH_MS = 60 \* 1000/);
+  assert.match(debotContent, /PANEL_REFRESH_MS = 2 \* 60 \* 1000/);
 });
 
 process.stdout.write(`1..${passed}\n`);
