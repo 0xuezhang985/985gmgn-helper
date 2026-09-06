@@ -277,6 +277,7 @@
     enableSpecialWallet: true,
     enableRemindAlert: true,
     enableFomoPanel: true,
+    enableFomoTrending: true,
     fomoPanelFolded: false,
     fomoPanelPos: null,
     fomoTranslate: true,
@@ -1551,14 +1552,23 @@ ${flapTooltipText(info)}
     });
   }
 
-  // ---- Robinhood 代币详情：RWA 底池资产资料浮窗 ----
-  // GMGN 的 PairInfo DOM 只有 symbol，没有合约地址；地址取它自己的
-  // mutil_window_token_info.pool，RWA 身份取 985monitor 目录。两边都用 address
-  // 精确相交后才加链接，避免同名 meme 冒充股票资产。
+  // ---- GMGN 代币详情：RWA 底池资产资料浮窗 ----
+  // PairInfo DOM 只有 symbol，没有合约地址。Robinhood 地址来自 GMGN
+  // mutil_window_token_info.pool 并与 985monitor 目录精确相交；Solana 地址同样
+  // 来自 GMGN pool，但只与 StonkFun 明确标为 xstock 的目录按 mint 精确相交。
   let robinhoodRwaCatalog = new Map();
   let robinhoodRwaCatalogReady = false;
   let robinhoodRwaCatalogLoading = false;
   let robinhoodRwaCatalogRetryAt = 0;
+  let stonkfunRwaCatalog = new Map();
+  let stonkfunRwaCatalogReady = false;
+  let stonkfunRwaCatalogLoading = false;
+  let stonkfunRwaCatalogRetryAt = 0;
+  const STONKFUN_POOL_TTL = 5 * 60 * 1000;
+  const STONKFUN_POOL_ERROR_RETRY = 15 * 1000;
+  const STONKFUN_POOL_CACHE_MAX = 80;
+  const stonkfunPoolCache = new Map();
+  const stonkfunPoolPending = new Set();
   let robinhoodRwaPopover = null;
   let robinhoodRwaPopoverAnchor = null;
 
@@ -1587,6 +1597,9 @@ ${flapTooltipText(info)}
     node.removeAttribute('tabindex');
     node.removeAttribute('title');
     delete node.dataset.gdhRobinhoodRwaAddress;
+    delete node.dataset.gdhStonkfunRwaMint;
+    delete node.dataset.gdhStonkfunPoolToken;
+    delete node.dataset.gdhStonkfunPoolSide;
   }
 
   function clearRobinhoodRwaPoolLinks(except) {
@@ -1597,6 +1610,7 @@ ${flapTooltipText(info)}
 
   function scanRobinhoodRwaPoolLinks() {
     const route = currentTokenRoute();
+    if (route?.chain === 'sol') return void scanStonkfunRwaPoolLinks(route);
     if (!route || route.chain !== 'robinhood') return void clearRobinhoodRwaPoolLinks();
     const pool = document.querySelector('[data-sentry-component="PoolInfo"]');
     const pair = pool?.querySelector('[data-sentry-component="PairInfo"]');
@@ -1631,6 +1645,43 @@ ${flapTooltipText(info)}
     clearRobinhoodRwaPoolLinks(kept);
   }
 
+  function scanStonkfunRwaPoolLinks(route) {
+    const pool = document.querySelector('[data-sentry-component="PoolInfo"]');
+    const pair = pool?.querySelector('[data-sentry-component="PairInfo"]');
+    if (!pair) return void clearRobinhoodRwaPoolLinks();
+
+    const token = String(route.address || '').trim();
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token)) return void clearRobinhoodRwaPoolLinks();
+    requestStonkfunPoolInfo(token);
+    requestStonkfunRwaCatalog();
+    const info = stonkfunCachedPoolInfo(token);
+    if (!info?.ok || !stonkfunRwaCatalogReady) return void clearRobinhoodRwaPoolLinks();
+
+    const assets = [
+      { address: info.baseAddress, symbol: info.baseSymbol, side: 'base' },
+      { address: info.quoteAddress, symbol: info.quoteSymbol, side: 'quote' },
+    ];
+    const cells = [...pair.children];
+    const kept = new Set();
+    assets.forEach((poolAsset, index) => {
+      const cell = cells[3 + index * 3];
+      const address = String(poolAsset.address || '').trim();
+      const asset = stonkfunRwaCatalog.get(address);
+      const shown = String(cell?.textContent || '').trim().toUpperCase();
+      const expected = String(poolAsset.symbol || '').trim().toUpperCase();
+      if (!(cell instanceof HTMLElement) || !asset || !shown || shown !== expected) return;
+      cell.classList.add('gdh-robinhood-rwa-link');
+      cell.setAttribute('role', 'button');
+      cell.tabIndex = 0;
+      cell.dataset.gdhStonkfunRwaMint = address;
+      cell.dataset.gdhStonkfunPoolToken = token;
+      cell.dataset.gdhStonkfunPoolSide = poolAsset.side;
+      cell.title = `${asset.symbol} · ${asset.name || 'StonkFun xStocks RWA'}\n点击查看资产资料`;
+      kept.add(cell);
+    });
+    clearRobinhoodRwaPoolLinks(kept);
+  }
+
   function formatRobinhoodRwaNumber(value, decimals = 2) {
     const number = value === null || value === undefined || value === '' ? NaN : Number(value);
     if (!Number.isFinite(number)) return '—';
@@ -1645,6 +1696,15 @@ ${flapTooltipText(info)}
     const number = value === null || value === undefined || value === '' ? NaN : Number(value);
     if (!Number.isFinite(number)) return '—';
     return `$${formatRobinhoodRwaNumber(number, price && Math.abs(number) < 1 ? 6 : 2)}`;
+  }
+
+  function formatRobinhoodRwaDate(value) {
+    const date = new Date(Number(value));
+    if (!Number.isFinite(date.getTime())) return '—';
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
   }
 
   function closeRobinhoodRwaPopover() {
@@ -1686,7 +1746,8 @@ ${flapTooltipText(info)}
     const heading = document.createElement('div');
     const source = document.createElement('div');
     source.className = 'gdh-robinhood-rwa-popover__source';
-    source.textContent = '985monitor · RWA 资产';
+    const isStonkfun = asset.source === 'stonkfun';
+    source.textContent = isStonkfun ? 'StonkFun · xStocks RWA' : '985monitor · RWA 资产';
     const title = document.createElement('strong');
     title.className = 'gdh-robinhood-rwa-popover__title';
     title.textContent = asset.symbol;
@@ -1713,7 +1774,19 @@ ${flapTooltipText(info)}
 
     const premium = asset.premiumPct === null || asset.premiumPct === undefined
       || asset.premiumPct === '' ? NaN : Number(asset.premiumPct);
-    const rows = [
+    const poolInfo = asset.poolInfo || {};
+    const isQuote = asset.poolSide === 'quote';
+    const rows = isStonkfun ? [
+      ['标的', asset.name || '—'],
+      ['网络', asset.network || 'Solana'],
+      ['池类型', poolInfo.exchange === 'ray_clmm' ? 'Raydium CLMM' : (poolInfo.exchange || '—')],
+      ['总流动性', formatRobinhoodRwaMoney(poolInfo.liquidityUsd)],
+      ['池中数量', formatRobinhoodRwaNumber(isQuote ? poolInfo.quoteReserve : poolInfo.baseReserve)],
+      ['初始数量', formatRobinhoodRwaNumber(isQuote ? poolInfo.initialQuoteReserve : poolInfo.initialBaseReserve)],
+      ['池内价值', formatRobinhoodRwaMoney(isQuote ? poolInfo.quoteReserveValueUsd : poolInfo.baseReserveValueUsd)],
+      ['小数位', asset.decimals === null || asset.decimals === undefined ? '—' : String(asset.decimals)],
+      ['底池创建', formatRobinhoodRwaDate(poolInfo.createdAtMs)],
+    ] : [
       ['链上价', formatRobinhoodRwaMoney(asset.onchainPrice, true)],
       ['标的价', formatRobinhoodRwaMoney(asset.referencePrice, true)],
       ['溢价', Number.isFinite(premium) ? `${premium > 0 ? '+' : ''}${premium.toFixed(2)}%` : '—', Number.isFinite(premium) ? (premium > 0 ? 'up' : premium < 0 ? 'down' : '') : ''],
@@ -1768,7 +1841,21 @@ ${flapTooltipText(info)}
       return;
     }
     if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-    const asset = robinhoodRwaCatalog.get(String(target.dataset.gdhRobinhoodRwaAddress || '').toLowerCase());
+    const stonkfunMint = String(target.dataset.gdhStonkfunRwaMint || '');
+    let asset = null;
+    if (stonkfunMint) {
+      const catalogAsset = stonkfunRwaCatalog.get(stonkfunMint);
+      const poolInfo = stonkfunCachedPoolInfo(String(target.dataset.gdhStonkfunPoolToken || ''));
+      if (catalogAsset && poolInfo?.ok) {
+        asset = {
+          ...catalogAsset,
+          poolInfo,
+          poolSide: target.dataset.gdhStonkfunPoolSide === 'quote' ? 'quote' : 'base',
+        };
+      }
+    } else {
+      asset = robinhoodRwaCatalog.get(String(target.dataset.gdhRobinhoodRwaAddress || '').toLowerCase());
+    }
     if (!asset) return;
     event.preventDefault();
     event.stopPropagation();
@@ -2421,6 +2508,97 @@ ${flapTooltipText(info)}
         tableMode,
         context,
       );
+    });
+  }
+
+  function requestStonkfunRwaCatalog() {
+    if (stonkfunRwaCatalogReady || stonkfunRwaCatalogLoading
+      || Date.now() < stonkfunRwaCatalogRetryAt) return;
+    stonkfunRwaCatalogLoading = true;
+    chrome.runtime.sendMessage({ type: 'stonkfun-rwa-catalog' }, (response) => {
+      stonkfunRwaCatalogLoading = false;
+      if (chrome.runtime.lastError || !response?.ok || !Array.isArray(response.assets)) {
+        stonkfunRwaCatalogRetryAt = Date.now() + 30000;
+        return;
+      }
+      stonkfunRwaCatalog = new Map(response.assets
+        .filter((item) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(item?.address || '')))
+        .map((item) => [String(item.address), item]));
+      stonkfunRwaCatalogReady = stonkfunRwaCatalog.size > 0;
+      scheduleScan();
+    });
+  }
+
+  function stonkfunPoolMeta(tokenInfo) {
+    const pool = tokenInfo?.pool || {};
+    const numeric = (value) => value !== null && value !== undefined && value !== ''
+      && Number.isFinite(Number(value)) ? Number(value) : null;
+    const baseAddress = String(pool.base_address || tokenInfo?.address || '').trim();
+    const quoteAddress = String(pool.quote_address || '').trim();
+    const creationTimestamp = numeric(pool.creation_timestamp);
+    return {
+      ok: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(baseAddress)
+        && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(quoteAddress),
+      complete: Boolean((pool.base_symbol || tokenInfo?.symbol) && pool.quote_symbol),
+      baseAddress,
+      baseSymbol: String(pool.base_symbol || tokenInfo?.symbol || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      quoteAddress,
+      quoteSymbol: String(pool.quote_symbol || '').replace(/[\r\n\t]/g, '').slice(0, 24),
+      poolAddress: String(pool.pool_address || '').trim(),
+      exchange: String(pool.exchange || '').replace(/[\r\n\t]/g, ' ').slice(0, 32),
+      liquidityUsd: numeric(pool.liquidity),
+      baseReserve: numeric(pool.base_reserve),
+      quoteReserve: numeric(pool.quote_reserve),
+      initialBaseReserve: numeric(pool.initial_base_reserve),
+      initialQuoteReserve: numeric(pool.initial_quote_reserve),
+      baseReserveValueUsd: numeric(pool.base_reserve_value),
+      quoteReserveValueUsd: numeric(pool.quote_reserve_value),
+      createdAtMs: creationTimestamp === null ? null : creationTimestamp * 1000,
+    };
+  }
+
+  async function fetchStonkfunPoolInfo(token) {
+    const apiQuery = gmgnApiQuery();
+    if (!apiQuery) return { ok: false, reason: 'api-query' };
+    try {
+      const res = await fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: 'sol', addresses: [token] }),
+      });
+      const body = await res.json().catch(() => null);
+      const items = res.ok && body?.code === 0 && Array.isArray(body?.data) ? body.data : [];
+      const tokenInfo = items.find((item) => String(item?.address || '') === token) || null;
+      const meta = stonkfunPoolMeta(tokenInfo);
+      return { ...meta, reason: meta.ok ? '' : 'no-data' };
+    } catch {
+      return { ok: false, reason: 'request' };
+    }
+  }
+
+  function stonkfunCachedPoolInfo(token) {
+    const hit = stonkfunPoolCache.get(token);
+    if (!hit) return null;
+    const ttl = hit.data?.complete ? STONKFUN_POOL_TTL : STONKFUN_POOL_ERROR_RETRY;
+    return Date.now() - hit.at < ttl ? hit.data : null;
+  }
+
+  function requestStonkfunPoolInfo(token) {
+    const hit = stonkfunPoolCache.get(token);
+    if (hit) {
+      const ttl = hit.data?.complete ? STONKFUN_POOL_TTL : STONKFUN_POOL_ERROR_RETRY;
+      if (Date.now() - hit.at < ttl) return;
+    }
+    if (stonkfunPoolPending.has(token) || stonkfunPoolPending.size >= 2) return;
+    stonkfunPoolPending.add(token);
+    fetchStonkfunPoolInfo(token).then((data) => {
+      if (data.reason !== 'api-query') {
+        setBoundedMap(stonkfunPoolCache, token, { at: Date.now(), data }, STONKFUN_POOL_CACHE_MAX);
+      }
+    }).finally(() => {
+      stonkfunPoolPending.delete(token);
+      scheduleScan();
     });
   }
   const WALLET_TABLE_SELECTOR = '[data-sentry-component="WalletTable"]';
@@ -3616,6 +3794,7 @@ ${flapTooltipText(info)}
   // ---- fomo 浮窗：在 GMGN 代币页看该代币在 fomo 的观点/交易 ----
   const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143 };
   const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol', robinhood: 'robinhood', monad: 'monad' };
+  const FOMO_GMGN_CHAIN = { 1: 'eth', 56: 'bsc', 143: 'monad', 4663: 'robinhood', 8453: 'base', 1399811149: 'sol' };
   const FOMO_REFRESH_MS = 30000;
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
@@ -3633,6 +3812,277 @@ ${flapTooltipText(info)}
     const chain = m[1];
     if (!(chain in FOMO_NETWORK_ID)) return null;
     return { chain, address: m[2], networkId: FOMO_NETWORK_ID[chain] };
+  }
+
+  // ---- GMGN 热门面板：fomo 当前热门代币 ----
+  // 只在用户主动打开此标签时请求；使用后台已有的 FOMO Bearer 续期链路。
+  // 自己挂独立列表，不克隆/改写 GMGN 虚拟列表，切回任一原生标签即可原样恢复。
+  const FOMO_TRENDING_REFRESH_MS = 15000;
+  let fomoTrendingActive = false;
+  let fomoTrendingLoading = false;
+  let fomoTrendingItems = [];
+  let fomoTrendingError = '';
+  let fomoTrendingFetchedAt = 0;
+  let fomoTrendingTabEl = null;
+  let fomoTrendingPanelEl = null;
+  let fomoTrendingNativeBody = null;
+
+  function fomoTrendingMount() {
+    const candidates = [...document.querySelectorAll('[data-testid="filter-tag-trending"]')];
+    const nativeTab = candidates.find((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const tabs = nativeTab?.parentElement;
+    if (!(nativeTab instanceof HTMLElement) || !(tabs instanceof HTMLElement)) return null;
+
+    let main = nativeTab.closest('[data-sentry-component="Main"]');
+    if (!(main instanceof HTMLElement)) {
+      let cursor = tabs.parentElement;
+      for (let depth = 0; cursor && depth < 8; depth += 1, cursor = cursor.parentElement) {
+        const children = [...cursor.children];
+        const header = children.find((child) => child === tabs || child.contains(tabs));
+        const body = children.find((child) => child !== header
+          && !child.classList.contains('gdh-fomo-trending-panel')
+          && child.getBoundingClientRect().height >= 80);
+        if (header && body) {
+          main = cursor;
+          break;
+        }
+      }
+    }
+    if (!(main instanceof HTMLElement)) return null;
+    const nativeBody = [...main.children].find((child) => !child.contains(tabs)
+      && !child.classList.contains('gdh-fomo-trending-panel'));
+    if (!(nativeBody instanceof HTMLElement)) return null;
+    return { nativeTab, tabs, main, nativeBody };
+  }
+
+  function setFomoTrendingTabTone(tab, active) {
+    if (!(tab instanceof HTMLElement)) return;
+    tab.dataset.active = active ? 'true' : 'false';
+    tab.classList.toggle('text-text-100', active);
+    tab.classList.toggle('text-text-300', !active);
+  }
+
+  function deactivateFomoTrending() {
+    fomoTrendingActive = false;
+    fomoTrendingPanelEl?.classList.remove('is-active');
+    fomoTrendingNativeBody?.classList.remove('gdh-fomo-trending-native-hidden');
+    setFomoTrendingTabTone(fomoTrendingTabEl, false);
+  }
+
+  function removeFomoTrendingUi() {
+    deactivateFomoTrending();
+    document.querySelectorAll('[data-testid="gdh-fomo-trending"], .gdh-fomo-trending-panel')
+      .forEach((node) => node.remove());
+    document.querySelectorAll('.gdh-fomo-trending-native-hidden')
+      .forEach((node) => node.classList.remove('gdh-fomo-trending-native-hidden'));
+    fomoTrendingTabEl = null;
+    fomoTrendingPanelEl = null;
+    fomoTrendingNativeBody = null;
+  }
+
+  function fomoTrendingMoney(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+    if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+    return `$${n.toFixed(2)}`;
+  }
+
+  function fomoTrendingPrice(value) {
+    const n = Number(value);
+    if (!(n > 0)) return '—';
+    if (n >= 1) return `$${n.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
+    if (n >= 0.01) return `$${n.toFixed(4)}`;
+    return `$${n.toPrecision(4)}`;
+  }
+
+  function renderFomoTrendingPanel() {
+    const panel = fomoTrendingPanelEl;
+    if (!panel) return;
+    panel.replaceChildren();
+
+    const meta = document.createElement('div');
+    meta.className = 'gdh-fomo-trending__meta';
+    const count = document.createElement('span');
+    count.textContent = fomoTrendingItems.length ? `当前热门 · ${fomoTrendingItems.length}` : 'fomo 当前热门';
+    const updated = document.createElement('span');
+    updated.textContent = fomoTrendingFetchedAt
+      ? `更新 ${new Date(fomoTrendingFetchedAt).toLocaleTimeString('zh-CN', { hour12: false })}` : '';
+    meta.append(count, updated);
+    panel.append(meta);
+
+    if (fomoTrendingLoading && !fomoTrendingItems.length) {
+      const loading = document.createElement('div');
+      loading.className = 'gdh-fomo-trending__state';
+      loading.textContent = '正在读取 fomo 热门代币…';
+      panel.append(loading);
+      return;
+    }
+
+    if (fomoTrendingError && !fomoTrendingItems.length) {
+      const state = document.createElement('div');
+      state.className = 'gdh-fomo-trending__state';
+      const title = document.createElement('strong');
+      const loginRequired = fomoTrendingError === 'no-token' || fomoTrendingError === 'expired';
+      title.textContent = loginRequired ? '需要登录 fomo' : 'fomo 热门加载失败';
+      const hint = document.createElement('span');
+      hint.textContent = loginRequired
+        ? '插件会复用你自己的 fomo 登录态，不使用公共账号。'
+        : '请稍后重试，GMGN 原生热门列表不受影响。';
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.textContent = loginRequired ? '打开 fomo 并登录 →' : '重试';
+      action.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (loginRequired) window.open('https://fomo.family/r/Unipioneer', '_blank', 'noopener,noreferrer');
+        else {
+          fomoTrendingFetchedAt = 0;
+          pollFomoTrending(true);
+        }
+      });
+      state.append(title, hint, action);
+      panel.append(state);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'gdh-fomo-trending__list';
+    fomoTrendingItems.forEach((item, index) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'gdh-fomo-trending__row';
+      row.title = `${item.symbol} · 点击打开 GMGN 代币页`;
+
+      const rank = document.createElement('span');
+      rank.className = 'gdh-fomo-trending__rank';
+      rank.textContent = String(index + 1);
+      const icon = document.createElement('span');
+      icon.className = 'gdh-fomo-trending__icon';
+      if (item.image) {
+        const image = document.createElement('img');
+        image.src = item.image;
+        image.alt = '';
+        image.loading = 'lazy';
+        image.referrerPolicy = 'no-referrer';
+        icon.append(image);
+      } else {
+        icon.textContent = String(item.symbol || '?').slice(0, 1).toUpperCase();
+      }
+      const identity = document.createElement('span');
+      identity.className = 'gdh-fomo-trending__identity';
+      const symbol = document.createElement('strong');
+      symbol.textContent = item.symbol;
+      const sub = document.createElement('span');
+      const chain = FOMO_GMGN_CHAIN[item.networkId] || item.chain || '';
+      sub.textContent = `${chain} · ${fomoTrendingPrice(item.priceUsd)}`;
+      identity.append(symbol, sub);
+
+      const stats = document.createElement('span');
+      stats.className = 'gdh-fomo-trending__stats';
+      const mc = document.createElement('strong');
+      mc.textContent = `${fomoTrendingMoney(item.marketCapUsd)} MC`;
+      const change = document.createElement('span');
+      const pct = Number(item.change24Ratio) * 100;
+      if (Number.isFinite(pct)) {
+        change.textContent = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        change.dataset.tone = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+      } else change.textContent = '—';
+      stats.append(mc, change);
+      row.append(rank, icon, identity, stats);
+      row.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetChain = FOMO_GMGN_CHAIN[item.networkId] || item.chain;
+        if (targetChain && item.address) gdhSpaNavigate(`/${targetChain}/token/${item.address}`);
+      });
+      list.append(row);
+    });
+    panel.append(list);
+  }
+
+  function pollFomoTrending(force = false) {
+    if (!fomoTrendingActive || fomoTrendingLoading) return;
+    if (!force && Date.now() - fomoTrendingFetchedAt < FOMO_TRENDING_REFRESH_MS) return;
+    fomoTrendingLoading = true;
+    renderFomoTrendingPanel();
+    chrome.runtime.sendMessage({ type: 'fomo-trending' }, (response) => {
+      fomoTrendingLoading = false;
+      if (chrome.runtime.lastError || !response?.ok) {
+        fomoTrendingError = String(response?.reason || 'request');
+        fomoTrendingFetchedAt = Date.now();
+      } else {
+        fomoTrendingItems = Array.isArray(response.items) ? response.items : [];
+        fomoTrendingError = '';
+        fomoTrendingFetchedAt = Number(response.at) || Date.now();
+      }
+      renderFomoTrendingPanel();
+    });
+  }
+
+  function activateFomoTrending(mount) {
+    fomoTrendingActive = true;
+    fomoTrendingNativeBody = mount.nativeBody;
+    mount.nativeBody.classList.add('gdh-fomo-trending-native-hidden');
+    fomoTrendingPanelEl?.classList.add('is-active');
+    [...mount.tabs.children].forEach((tab) => setFomoTrendingTabTone(tab, tab === fomoTrendingTabEl));
+    renderFomoTrendingPanel();
+    pollFomoTrending();
+  }
+
+  function scanFomoTrendingTab() {
+    if (settings.enableFomoTrending === false) return void removeFomoTrendingUi();
+    const mount = fomoTrendingMount();
+    if (!mount) return;
+
+    let tab = mount.tabs.querySelector(':scope > [data-testid="gdh-fomo-trending"]');
+    if (!(tab instanceof HTMLElement)) {
+      tab = document.createElement('div');
+      tab.className = mount.nativeTab.className;
+      tab.style.cssText = mount.nativeTab.style.cssText;
+      tab.dataset.testid = 'gdh-fomo-trending';
+      tab.dataset.gdhFomoTrending = '1';
+      tab.textContent = 'fomo';
+      tab.setAttribute('role', 'tab');
+      tab.tabIndex = 0;
+      mount.tabs.append(tab);
+      tab.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = fomoTrendingMount();
+        if (current) activateFomoTrending(current);
+      });
+      tab.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') tab.click();
+      });
+    }
+    fomoTrendingTabEl = tab;
+    setFomoTrendingTabTone(tab, fomoTrendingActive);
+
+    [...mount.tabs.children].filter((native) => native !== tab).forEach((native) => {
+      if (native.dataset.gdhFomoTrendingBound === '1') return;
+      native.dataset.gdhFomoTrendingBound = '1';
+      native.addEventListener('click', deactivateFomoTrending, true);
+    });
+
+    let panel = mount.main.querySelector(':scope > .gdh-fomo-trending-panel');
+    if (!(panel instanceof HTMLElement)) {
+      panel = document.createElement('section');
+      panel.className = 'gdh-fomo-trending-panel';
+      panel.setAttribute('aria-label', 'fomo 当前热门代币');
+      mount.main.append(panel);
+    }
+    fomoTrendingPanelEl = panel;
+    fomoTrendingNativeBody = mount.nativeBody;
+    if (fomoTrendingActive) activateFomoTrending(mount);
+    else {
+      mount.nativeBody.classList.remove('gdh-fomo-trending-native-hidden');
+      panel.classList.remove('is-active');
+    }
   }
 
   function normalizedNotificationHistory(value) {
@@ -7446,6 +7896,7 @@ ${flapTooltipText(info)}
       timed('remind', scanRemindToasts);
       timed('surge', scanHoldingSurge);
       timed('fomoPanel', scanFomoPanel);
+      timed('fomoTrending', scanFomoTrendingTab);
       timed('fomoFeed', scanFomoFeed);
       timed('pools', scanAllPools);
     } finally {
@@ -7633,7 +8084,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
@@ -7730,6 +8181,7 @@ ${flapTooltipText(info)}
       // 令牌不是设置项，别塞进 settings；它一到位就把浮窗接上，省得用户回来手动点重试
       if (key === 'fomoToken') {
         fomoTokenArrived = !!change.newValue?.token;
+        fomoTrendingFetchedAt = 0;
         continue;
       }
       // 985monitor 的 fomo 配置不是设置项；到了就立刻按新名单重摆
@@ -7766,6 +8218,7 @@ ${flapTooltipText(info)}
       fomoErrKey = '';
       loadFomoData(true);
     }
+    if (fomoTokenArrived && fomoTrendingActive) pollFomoTrending(true);
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     rebuildBlockedTokenIndex();
