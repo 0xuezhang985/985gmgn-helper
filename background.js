@@ -1067,6 +1067,54 @@ const FOMO_FEED_TYPE = {
 
 // fomo 的链名 → GMGN 的路径段
 const FOMO_CHAIN_SLUG = { bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth', base: 'base', robinhood: 'robinhood', 'chain 143': 'monad' };
+const FOMO_RANK_SNAPSHOT_KEY = 'fomoRankSnapshotV1';
+const FOMO_RANK_BOARD_KEYS = new Set(['all', '30d', '7d', '24h']);
+let fomoRankSnapshot = { updatedAt: 0, ranks: new Map() };
+let fomoRankSnapshotLoaded = false;
+let fomoRankSnapshotInflight = null;
+
+function normalizeFomoRankSnapshot(raw) {
+  const ranks = new Map();
+  for (const row of (Array.isArray(raw?.ranks) ? raw.ranks : []).slice(0, 500)) {
+    if (!Array.isArray(row)) continue;
+    const handle = String(row[0] || '').trim().replace(/^@+/, '').toLowerCase();
+    const board = String(row[1] || '');
+    const rank = Math.trunc(Number(row[2]) || 0);
+    if (/^[a-z0-9_.-]{1,40}$/.test(handle) && FOMO_RANK_BOARD_KEYS.has(board) && rank > 0) {
+      ranks.set(handle, { board, rank });
+    }
+  }
+  return { updatedAt: Math.max(0, Math.trunc(Number(raw?.updatedAt) || 0)), ranks };
+}
+
+function fomoRankSnapshotForStorage(snapshot = fomoRankSnapshot) {
+  return {
+    updatedAt: snapshot.updatedAt,
+    ranks: [...snapshot.ranks].map(([handle, mark]) => [handle, mark.board, mark.rank]),
+  };
+}
+
+async function ensureFomoRankSnapshot() {
+  if (fomoRankSnapshotLoaded) return fomoRankSnapshot;
+  if (fomoRankSnapshotInflight) return fomoRankSnapshotInflight;
+  fomoRankSnapshotInflight = chrome.storage.local.get({ [FOMO_RANK_SNAPSHOT_KEY]: null })
+    .then((stored) => {
+      fomoRankSnapshot = normalizeFomoRankSnapshot(stored[FOMO_RANK_SNAPSHOT_KEY]);
+      fomoRankSnapshotLoaded = true;
+      return fomoRankSnapshot;
+    })
+    .finally(() => { fomoRankSnapshotInflight = null; });
+  return fomoRankSnapshotInflight;
+}
+
+function applyFomoRankSnapshotToEvent(event, snapshot = fomoRankSnapshot) {
+  if (!event || typeof event !== 'object') return event;
+  const handle = String(event.handle || '').trim().replace(/^@+/, '').toLowerCase();
+  const mark = snapshot?.ranks?.get(handle);
+  const { fomoRankBoard, fomoRank, fomoRankUpdatedAt, ...clean } = event;
+  if (!mark) return clean;
+  return { ...clean, fomoRankBoard: mark.board, fomoRank: mark.rank, fomoRankUpdatedAt: snapshot.updatedAt };
+}
 
 function slimFomoEvent(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -1102,6 +1150,7 @@ async function fetchFomoFeed() {
   if (fomoFeedInflight) return fomoFeedInflight;
   const session = await monitor985Session();
   if (!session) return { ok: false, reason: 'not-connected', events: [] };
+  await ensureFomoRankSnapshot();
   await refreshMonitor985Config(false);
   const now = Date.now();
   if (now - fomoFeedCache.fetchedAt < FOMO_FEED_MIN_INTERVAL_MS || now < fomoFeedBackoffUntil) {
@@ -1132,6 +1181,7 @@ async function fetchFomoFeed() {
       const events = dedupeTrackingFeedEvents((Array.isArray(body?.events) ? body.events : [])
         .map(slimFomoEvent)
         .filter(Boolean)
+        .map((event) => applyFomoRankSnapshotToEvent(event))
         .sort((a, b) => b.ts - a.ts))
         .slice(0, FOMO_FEED_KEEP);
       fomoFeedCache = { events, updatedAt: Number(body?.updatedAt) || Date.now(), fetchedAt: Date.now() };
@@ -1355,8 +1405,36 @@ function fomoSseNotifyTabs() {
   }
 }
 
+function fomoRankSseNotifyTabs(snapshot) {
+  const ranks = fomoRankSnapshotForStorage(snapshot).ranks;
+  try {
+    chrome.tabs.query({ url: ['https://gmgn.ai/*'] }, (tabs) => {
+      if (chrome.runtime.lastError || !Array.isArray(tabs)) return;
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'gdh-fomo-ranks', ranks }, () => void chrome.runtime.lastError);
+      }
+    });
+  } catch {
+    // tabs 不可用
+  }
+}
+
+function fomoSseIngestRanks(raw) {
+  const next = normalizeFomoRankSnapshot(raw);
+  if (!next.updatedAt || !next.ranks.size) return;
+  if (next.updatedAt === fomoRankSnapshot.updatedAt && next.ranks.size === fomoRankSnapshot.ranks.size) return;
+  fomoRankSnapshot = next;
+  fomoRankSnapshotLoaded = true;
+  fomoFeedCache = {
+    ...fomoFeedCache,
+    events: fomoFeedCache.events.map((event) => applyFomoRankSnapshotToEvent(event, next)),
+  };
+  void chrome.storage.local.set({ [FOMO_RANK_SNAPSHOT_KEY]: fomoRankSnapshotForStorage(next) });
+  fomoRankSseNotifyTabs(next);
+}
+
 function fomoSseIngest(raw) {
-  const ev = slimFomoEvent(raw);
+  const ev = applyFomoRankSnapshotToEvent(slimFomoEvent(raw));
   if (!ev) return;
   const duplicate = fomoFeedCache.events.some((item) => trackingFeedDuplicate(ev, item));
   const rest = fomoFeedCache.events.filter((item) => !trackingFeedDuplicate(ev, item));
@@ -1395,11 +1473,14 @@ async function connectFomoSse() {
   const session = await monitor985Session();
   if (!session || fomoSseAbort) return;
   await refreshMonitor985Config(false);
+  await ensureFomoRankSnapshot();
   const generation = fomoSseGeneration;
   const controller = new AbortController();
   fomoSseAbort = controller;
   try {
-    const response = await fetch(FOMO_SSE_URL, {
+    const sseUrl = new URL(FOMO_SSE_URL);
+    if (fomoRankSnapshot.updatedAt) sseUrl.searchParams.set('fomoRankUpdatedAt', String(fomoRankSnapshot.updatedAt));
+    const response = await fetch(sseUrl.href, {
       headers: monitor985AuthHeaders(session, {
         Accept: 'text/event-stream',
         ...(monitor985LastEventId ? { 'Last-Event-ID': monitor985LastEventId } : {}),
@@ -1428,11 +1509,12 @@ async function connectFomoSse() {
         const line = buffer.slice(0, idx).replace(/\r$/, '');
         buffer = buffer.slice(idx + 1);
         if (line === '') {
-          if ((eventType === 'fomo' || eventType === 'pump-trade') && dataLines.length) {
+          if ((eventType === 'fomo' || eventType === 'pump-trade' || eventType === 'fomo-ranks') && dataLines.length) {
             try {
               const payload = JSON.parse(dataLines.join('\n'));
               if (payload?.event && eventType === 'fomo') fomoSseIngest(payload.event);
               if (payload?.event && eventType === 'pump-trade') pumpSseIngest(payload.event);
+              if (payload?.event && eventType === 'fomo-ranks') fomoSseIngestRanks(payload.event);
             } catch {
               // 单帧坏数据不断流
             }

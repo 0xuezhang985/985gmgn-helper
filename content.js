@@ -3905,6 +3905,12 @@ ${flapTooltipText(info)}
   // 值形如 "a1s21k"：总榜第 1 / 聪明钱第 21 / 在 KOL 名册。
   const FOMO_BOARD = JSON.parse('{"change":"a1s21kW","frankdegods":"a2s7k","_logjam":"a3s165","chadbchilln":"a4","lesabre":"a5s47","remusofmars":"a6s126","collectible":"a7s102","dystopiansniper":"a8s40","game_for_one":"a9s164","breakingbad":"a10s39","notepad_h":"a11s27k","guavaguy2001":"a12","nfd":"a13","atom_xyz":"a14s38","thebtcgoose":"a15s19k","c1phervoyager":"a16s138","quakerrz":"a17","resellcalendar":"a18s54","vein":"a19s58","nosanityxbt":"a20s9k","billyballs72":"a21","notwashed":"a22s108","0xleo":"a23s17k","xxxfomoxxx":"a24s56","letsdance":"a25","midjetv2":"m13","letsfkingoooo":"m15","hihi33":"m9","runitbackghost":"m39s46","thevilla":"m43","jimbotrading":"m16","avgjoescrypto":"m8","juicycooks":"m18","metaversejoji":"w9s209","surveillor":"m7s193","smol_intern":"m24s188","rafaelonchain":"w14","jotagezin":"m2s41","sandmann":"w16","onmycheck":"w18","mevzoid":"w19s34D","alphacrew23":"w20","aoulss":"w21","letmehelpurmind":"m34","blackgoblin":"w23","traderpow":"w24s163","xventures":"w25","iceslayerman":"w26","xbtpika":"w27","clavtard":"m40","xet":"w29","tendersalt":"w30","gganon44":"w31","warrennakamotox":"m14","maverickdotsol":"w33","openvpp":"w34","kenzo13ro":"w35","trader":"w36s114","ffa888":"w37","jeetergriffin":"w38s271","octoseaa":"w39s6k","0xjiggy":"w40s210","exploit":"w41","moneyman32":"w42","0xdetweiler":"w43s256","0xwives":"w44","crypt0whalex":"w45","eyezenhour":"m31","cryptologykito":"w47","moneymancalls":"w48","just2addicted":"w49","ultimateoldpheasant":"w50","mabon_zsq":"m4","laolu":"m5","dns_err":"m10s287","unnattybrah":"m11","0xuberm":"m12s18k","0x10kliquid":"m17","fathermeme69":"m19","will__price":"m20","hushedlonelybaboon":"m21","cryptogodjohn":"m22","gwei":"m26","staticctrades":"m27","xbrazilzz":"m28s99","iamh3nry":"m29","komorodragon":"m30","fibs":"m32s255","dior100x":"m33","riskit":"m35","hankusun":"m36","riskanonymous":"m37","rtdquant":"m38s214","pxblocito":"m41","jaqs":"m42","randalltrades":"m44","pastlife":"m45","hdegrootvan":"m46","onchainsorcerer":"m47s139","basicexpecteddragon":"m49","wwayfboss":"m50s233","marcellxmarcell":"d6s94","wrld_sol":"d9","0xiamfake":"d13","daumenxyz":"d14s159","astaso1":"d17s121","0xjumpman":"d20","zinceth":"d22s14k","cryptoaeon":"d23","upnext":"d26","dipwheeler":"d27","ineedtowin":"d30","charles_h90":"d31","hp88":"d32","pemp":"d34","goldenchyna":"d41","ckoptimus":"d43","kr_kimkk":"d49","believer12137":"d50","_cr0wbar_":"s1k","spidercrypto0x":"s2k","1947km":"s3k","mystayor":"s4k","nightcore":"s5k","cutie":"s8k","papsio3k1":"s10k","paikcapital":"s11k","_wash3d_":"s12k","wenmoonsolana_":"s13k","onlyz":"s15k","100milly":"s16k","onchainrobber":"s20k","memeinc":"s22k","randomuser123":"s23k","honestregionallungfish":"s24k","0xvantaa":"s25k","thokani":"s26k","careful":"s28k","sized_in":"s29k","kjs16":"s30k","andy":"s31","kingfomo":"s32","nicktesla16":"s33","favel":"s35","flippingprofits":"s36","seyong":"s37","0xforte124":"s42","imim":"s43","moodywsw":"s44","stigstigstig_":"s45","squidward":"s48","eyeamfin":"s49","wealthmaxxer":"s50","seanlippel":"s51","obitouchiha":"s52","_happyk21":"s53","zemirch":"s55","tommy":"s57","kom3thazine":"s59","icemandot":"s60","account":"s61","spiritualscorch":"s62","colby":"s63","pointfarmcap":"s64","sonder_crypto":"s65","theprimegreek":"s66","loopifyyy":"s67","llonchain":"s68","elegantprecisetapir":"s69","igxyffiyofof":"s70","degentodisciple":"s71","mimiardrp":"s72","memeticpower":"s73","hotlneblng":"s74","foreskinnnnn":"s75","real_y22":"s76","0xheme":"s77","0xsneakky":"s78","user_0037":"s79","0xarchitectx0":"s80","kalexbt":"s81","garythegambler":"s82","losteverythingagain":"s83","runecrypto_":"s84","degengigi":"s85","slushie":"s86","adro808":"s87","blitzrun":"s88","mightyegoism":"s89","31337___":"s90","0xkillua_eth":"s91","0x7ama":"s92","spyda":"s93","fullportonly":"s95","jobsnotfinished":"s96","rynzoeth":"s97","parasite_eei":"s98","notanicecat69":"s100","bryptokenneth3":"s101","solswizzle":"s103","rugmeharder":"s104","kekwdjsjnd":"s105","joespina":"s106","mythos":"s107","4pfcoyote":"s109","senzu":"s110","pingucharts":"s111","lucacseth":"s112","horror":"s113","ghostonchain":"s115","samptsd":"s116","hamsa":"s117","guided":"s118","cuttycurryy":"s119","zimmwho":"s120","scalps":"s122","noahknowstrades":"s123","mnds":"s124","bulgugi":"s125","dragossden":"s127","imviriofficial":"s128","notsuavizim":"s129","growingdisabledgerbil":"s130","kidski":"s131","kongkapital":"s132","navalneutralhalibut":"s133","degnsol":"s134","paik_michael":"s135","choppeduncx":"s136","royalbelligerentplatypus":"s137","joeburrow246":"s140","jstacks___":"s141","onchainstudent":"s142","binkieee":"s143W","leftcurvemaxing":"s144","virtualbacon":"s145","halibutcrypto":"s146","graycandol":"s147","crip":"s148","samflintstone":"s149","privateneighbor":"s150","grampsxbt":"s151","77777777777777":"s152","woooooohooooo":"s153","gera_eth":"s154","bobius":"s155","airtightfish":"s156","lacostetn26":"s157","jxck_eth":"s158","ericceth":"s160","mispriced":"s161","kikaka10000":"s162","maximusfab1us":"s166","dumb_ape":"s167","wardsy0x":"s168","winnerx":"s169","x1x2":"s170","maisonghost":"s171","basedbroker":"s172","prewealthy":"s173","aurah":"s174","stinkysasha":"s175","kbz1":"s176","gr3gor14n":"s177","brox":"s178","10xjdog":"s179","rodotfun":"s180","muddy":"s181","thebiglong":"s182","exuro":"s183","shockedjs":"s184","legionyeni":"s185","good":"s186","mistystrictantelope":"s187","_veigarcrypto_xd":"s189","books":"s190","tassolago":"s191","teepanddestroy":"s192","manofwar":"s194","koyla_sol":"s195","takeiteasy":"s196","spicyperuvian_":"s197","t26x":"s198","ferbsol":"s199","tonyovo":"s200","captain_al_80":"s201","stoploss":"s202","hbutspecial":"s203","insentos":"s204","pius":"s205","ohmprovement":"s206","printgod":"s207","cryptojohnnyfap":"s208","deadass":"s211","quanterty":"s212","gnocity_":"s213","px_721":"s215","seikux":"s216","hehe":"s217","nervousfuzzylizard":"s218","cryptodjip":"s219","poorclick":"s220","aaabbbccc":"s221","osideus":"s222","newlowscore677777":"s223","downhorrndously":"s224","________________":"s225","0xforgivable":"s226","quotes":"s227","ocrxa":"s228","patrick33":"s229","vexrex23":"s230","999999999999999":"s231","chimpfone":"s232","katsucurryxbt":"s234","feanor_crypt":"s235","palequietherring":"s236","mino":"s237","scrooge":"s238","bigslime":"s239","toptickcrypto":"s240","xmediumrare":"s241","lay2000lbs":"s242","yogurt_eth":"s243","carlwheezor":"s244","frankneedsabeer":"s245","judee":"s246","charles":"s247","dictator":"s248","devilslayer1802":"s249","hasntpumpedyet":"s250","jikksol":"s251","zackory":"s252","ilillllliliilii":"s253","jlcryptohh":"s254","don999z":"s257","magica_conch":"s258","rebuild":"s259","zoomeroracle":"s260","finalearc":"s261","brrrgrrrz":"s262","lucasw99":"s263","arbiter":"s264","kusanagiyo_00":"s265","bleachsolana":"s266","degensaw":"s267","kobe":"s268","itackld":"s269","6foot4honda":"s270","0xsnibbler":"s272","brazen":"s273","altanxayan":"s274","maxxbiid":"s275","runitback":"s276","krazz":"s277","wizardcat":"s278","mickeymouse":"s279","quinn":"s280","nigayahu":"s281","casino1":"s282","jambalaya":"s283","allidoiswin":"s284","acetto":"s285","heiss_7":"s286","gluttony":"s288","jackson":"s289","theetherista":"s290","wildwilly":"s291","ashegan":"s292","macdegods":"s293","spyzer":"s294","qtags":"s295","shroom_daddy":"s296","paul":"s297","ishowmemecoins":"s298","basedshillbh":"s299","shownuniform08":"s300","zinc":"D","missoralways":"S","logjam":"W","killua":"F","sencrazy":"S","solo":"F","poorgoat🐂🀄️💛🐈":"W","rowdy":"S","rc":"D","solkcrow":"D","0xsun":"S","nobi":"S","lana":"S","smokξy":"F","frank":"D","pow🧲":"F","rune":"D","ozzy":"F","blknoiz06":"D","unipcs":"W","avast":"D","mr.mystery":"S","冷静冷静再冷静":"S","logan lim":"D"}');
   const FOMO_BOARD_LABEL = { a: '总榜', m: '30天', w: '7天', d: '24h' };
+  const FOMO_FEED_RANK_BOARD = {
+    all: { label: '总榜', short: '总' },
+    '30d': { label: '30天', short: '30天' },
+    '7d': { label: '7天', short: '7天' },
+    '24h': { label: '24h', short: '24h' },
+  };
   const FOMO_TIER_ICON = { W: '🐳', D: '🐬', F: '🐟', S: '🦐' };
   const FOMO_TIER_NAME = { W: '鲸', D: '海豚', F: '鱼', S: '虾' };
 
@@ -3947,6 +3953,75 @@ ${flapTooltipText(info)}
     chip.textContent = mark.text;
     chip.title = mark.title;
     container.appendChild(chip);
+  }
+
+  /** 追踪流空间较窄，只显示优先级最高的名次：总榜 > 30天 > 7天 > 24h > 聪明钱。 */
+  function fomoFeedRankMark(handle, liveBoard = '', liveRank = 0) {
+    const liveMeta = FOMO_FEED_RANK_BOARD[String(liveBoard || '')];
+    const liveValue = Math.trunc(Number(liveRank) || 0);
+    if (liveMeta && liveValue > 0) {
+      return {
+        text: `${liveMeta.short}#${liveValue}`,
+        title: `fomo ${liveMeta.label}盈利榜第 ${liveValue} 名`,
+        top: liveValue <= 10,
+      };
+    }
+    const key = String(handle || '').trim().replace(/^@/, '').toLowerCase();
+    const raw = FOMO_BOARD[key];
+    if (!raw) return null;
+    const boardPriority = { a: 0, m: 1, w: 2, d: 3 };
+    const boards = Array.from(raw.matchAll(/([awmd])(\d+)/g))
+      .sort((left, right) => boardPriority[left[1]] - boardPriority[right[1]]);
+    if (boards.length) {
+      const [, type, value] = boards[0];
+      const label = FOMO_BOARD_LABEL[type];
+      return {
+        text: `${type === 'a' ? '总' : label}#${value}`,
+        title: `fomo ${label}盈利榜第 ${value} 名`,
+        top: Number(value) <= 10,
+      };
+    }
+    const smart = raw.match(/s(\d+)/);
+    if (!smart) return null;
+    return {
+      text: `聪#${smart[1]}`,
+      title: `聪明钱榜第 ${smart[1]} 名`,
+      top: Number(smart[1]) <= 10,
+    };
+  }
+
+  function attachFomoFeedRank(container, event) {
+    const mark = fomoFeedRankMark(
+      event?.handle || event?.name,
+      event?.fomoRankBoard,
+      event?.fomoRank,
+    );
+    if (!mark) return;
+    const chip = document.createElement('span');
+    chip.className = `gdh-fomofeed__rank${mark.top ? ' is-top' : ''}`;
+    chip.textContent = mark.text;
+    chip.title = mark.title;
+    container.classList.add('has-rank');
+    container.appendChild(chip);
+  }
+
+  function applyFomoFeedRankRows(rows) {
+    const ranks = new Map();
+    for (const row of (Array.isArray(rows) ? rows : []).slice(0, 500)) {
+      if (!Array.isArray(row)) continue;
+      const handle = String(row[0] || '').trim().replace(/^@+/, '').toLowerCase();
+      const board = String(row[1] || '');
+      const rank = Math.trunc(Number(row[2]) || 0);
+      if (handle && FOMO_FEED_RANK_BOARD[board] && rank > 0) ranks.set(handle, { board, rank });
+    }
+    fomoFeedEvents = fomoFeedEvents.map((event) => {
+      const handle = String(event?.handle || '').trim().replace(/^@+/, '').toLowerCase();
+      const mark = ranks.get(handle);
+      const { fomoRankBoard, fomoRank, fomoRankUpdatedAt, ...clean } = event;
+      return mark ? { ...clean, fomoRankBoard: mark.board, fomoRank: mark.rank } : clean;
+    });
+    teardownFomoFeed();
+    scheduleScan();
   }
 
   // ---- 观点翻译（Chrome 138+ 内置本地翻译，与 985monitor 同一套 API，全程在本机跑）----
@@ -6656,7 +6731,9 @@ ${flapTooltipText(info)}
     const src = document.createElement('span');
     src.className = 'gdh-fomofeed__src';
     src.textContent = profile.source;
-    who.append(av, name, src);
+    who.append(av, name);
+    if (ev.source !== 'pump') attachFomoFeedRank(who, ev);
+    who.appendChild(src);
 
     // 币种列：币 logo + 符号 + 动作词（买入/卖出，代替 GMGN 的持币时长）
     const sym = document.createElement('span');
@@ -6767,7 +6844,9 @@ ${flapTooltipText(info)}
     time.className = 'gdh-fomofeed__time';
     time.textContent = fomoFeedRelTime(ev.ts);
 
-    r1.append(av, name, tagEl, src, time);
+    r1.append(av, name);
+    if (ev.source !== 'pump') attachFomoFeedRank(r1, ev);
+    r1.append(tagEl, src, time);
     card.appendChild(r1);
 
     const r2 = document.createElement('div');
@@ -7703,6 +7782,7 @@ ${flapTooltipText(info)}
         fomoFeedLastPollAt = 0;
         pollFomoFeed();
       }
+      if (msg?.type === 'gdh-fomo-ranks') applyFomoFeedRankRows(msg.ranks);
       if (msg?.type === 'gdh-pump-push') {
         pumpFeedLastPollAt = 0;
         pollPumpFeed();

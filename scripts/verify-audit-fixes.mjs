@@ -74,6 +74,74 @@ const test = async (name, fn) => {
   process.stdout.write(`ok ${passed} - ${name}\n`);
 };
 
+await test('追踪流 FOMO 卡片优先显示最佳榜单排名', () => {
+  const boardMatch = content.match(/const FOMO_BOARD = JSON\.parse\('([^']+)'\);/);
+  assert.ok(boardMatch, 'missing FOMO_BOARD data');
+  const fomoBoard = JSON.parse(boardMatch[1]);
+  const fn = extractFunction(content, 'fomoFeedRankMark');
+  const rankBoard = {
+    all: { label: '总榜', short: '总' },
+    '30d': { label: '30天', short: '30天' },
+    '7d': { label: '7天', short: '7天' },
+    '24h': { label: '24h', short: '24h' },
+  };
+  const run = (handle, liveBoard = '', liveRank = 0) => JSON.parse(JSON.stringify(evaluate(
+    [fn],
+    `fomoFeedRankMark(${JSON.stringify(handle)}, ${JSON.stringify(liveBoard)}, ${JSON.stringify(liveRank)})`,
+    {
+      FOMO_BOARD: fomoBoard,
+      FOMO_BOARD_LABEL: { a: '总榜', m: '30天', w: '7天', d: '24h' },
+      FOMO_FEED_RANK_BOARD: rankBoard,
+    },
+  )));
+
+  assert.deepEqual(run('change', '30d', 7), { text: '30天#7', title: 'fomo 30天盈利榜第 7 名', top: true });
+  assert.deepEqual(run('@change'), { text: '总#1', title: 'fomo 总榜盈利榜第 1 名', top: true });
+  assert.deepEqual(run('metaversejoji'), { text: '7天#9', title: 'fomo 7天盈利榜第 9 名', top: true });
+  assert.deepEqual(run('_cr0wbar_'), { text: '聪#1', title: '聪明钱榜第 1 名', top: true });
+  const multiBoard = JSON.parse(JSON.stringify(evaluate([fn], "fomoFeedRankMark('multi')", {
+    FOMO_BOARD: { multi: 'd1w2m3a99s1' },
+    FOMO_BOARD_LABEL: { a: '总榜', m: '30天', w: '7天', d: '24h' },
+    FOMO_FEED_RANK_BOARD: rankBoard,
+  })));
+  assert.deepEqual(multiBoard, { text: '总#99', title: 'fomo 总榜盈利榜第 99 名', top: false });
+  assert.equal(run('not-on-any-board'), null);
+  assert.equal((extractFunction(content, 'buildFomoFeedTableRow').match(/attachFomoFeedRank/g) || []).length, 1);
+  assert.equal((extractFunction(content, 'buildFomoFeedCard').match(/attachFomoFeedRank/g) || []).length, 1);
+  assert.ok(styles.includes('.gdh-fomofeed__rank.is-top'));
+});
+
+await test('FOMO 排名通过每日 SSE 快照缓存且不随每笔事件重复请求', () => {
+  const functions = [
+    extractFunction(background, 'normalizeFomoRankSnapshot'),
+    extractFunction(background, 'fomoRankSnapshotForStorage'),
+    extractFunction(background, 'applyFomoRankSnapshotToEvent'),
+  ];
+  const result = evaluate(functions, `(() => {
+    const snapshot = normalizeFomoRankSnapshot({
+      updatedAt: 1770000000000,
+      ranks: [['@Alice', 'all', 2], ['bob', '7d', 9], ['long.handle-name', '30d', 7], ['bad user', 'all', 1], ['mallory', 'evil', 1]]
+    });
+    return {
+      stored: fomoRankSnapshotForStorage(snapshot),
+      ranked: applyFomoRankSnapshotToEvent({ key: 'one', handle: 'alice' }, snapshot),
+      plain: applyFomoRankSnapshotToEvent({ key: 'two', handle: 'nobody' }, snapshot),
+    };
+  })()`, { FOMO_RANK_BOARD_KEYS: new Set(['all', '30d', '7d', '24h']) });
+  const normalized = JSON.parse(JSON.stringify(result));
+  assert.deepEqual(normalized.ranked, {
+    key: 'one', handle: 'alice', fomoRankBoard: 'all', fomoRank: 2, fomoRankUpdatedAt: 1770000000000,
+  });
+  assert.deepEqual(normalized.plain, { key: 'two', handle: 'nobody' });
+  assert.equal(normalized.stored.ranks.length, 3);
+  assert.deepEqual(normalized.stored.ranks[2], ['long.handle-name', '30d', 7]);
+  const connect = extractFunction(background, 'connectFomoSse');
+  assert.ok(connect.includes("searchParams.set('fomoRankUpdatedAt'"));
+  assert.ok(connect.includes("eventType === 'fomo-ranks'"));
+  assert.ok(extractFunction(background, 'fomoSseIngestRanks').includes('chrome.storage.local.set'));
+  assert.ok(content.includes("msg?.type === 'gdh-fomo-ranks'"));
+});
+
 await test('隐藏闪电交易按钮默认关闭且已保存选择仍优先', () => {
   assert.match(popup, /hideLightningTrade:\s*false,/);
   assert.match(content, /hideLightningTrade:\s*false,/);
@@ -746,6 +814,7 @@ await test('SSE 重放同一交易即使换 key 也只通知一次', () => {
     extractFunction(background, 'trackingFeedNormalizedAddress'),
     extractFunction(background, 'trackingFeedBurstDuplicate'),
     extractFunction(background, 'trackingFeedDuplicate'),
+    extractFunction(background, 'applyFomoRankSnapshotToEvent'),
     extractFunction(background, 'fomoSseIngest'),
   ];
   const raw = {
@@ -765,6 +834,7 @@ await test('SSE 重放同一交易即使换 key 也只通知一次', () => {
     FOMO_FEED_KEEP: 150,
     TRACKING_FEED_BURST_MS: 20000,
     fomoFeedCache: { events: [], updatedAt: 0, fetchedAt: 0 },
+    fomoRankSnapshot: { updatedAt: 0, ranks: new Map() },
     state,
     fomoSseNotifyTabs: () => { state.calls += 1; },
   });
