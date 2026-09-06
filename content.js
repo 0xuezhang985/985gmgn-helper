@@ -2313,12 +2313,19 @@ ${flapTooltipText(info)}
   function trackerTokenPageContext() {
     const route = currentTokenRoute();
     if (!route) return null;
+    const routeAddress = trackingFeedNormalizedAddress(route.address);
+    const headerAddress = trackingFeedNormalizedAddress(
+      document.querySelector('#token-base-address[data-addr]')?.dataset?.addr,
+    );
+    // SPA 切币时 URL 会先变化、表头稍后才替换。两者冲突的短窗口内不打标，
+    // 避免拿新路由去判断仍在旧页面 DOM 中的追踪行。
+    if (headerAddress && headerAddress !== routeAddress) return null;
     const symbolEl = document.querySelector(
       '#token-base-symbol[data-symbol], [data-testid="token-detail-symbol"]',
     );
     return {
       chain: String(route.chain || '').trim().toLowerCase(),
-      address: trackingFeedNormalizedAddress(route.address),
+      address: routeAddress,
       symbol: trackerTokenSymbol(symbolEl?.dataset?.symbol || symbolEl?.textContent),
     };
   }
@@ -2327,10 +2334,12 @@ ${flapTooltipText(info)}
     if (!context?.address) return '';
     const rowAddress = trackingFeedNormalizedAddress(address);
     const rowChain = String(chain || '').trim().toLowerCase();
-    if (rowAddress && rowChain && rowAddress === context.address && rowChain === context.chain) {
+    const rowSymbol = trackerTokenSymbol(symbol);
+    const symbolConsistent = !rowSymbol || !context.symbol || rowSymbol === context.symbol;
+    if (rowAddress && rowChain && rowAddress === context.address && rowChain === context.chain
+      && symbolConsistent) {
       return 'current';
     }
-    const rowSymbol = trackerTokenSymbol(symbol);
     if (rowSymbol && context.symbol && rowSymbol === context.symbol
       && (rowAddress !== context.address || rowChain !== context.chain)) {
       return 'same-name';

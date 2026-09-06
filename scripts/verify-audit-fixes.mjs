@@ -860,6 +860,14 @@ await test('页面桥只把完整成交记录识别为追踪行并兼容 token_a
     address: '0xabc', symbol: 'ABC', chain: 'bsc', maker: '0xmaker', nick: '',
     side: 'buy', tx: '0xtx', usd: 12.5, ts: 1700000000000,
   });
+  const conflicting = run({
+    token_address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    base_address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    base_symbol: 'YURI', chain: 'robinhood', maker: '0xmaker',
+    side: 'sell', timestamp: 1700000000,
+  });
+  assert.equal(conflicting.address, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(conflicting.symbol, 'YURI');
 });
 
 await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
@@ -887,6 +895,7 @@ await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
     `trackerTokenRelation(${JSON.stringify(address)}, ${JSON.stringify(symbol)}, ${JSON.stringify(chain)}, ${JSON.stringify(context)})`,
   );
   assert.equal(run('0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'FSD'), 'current');
+  assert.equal(run('0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'OTHER'), '');
   assert.equal(run('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'ＦＳＤ'), 'same-name');
   assert.equal(run('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'OTHER'), '');
   assert.equal(run('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'FSD', 'base'), 'same-name');
@@ -897,6 +906,18 @@ await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
   assert.ok(apply.includes('trackerCardTimeRow(card)'));
   assert.ok(extractFunction(content, 'scanVisibleCards').includes("timed('token-relation', scanTrackerTokenRelations)"));
   assert.ok(extractFunction(content, 'fomoFeedCardFor').includes('applyTrackerTokenRelation'));
+  const pageContextFns = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'trackerTokenSymbol'),
+    extractFunction(content, 'trackerTokenPageContext'),
+  ];
+  const staleContext = evaluate(pageContextFns, 'trackerTokenPageContext()', {
+    currentTokenRoute: () => context,
+    document: { querySelector: (selector) => selector.startsWith('#token-base-address')
+      ? { dataset: { addr: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }
+      : { dataset: { symbol: 'OLD' }, textContent: 'OLD' } },
+  });
+  assert.equal(staleContext, null);
   assert.match(styles, /\.gdh-token-relation\.is-current[\s\S]*?color:\s*#43c07a/);
   assert.match(styles, /\.gdh-token-relation\.is-same-name[\s\S]*?color:\s*#ef5350/);
   assert.ok(styles.includes('.gdh-token-relation.is-table'));

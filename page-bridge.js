@@ -557,7 +557,9 @@
       // 无 sentry/testid 的 A/B 构建只能从虚拟行反查 Fiber。这里必须用追踪成交
       // 独有的 maker + side + timestamp 组合收紧，不能只凭 base_address；战壕、
       // 搜索等普通代币对象同样有 base_address，会被误认成追踪行。
-      const address = value.token_address || value.base_address || value.base_token?.address;
+      // base_symbol 对应的必须是 base_address。部分 GMGN 构建同时带 token_address，
+      // 但它可能是当前详情页上下文地址；若把它放前面，跨币追踪行会被误标为当前币。
+      const address = value.base_address || value.base_token?.address || value.token_address;
       const maker = value.maker || value.maker_info_address || value.maker_info?.address;
       const side = String(value.side || '').trim().toLowerCase();
       const timestamp = Number(value.timestamp);
@@ -584,7 +586,7 @@
           const hit = pick(props, 0);
           if (hit) {
             return {
-              address: String(hit.token_address || hit.base_address || hit.base_token?.address || '').slice(0, 64),
+              address: String(hit.base_address || hit.base_token?.address || hit.token_address || '').slice(0, 64),
               symbol: String(hit.base_symbol || hit.base_token?.symbol || '').slice(0, 24),
               chain: String(hit.chain || '').slice(0, 16),
               // maker = 这条推送的钱包地址。GMGN 改版后卡片里的钱包名不一定还是
