@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.56 - 2026-09-08
+
+- **修复明明存在追踪持仓却显示「暂无追踪持仓」**：现场在同一 GMGN 登录态对照确认，`token_holders` 只带 `following=true` 时返回 0 条，补上 GMGN 原生持仓表使用的 `needToken=true` 后，CHROME 同一地址立即返回 5 条有效记录。此前把认证后的空响应误判成真实空仓。
+- 追踪持仓继续只保留 `balance > 0` 且 `amount_percentage > 0` 的钱包，按持仓占比倒序最多显示 5 名；已清仓地址不会进入 K 线浮层。姓名直接从 GMGN 当前页面已经加载的 Jotai 钱包备注 map 读取，不新增备注名单请求，兼容 EVM 地址小写与 Solana 地址大小写。
+- JavaScript 语法检查、107 项完整回归与真实 GMGN 登录页数据链验证通过。没有修改 FOMO/Pump 插卡、连续推送去重、特别关注、全链监控、Brew、RWA 或交易路径。
+
 ## 0.46.55 - 2026-09-08
 
 - **修复 K 线追踪持仓被 TradingView 完全遮挡**：在真实 GMGN 页面确认持仓浮层 DOM 已生成、文字与坐标均正确，但 GMGN 的 `#global-tv-overlay` 使用 `z-index: 800`，插件浮层此前只有 `z-index: 8`，实际绘制时最上层命中的是 TradingView iframe。本版将浮层提升到 `801`，保持不可点击，不影响 K 线操作。

@@ -2487,6 +2487,8 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   const functions = [
     extractFunction(monitorAggregate, 'sanitizeTrackedHolding'),
     extractFunction(monitorAggregate, 'extractTrackedHoldingRows'),
+    extractFunction(monitorAggregate, 'trackedWalletKey'),
+    extractFunction(monitorAggregate, 'applyTrackedHoldingMark'),
     extractFunction(monitorAggregate, 'formatHoldingPercent'),
     extractFunction(monitorAggregate, 'formatSignedMoney'),
     extractFunction(monitorAggregate, 'formatSignedPercent'),
@@ -2496,6 +2498,12 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
       address: '0x1234567890abcdef', twitter_name: '阿峰', amount_percentage: '0.0049',
       profit: '1970', profit_change: '1.5565', balance: '1200',
     }),
+    marked: applyTrackedHoldingMark({
+      address: '0xABC', name: null, amount_percentage: '0.0049', balance: '1200',
+    }, { '0xabc': { mark: '测试钱包', image: 'avatar.png' } }, 'bsc'),
+    soldOut: sanitizeTrackedHolding({
+      address: '0xsold', name: '已清仓', amount_percentage: '0', balance: '0',
+    }),
     percent: formatHoldingPercent(0.0049),
     profit: formatSignedMoney(1970),
     pnl: formatSignedPercent(1.5565),
@@ -2503,6 +2511,9 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   const normalized = JSON.parse(JSON.stringify(value));
   assert.equal(normalized.holding.name, '阿峰');
   assert.equal(normalized.holding.holdingPercent, 0.49);
+  assert.equal(normalized.marked.remark, '测试钱包');
+  assert.equal(normalized.marked.avatar, 'avatar.png');
+  assert.equal(normalized.soldOut, null);
   assert.equal(normalized.percent, '0.49%');
   assert.equal(normalized.profit, '+$1.97K');
   assert.equal(normalized.pnl, '+155.65%');
@@ -2514,6 +2525,8 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   assert.ok(monitorAggregate.includes("source.includes('/vas/api/v1/token_holders/')"));
   assert.match(monitorAggregate, /limit:\s*5/);
   assert.match(monitorAggregate, /following:\s*true/);
+  assert.match(monitorAggregate, /following:\s*true,\s*needToken:\s*true/);
+  assert.ok(monitorAggregate.includes("source.includes('getMemoryAtom')"));
   assert.ok(monitorAggregate.includes("const CHART_HOLDINGS_SELECTOR = '.chart-anchor-main'"));
   assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings'));
   assert.ok(monitorAggregateStyles.includes('pointer-events: none'));

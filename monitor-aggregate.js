@@ -46,6 +46,7 @@
   let nativePrepareCard = null;
   let nativeFilterCards = null;
   let trackedHolderApi = null;
+  let trackedRemarkAtomFactory = null;
   let liveSubscription = null;
   let currentHost = null;
   let panel = null;
@@ -168,6 +169,26 @@
       trackedHolderApi = null;
     }
     return typeof trackedHolderApi === 'function';
+  }
+
+  function discoverTrackedRemarkAtomFactory() {
+    if (trackedRemarkAtomFactory) return true;
+    const req = captureWebpackRequire();
+    if (!req) return false;
+    try {
+      const markId = Object.keys(req.m).find((id) => {
+        const source = String(req.m[id]);
+        return source.includes('wallet_mark_multichain') && source.includes('getMemoryAtom');
+      });
+      if (!markId) return false;
+      const markModule = req(markId);
+      trackedRemarkAtomFactory = Object.values(markModule).find((value) => (
+        typeof value === 'function' && String(value).includes('getMemoryAtom')
+      )) || null;
+    } catch {
+      trackedRemarkAtomFactory = null;
+    }
+    return typeof trackedRemarkAtomFactory === 'function';
   }
 
   function getChains() {
@@ -361,6 +382,59 @@
     };
   }
 
+  function trackedWalletKey(address, chain) {
+    const value = String(address || '');
+    return ['sol', 'tron'].includes(String(chain || '').toLowerCase()) ? value : value.toLowerCase();
+  }
+
+  function applyTrackedHoldingMark(holder, marks, chain) {
+    const key = trackedWalletKey(holder?.address, chain);
+    const mark = marks?.[key] || {};
+    return {
+      ...holder,
+      remark: String(mark.mark || holder?.remark || ''),
+      avatar: String(holder?.avatar || mark.image || ''),
+    };
+  }
+
+  function findPageAtomStore() {
+    const starts = [
+      document.querySelector(CHART_HOLDINGS_SELECTOR),
+      document.querySelector('[data-sentry-component]'),
+    ].filter(Boolean);
+    if (!starts.length) {
+      starts.push(...[...document.querySelectorAll('body *')].slice(0, 50));
+    }
+    for (const start of starts) {
+      const fiberKey = Object.keys(start).find((key) => key.startsWith('__reactFiber$'));
+      let fiber = fiberKey ? start[fiberKey] : null;
+      for (let level = 0; fiber && level < 160; level += 1, fiber = fiber.return) {
+        const values = [fiber.memoizedProps?.value, fiber.pendingProps?.value];
+        let context = fiber.dependencies?.firstContext;
+        for (let index = 0; context && index < 30; index += 1, context = context.next) {
+          values.push(context.memoizedValue);
+        }
+        const store = values.find((value) => value
+          && typeof value.get === 'function'
+          && typeof value.sub === 'function');
+        if (store) return store;
+      }
+    }
+    return null;
+  }
+
+  function readTrackedHoldingMarks(chain) {
+    if (!discoverTrackedRemarkAtomFactory()) return {};
+    const store = findPageAtomStore();
+    if (!store) return {};
+    try {
+      const marks = store.get(trackedRemarkAtomFactory(chain));
+      return marks && typeof marks === 'object' ? marks : {};
+    } catch {
+      return {};
+    }
+  }
+
   function extractTrackedHoldingRows(response) {
     if (Array.isArray(response)) return response;
     if (Array.isArray(response?.list)) return response.list;
@@ -445,10 +519,15 @@
         orderby: 'amount_percentage',
         direction: 'desc',
         following: true,
+        needToken: true,
       });
       if (key !== chartHoldingsKey || key !== `${route.chain}:${route.address}`) return;
       const candidates = extractTrackedHoldingRows(response);
-      renderChartHoldings(candidates.map(sanitizeTrackedHolding).filter(Boolean));
+      const marks = readTrackedHoldingMarks(route.chain);
+      renderChartHoldings(candidates
+        .map((holder) => applyTrackedHoldingMark(holder, marks, route.chain))
+        .map(sanitizeTrackedHolding)
+        .filter(Boolean));
     } catch {
       if (key === chartHoldingsKey) removeChartHoldings();
     } finally {
