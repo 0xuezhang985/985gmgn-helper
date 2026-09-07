@@ -2518,6 +2518,7 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings'));
   assert.ok(monitorAggregateStyles.includes('pointer-events: none'));
   assert.match(monitorAggregateStyles, /\.gdh-chart-tracked-holdings\s*\{[^}]*right:\s*auto;[^}]*flex-direction:\s*column;/s);
+  assert.match(monitorAggregateStyles, /\.gdh-chart-tracked-holdings\s*\{[^}]*z-index:\s*(?:80[1-9]|8[1-9]\d|9\d\d|[1-9]\d{3,});/s);
   assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings.is-empty'));
   assert.ok(monitorAggregate.includes('holding.name'));
   assert.ok(monitorAggregate.includes('holding.holdingPercent'));
