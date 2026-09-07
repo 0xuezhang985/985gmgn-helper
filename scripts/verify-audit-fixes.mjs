@@ -10,6 +10,8 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8').replace(/\
 const background = read('background.js');
 const content = read('content.js');
 const bridge = read('page-bridge.js');
+const monitorAggregate = read('monitor-aggregate.js');
+const monitorAggregateStyles = read('monitor-aggregate.css');
 const debotContent = read('debot-content.js');
 const debotBridge = read('debot-bridge.js');
 const debotStyles = read('debot-styles.css');
@@ -2327,6 +2329,77 @@ await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {
   assert.match(content, /FOMO_REFRESH_MS = 2 \* 60 \* 1000/);
   assert.match(content, /FOMO_TRENDING_REFRESH_MS = 60 \* 1000/);
   assert.match(debotContent, /PANEL_REFRESH_MS = 2 \* 60 \* 1000/);
+});
+
+await test('GMGN 监控全链聚合完整接线且不触碰既有 FOMO/Pump 路径', () => {
+  const gmgnMain = manifest.content_scripts.find(
+    (entry) => entry.world === 'MAIN' && entry.matches.includes('https://gmgn.ai/*'),
+  );
+  const gmgnIsolated = manifest.content_scripts.find(
+    (entry) => !entry.world && entry.matches.includes('https://gmgn.ai/*'),
+  );
+  assert.ok(gmgnMain.js.includes('monitor-aggregate.js'));
+  assert.equal(gmgnMain.run_at, 'document_start');
+  assert.ok(gmgnIsolated.css.includes('monitor-aggregate.css'));
+  assert.ok(releaseBuild.includes("'monitor-aggregate.js'"));
+  assert.ok(releaseBuild.includes("'monitor-aggregate.css'"));
+  assert.ok(monitorAggregate.includes("const MONITOR_SELECTOR = '[data-sentry-component=\"Monitor\"]'"));
+  assert.ok(monitorAggregate.includes("tab.textContent.trim() === '监控'"));
+  assert.ok(monitorAggregateStyles.includes('[data-gdh-monitor-content-host="1"] > :not(.gdh-monitor-aggregate)'));
+  assert.ok(monitorAggregate.includes("const NAV_ATTR = 'data-gdh-nav'"));
+  assert.ok(monitorAggregate.includes("document.dispatchEvent(new Event('gdh-navigate'))"));
+  assert.ok(content.includes('.gdh-fomo-trending-panel, .gdh-monitor-aggregate, .gdh-flap-row'));
+  assert.ok(extractFunction(bridge, 'startDomScanner').includes("target?.closest('.gdh-monitor-aggregate')"));
+  assert.ok(privacy.includes('既有共享 WebSocket'));
+  assert.ok(!monitorAggregate.includes('chrome.runtime'));
+  assert.ok(!monitorAggregate.includes('985monitor'));
+});
+
+await test('全链监控归一化链地址并复用 GMGN 共享流与限频快照', () => {
+  const functions = [
+    extractFunction(monitorAggregate, 'sanitizeWallet'),
+    extractFunction(monitorAggregate, 'sanitizeCard'),
+    extractFunction(monitorAggregate, 'cardKey'),
+    extractFunction(monitorAggregate, 'netInflow'),
+  ];
+  const value = evaluate(functions, `(() => {
+    const card = sanitizeCard('robinhood', {
+      address: '0xAbC', symbol: 'RWA', price: '2', total_supply: '1000',
+      wallets: [
+        { wallet_address: '0x1', net_inflow: '120.5', timestamp: 20 },
+        { wallet_address: '0x2', net_inflow: '-30', timestamp: 21 },
+      ],
+    });
+    return {
+      card,
+      key: cardKey(card),
+      inflow: netInflow(card),
+      liveSell: sanitizeWallet({ maker: '0x3', side: 'transfer_out', amount_usd: '19.5' }),
+    };
+  })()`);
+  const normalized = JSON.parse(JSON.stringify(value));
+  assert.equal(normalized.card.chain, 'robinhood');
+  assert.equal(normalized.card.marketCap, 0);
+  assert.equal(normalized.card.price, 2);
+  assert.equal(normalized.key, 'robinhood:0xabc');
+  assert.equal(normalized.inflow, 90.5);
+  assert.equal(normalized.liveSell.netInflow, -19.5);
+  assert.ok(monitorAggregate.includes('getFollowWalletShareObservable()'));
+  assert.ok(monitorAggregate.includes('followSocket?.subscribedChains'));
+  assert.ok(monitorAggregate.includes("source.includes('name:\"follow_cards\"')"));
+  assert.ok(monitorAggregate.includes("String(value).includes('monitorCardsV3')"));
+  assert.match(monitorAggregate, /SNAPSHOT_TTL_MS = 30_000/);
+  assert.match(monitorAggregate, /LIVE_REFRESH_MIN_MS = 8_000/);
+  assert.ok(monitorAggregate.includes('Math.min(3, chains.length)'));
+  assert.ok(monitorAggregate.includes('chainRefreshTimers.has(chain) || chainsFetching.has(chain)'));
+  assert.ok(extractFunction(monitorAggregate, 'fetchChain').includes('chainsFetching.add(chain)'));
+  assert.ok(extractFunction(monitorAggregate, 'fetchChain').includes('chainsFetching.delete(chain)'));
+  assert.ok(monitorAggregate.includes('if (fullFetchRunning && !force) return'));
+  assert.ok(extractFunction(monitorAggregate, 'scan').includes('else if (entering || !lastFullFetchAt)'));
+  assert.ok(extractFunction(monitorAggregate, 'restoreNative').includes('stopLiveSubscription()'));
+  assert.ok(monitorAggregate.includes("document.visibilityState === 'hidden') stopLiveSubscription()"));
+  assert.ok(!monitorAggregate.includes('new WebSocket'));
+  assert.ok(!monitorAggregate.includes('setInterval(fetch'));
 });
 
 process.stdout.write(`1..${passed}\n`);

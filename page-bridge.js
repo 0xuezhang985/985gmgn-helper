@@ -841,7 +841,14 @@
 
   function startDomScanner() {
     if (!document.documentElement) return;
-    const observer = new MutationObserver(scheduleScan);
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target instanceof Element ? record.target : record.target?.parentElement;
+        if (target?.closest('.gdh-monitor-aggregate')) continue;
+        scheduleScan();
+        return;
+      }
+    });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,

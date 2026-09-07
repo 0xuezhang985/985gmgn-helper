@@ -1,0 +1,308 @@
+[data-gdh-monitor-content-host="1"] {
+  padding-bottom: 0 !important;
+}
+
+[data-gdh-monitor-content-host="1"] > :not(.gdh-monitor-aggregate) {
+  display: none !important;
+}
+
+.gdh-monitor-aggregate {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: rgb(var(--color-text-100, 232 234 238));
+  background: rgb(var(--color-bg-100, 13 14 16));
+  font-size: 12px;
+}
+
+.gdh-monitor-titlebar,
+.gdh-monitor-head,
+.gdh-monitor-row {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 38% 12% 16% 16% 18%;
+  align-items: center;
+}
+
+.gdh-monitor-titlebar {
+  min-height: 31px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid rgb(var(--color-line-50, 45 47 52));
+}
+
+.gdh-monitor-titlebar > span {
+  grid-column: 1 / 5;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.gdh-monitor-titlebar b {
+  color: rgb(var(--color-text-100, 232 234 238));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gdh-monitor-titlebar small {
+  color: rgb(var(--color-text-300, 132 137 148));
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.gdh-monitor-refresh {
+  grid-column: 5;
+  justify-self: end;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: rgb(var(--color-text-300, 132 137 148));
+  background: transparent;
+  cursor: pointer;
+  line-height: 22px;
+  font-size: 16px;
+}
+
+.gdh-monitor-refresh:hover {
+  color: rgb(var(--color-text-100, 232 234 238));
+  background: rgb(var(--color-bg-200, 28 30 34));
+}
+
+.gdh-monitor-refresh.is-loading {
+  animation: gdh-monitor-spin 0.9s linear infinite;
+}
+
+@keyframes gdh-monitor-spin {
+  to { transform: rotate(360deg); }
+}
+
+.gdh-monitor-head {
+  flex: 0 0 35px;
+  padding: 0 12px;
+  color: rgb(var(--color-text-300, 132 137 148));
+  border-bottom: 0.5px solid rgb(var(--color-line-50, 45 47 52));
+}
+
+.gdh-monitor-head span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gdh-monitor-head span:nth-child(4),
+.gdh-monitor-head span:nth-child(5) {
+  text-align: right;
+}
+
+.gdh-monitor-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.gdh-monitor-row-wrap {
+  border-bottom: 0.5px solid rgb(var(--color-line-50, 45 47 52));
+}
+
+.gdh-monitor-row {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.gdh-monitor-token-cell,
+.gdh-monitor-token-cell a,
+.gdh-monitor-inflow,
+.gdh-monitor-time {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.gdh-monitor-token-cell a {
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.gdh-monitor-expand {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  color: rgb(var(--color-text-300, 132 137 148));
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+
+.gdh-monitor-expand.is-expanded {
+  transform: rotate(0deg);
+}
+
+.gdh-monitor-expand:disabled {
+  visibility: hidden;
+}
+
+.gdh-monitor-avatar {
+  position: relative;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+}
+
+.gdh-monitor-avatar > img:first-child,
+.gdh-monitor-avatar > i {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgb(var(--color-bg-200, 28 30 34));
+}
+
+.gdh-monitor-chain {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgb(var(--color-bg-100, 13 14 16));
+}
+
+.gdh-monitor-symbol {
+  max-width: 92px;
+  overflow: hidden;
+  color: rgb(var(--color-text-100, 232 234 238));
+  font-size: 13px;
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gdh-monitor-market {
+  overflow: hidden;
+  color: rgb(var(--color-yellow-100, 234 185 75));
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gdh-monitor-swaps {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.gdh-monitor-swaps b,
+.gdh-monitor-inflow .is-positive,
+.gdh-monitor-wallet-row .is-positive {
+  color: rgb(var(--color-increase-200, 58 196 133));
+  font-style: normal;
+  font-weight: 500;
+}
+
+.gdh-monitor-swaps em,
+.gdh-monitor-inflow .is-negative,
+.gdh-monitor-wallet-row .is-negative {
+  color: rgb(var(--color-decrease-200, 240 83 94));
+  font-style: normal;
+  font-weight: 500;
+}
+
+.gdh-monitor-swaps span {
+  color: rgb(var(--color-text-300, 132 137 148));
+}
+
+.gdh-monitor-inflow {
+  justify-content: flex-end;
+  gap: 3px;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
+.gdh-monitor-inflow small {
+  color: rgb(var(--color-text-200, 179 183 191));
+  font-size: 11px;
+}
+
+.gdh-monitor-time {
+  justify-content: flex-end;
+  gap: 3px;
+  color: rgb(var(--color-text-300, 132 137 148));
+  white-space: nowrap;
+}
+
+.gdh-monitor-time small {
+  font-size: 12px;
+}
+
+.gdh-monitor-wallets {
+  padding: 2px 12px 6px 32px;
+  background: rgb(var(--color-bg-200, 23 25 29) / 0.65);
+}
+
+.gdh-monitor-wallet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px 72px 38px;
+  align-items: center;
+  min-height: 27px;
+  gap: 5px;
+  color: rgb(var(--color-text-300, 132 137 148));
+}
+
+.gdh-monitor-wallet-person {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gdh-monitor-wallet-person img,
+.gdh-monitor-wallet-person i {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgb(var(--color-bg-300, 35 38 43));
+}
+
+.gdh-monitor-wallet-person span {
+  overflow: hidden;
+  color: rgb(var(--color-text-200, 179 183 191));
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gdh-monitor-wallet-row time {
+  text-align: right;
+}
+
+.gdh-monitor-empty {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+  padding: 24px;
+  color: rgb(var(--color-text-300, 132 137 148));
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gdh-monitor-expand { transition: none; }
+  .gdh-monitor-refresh.is-loading { animation: none; }
+}
