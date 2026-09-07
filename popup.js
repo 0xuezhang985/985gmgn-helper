@@ -26,6 +26,7 @@ const DEFAULTS = {
   enableFomoFeed: true,
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
+  enableMonitorAggregate: true,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
   addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
   markedHolders: [
@@ -68,6 +69,7 @@ const featureInputs = {
   enableFomoFeed: document.querySelector('#enable-fomo-feed'),
   enablePumpFeed: document.querySelector('#enable-pump-feed'),
   fomoFeedChainOnly: document.querySelector('#fomo-feed-chain-only'),
+  enableMonitorAggregate: document.querySelector('#enable-monitor-aggregate'),
   hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
 const devListInput = document.querySelector('#dev-list');

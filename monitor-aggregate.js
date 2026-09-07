@@ -4,9 +4,13 @@
   const MONITOR_SELECTOR = '[data-sentry-component="Monitor"]';
   const HOST_ATTR = 'data-gdh-monitor-content-host';
   const NAV_ATTR = 'data-gdh-nav';
+  const CONFIG_ATTR = 'data-gdh-monitor-aggregate-enabled';
+  const CONFIG_EVENT = 'gdh-monitor-config-changed';
+  const CHART_HOLDINGS_SELECTOR = '.chart-anchor-main';
   const MAX_ROWS = 100;
   const SNAPSHOT_TTL_MS = 30_000;
   const LIVE_REFRESH_MIN_MS = 8_000;
+  const CHART_HOLDINGS_TTL_MS = 30_000;
   const FALLBACK_CHAINS = [
     'sol',
     'bsc',
@@ -39,6 +43,9 @@
   let webpackRequire = null;
   let apiFetchCards = null;
   let followSocket = null;
+  let nativePrepareCard = null;
+  let nativeFilterCards = null;
+  let trackedHolderApi = null;
   let liveSubscription = null;
   let currentHost = null;
   let panel = null;
@@ -50,6 +57,11 @@
   let renderQueued = false;
   let scanTimer = 0;
   let destroyed = false;
+  let currentNativeFilter = null;
+  let currentFilterFingerprint = '';
+  let chartHoldingsInflight = null;
+  let chartHoldingsKey = '';
+  let chartHoldingsFetchedAt = 0;
   const cardsByChain = new Map();
   const errorsByChain = new Map();
   const lastChainFetchAt = new Map();
@@ -80,7 +92,7 @@
   }
 
   function discoverGmgnMonitorApi() {
-    if (apiFetchCards && followSocket) return true;
+    if (apiFetchCards && followSocket && nativePrepareCard && nativeFilterCards) return true;
     const req = captureWebpackRequire();
     if (!req) return false;
     try {
@@ -106,10 +118,56 @@
           followSocket = typeof getManager === 'function' ? getManager()?.getFollowWalletSocket?.() : null;
         }
       }
+      if (!nativePrepareCard || !nativeFilterCards) {
+        const filterId = Object.keys(req.m).find((id) => {
+          const source = String(req.m[id]);
+          return source.includes('is_open_or_close')
+            && source.includes('walletCount')
+            && source.includes('walletsAmountTotal')
+            && source.includes('migrate_status');
+        });
+        if (filterId) {
+          const filterModule = req(filterId);
+          nativePrepareCard = Object.values(filterModule).find((value) => (
+            typeof value === 'function'
+            && String(value).includes('walletsAmountTotal')
+            && String(value).includes('priceChangePercent')
+            && !String(value).includes('rangeValueTimes')
+          )) || null;
+          nativeFilterCards = Object.values(filterModule).find((value) => (
+            typeof value === 'function'
+            && String(value).includes('rangeValueTimes')
+            && String(value).includes('walletCount')
+            && String(value).includes('migrate_status')
+          )) || null;
+        }
+      }
     } catch {
       return false;
     }
-    return typeof apiFetchCards === 'function' && !!followSocket;
+    return typeof apiFetchCards === 'function' && !!followSocket
+      && typeof nativePrepareCard === 'function' && typeof nativeFilterCards === 'function';
+  }
+
+  function discoverTrackedHolderApi() {
+    if (trackedHolderApi) return true;
+    const req = captureWebpackRequire();
+    if (!req) return false;
+    try {
+      const holderId = Object.keys(req.m).find((id) => {
+        const source = String(req.m[id]);
+        return source.includes('/vas/api/v1/token_holders/');
+      });
+      if (!holderId) return false;
+      const holderModule = req(holderId);
+      trackedHolderApi = Object.values(holderModule).find((value) => {
+        const source = String(value);
+        return typeof value === 'function' && source.includes('/vas/api/v1/token_holders/');
+      }) || null;
+    } catch {
+      trackedHolderApi = null;
+    }
+    return typeof trackedHolderApi === 'function';
   }
 
   function getChains() {
@@ -134,9 +192,11 @@
       avatar: String(wallet.avatar || ''),
       balance: Number(wallet.balance || 0),
       netInflow,
+      amountTotal: Math.abs(Number(wallet.amount_total || amountUsd || 0)),
       buys: Number(wallet.buys || 0),
       sells: Number(wallet.sells || 0),
       side,
+      isOpenOrClose: Number(wallet.is_open_or_close),
       timestamp: Number(wallet.timestamp || wallet.balance_ts || 0),
     };
   }
@@ -154,6 +214,10 @@
       marketCap: Number(card.market_cap || 0),
       price: Number(card.price || card.price_usd || 0),
       totalSupply: Number(card.total_supply || card.base_total_supply || 0),
+      volume: Number(card.volume || 0),
+      holderCount: Number(card.holder_count || 0),
+      launchpadPlatform: String(card.launchpad_platform || ''),
+      migrateStatus: String(card.migrate_status || ''),
       buys: Number(card.buys || 0),
       sells: Number(card.sells || 0),
       createTimestamp: Number(card.create_timestamp || card.token_create_time || 0),
@@ -174,6 +238,78 @@
 
   function netInflow(card) {
     return card.wallets.reduce((sum, wallet) => sum + (Number(wallet.netInflow) || 0), 0);
+  }
+
+  function isAggregateEnabled() {
+    return document.documentElement.getAttribute(CONFIG_ATTR) !== '0';
+  }
+
+  function findCardFilter(value, chain, seen = new WeakSet(), depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 4 || seen.has(value)) return null;
+    seen.add(value);
+    if (value[chain]?.cardFilter && typeof value[chain].cardFilter === 'object') {
+      return value[chain].cardFilter;
+    }
+    if (value.cardFilter && typeof value.cardFilter === 'object') return value.cardFilter;
+    const children = Array.isArray(value) ? value : Object.entries(value)
+      .filter(([key]) => ![
+        'return', 'child', 'sibling', 'alternate', 'stateNode', 'memoizedProps', 'pendingProps',
+      ].includes(key) && !key.startsWith('__react'))
+      .slice(0, 50)
+      .map(([, child]) => child);
+    for (const child of children) {
+      const filter = findCardFilter(child, chain, seen, depth + 1);
+      if (filter) return filter;
+    }
+    return null;
+  }
+
+  function readNativeMonitorFilter(monitor) {
+    const chain = String(
+      monitor?.querySelector('[data-testid="chain-switch-current"]')?.getAttribute('data-chain') || '',
+    ).toLowerCase();
+    const trigger = monitor?.querySelector('[data-icon="IconFilter16pxRegular"]')?.closest('button');
+    if (!chain || !trigger) return null;
+    const fiberKey = Object.keys(trigger).find((key) => key.startsWith('__reactFiber$'));
+    if (!fiberKey) return null;
+    let fiber = trigger[fiberKey];
+    for (let level = 0; fiber && level < 55; level += 1) {
+      let hook = fiber.memoizedState;
+      for (let index = 0; hook && index < 40; index += 1) {
+        const filter = findCardFilter(hook.memoizedState, chain);
+        if (filter) {
+          try { return JSON.parse(JSON.stringify(filter)); } catch { return null; }
+        }
+        hook = hook.next;
+      }
+      fiber = fiber.return;
+    }
+    return null;
+  }
+
+  function applyNativeMonitorFilter(cards) {
+    const prepared = typeof nativePrepareCard === 'function'
+      ? cards.map((card) => nativePrepareCard(card)) : cards;
+    if (!currentNativeFilter || typeof nativeFilterCards !== 'function') return prepared;
+    try {
+      return nativeFilterCards(prepared, [], currentNativeFilter, 'walletsAmountTotal') || [];
+    } catch {
+      return prepared;
+    }
+  }
+
+  function hasActiveNativeFilter() {
+    const filter = currentNativeFilter;
+    return !!(
+      filter?.volume?.min || filter?.volume?.max
+      || filter?.marketCap?.min || filter?.marketCap?.max
+      || filter?.netInflow?.min || filter?.netInflow?.max
+      || filter?.walletCount?.min || filter?.walletCount?.max
+      || filter?.holderCount?.min || filter?.holderCount?.max
+      || filter?.tokenAge?.min || filter?.tokenAge?.max
+      || filter?.dexs?.length || filter?.metrics?.length
+      || (filter?.migrate_status && filter.migrate_status !== 'all')
+    );
   }
 
   function compactNumber(value, { money = false } = {}) {
@@ -204,6 +340,136 @@
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 86_400)}d`;
+  }
+
+  function sanitizeTrackedHolding(holder) {
+    const balance = Number(holder?.balance || 0);
+    const amountPercentage = Number(holder?.amount_percentage);
+    if (!(balance > 0) || !(amountPercentage > 0)) return null;
+    const address = String(holder.address || '');
+    const name = String(
+      holder.remark || holder.twitter_name || holder.name || holder.twitter_username
+      || holder.ens || (address ? `${address.slice(0, 5)}…${address.slice(-4)}` : '追踪钱包'),
+    );
+    return {
+      address,
+      name,
+      avatar: String(holder.avatar || ''),
+      holdingPercent: amountPercentage * 100,
+      profit: Number(holder.profit),
+      profitPercent: Number(holder.profit_change),
+    };
+  }
+
+  function formatHoldingPercent(value) {
+    const percent = Number(value) * 100;
+    if (!Number.isFinite(percent)) return '—';
+    return `${percent >= 10 ? percent.toFixed(1) : percent.toFixed(2)}`.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1') + '%';
+  }
+
+  function formatSignedMoney(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    const amount = Math.abs(number);
+    const unit = amount >= 1e9 ? [1e9, 'B'] : amount >= 1e6 ? [1e6, 'M'] : amount >= 1e3 ? [1e3, 'K'] : [1, ''];
+    const scaled = amount / unit[0];
+    const text = `${scaled >= 100 ? scaled.toFixed(0) : scaled >= 10 ? scaled.toFixed(1) : scaled.toFixed(2)}${unit[1]}`
+      .replace(/\.0+(?=[KMB]?$)/, '').replace(/(\.\d*[1-9])0+(?=[KMB]?$)/, '$1');
+    return `${number >= 0 ? '+' : '-'}$${text}`;
+  }
+
+  function formatSignedPercent(value) {
+    const percent = Number(value) * 100;
+    if (!Number.isFinite(percent)) return '—';
+    const text = Math.abs(percent).toFixed(2)
+      .replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+    return `${percent >= 0 ? '+' : '-'}${text}%`;
+  }
+
+  function currentTokenRoute() {
+    const match = location.pathname.match(/^\/([^/]+)\/token\/([^/?#]+)/i);
+    if (!match) return null;
+    try {
+      return { chain: decodeURIComponent(match[1]).toLowerCase(), address: decodeURIComponent(match[2]) };
+    } catch {
+      return null;
+    }
+  }
+
+  function removeChartHoldings() {
+    document.querySelector('.gdh-chart-tracked-holdings')?.remove();
+  }
+
+  function renderChartHoldings(holdings) {
+    const anchor = document.querySelector(CHART_HOLDINGS_SELECTOR);
+    const host = anchor?.parentElement;
+    const rows = holdings.filter(Boolean).sort((a, b) => b.holdingPercent - a.holdingPercent).slice(0, 5);
+    removeChartHoldings();
+    if (!host || !rows.length) return;
+    const element = document.createElement('div');
+    element.className = 'gdh-chart-tracked-holdings';
+    element.setAttribute('aria-label', '追踪持仓前五名');
+    element.innerHTML = rows.map((holding) => {
+      const profitClass = Number(holding.profit) < 0 || Number(holding.profitPercent) < 0 ? 'is-negative' : 'is-positive';
+      const title = `${holding.name} · 持仓 ${holding.holdingPercent}% · 盈利 ${holding.profit} · ${holding.profitPercent}`;
+      return `<span class="gdh-chart-tracked-holder" title="${escapeHtml(title)}">
+        ${holding.avatar ? `<img src="${escapeHtml(holding.avatar)}" alt="">` : ''}
+        <b>${escapeHtml(holding.name)}</b>
+        <em>${holding.holdingPercent >= 10 ? holding.holdingPercent.toFixed(1) : holding.holdingPercent.toFixed(2)}%</em>
+        <i class="${profitClass}">${formatSignedMoney(holding.profit)} (${formatSignedPercent(holding.profitPercent)})</i>
+      </span>`;
+    }).join('');
+    host.appendChild(element);
+  }
+
+  async function refreshChartHoldings(route, key) {
+    try {
+      const response = await trackedHolderApi(route.chain, route.address, {
+        limit: 5,
+        cost: 20,
+        orderby: 'amount_percentage',
+        direction: 'desc',
+        following: true,
+      });
+      if (key !== chartHoldingsKey || key !== `${route.chain}:${route.address}`) return;
+      const candidates = Array.isArray(response) ? response
+        : Array.isArray(response?.holders) ? response.holders
+          : Array.isArray(response?.data?.holders) ? response.data.holders
+            : Array.isArray(response?.data) ? response.data : [];
+      renderChartHoldings(candidates.map(sanitizeTrackedHolding).filter(Boolean));
+    } catch {
+      if (key === chartHoldingsKey) removeChartHoldings();
+    } finally {
+      if (key === chartHoldingsKey) chartHoldingsFetchedAt = Date.now();
+    }
+  }
+
+  function scanChartHoldings() {
+    const route = currentTokenRoute();
+    const anchor = document.querySelector(CHART_HOLDINGS_SELECTOR);
+    if (!route || !anchor) {
+      chartHoldingsKey = '';
+      chartHoldingsFetchedAt = 0;
+      removeChartHoldings();
+      return;
+    }
+    const key = `${route.chain}:${route.address}`;
+    if (key !== chartHoldingsKey) {
+      chartHoldingsKey = key;
+      chartHoldingsFetchedAt = 0;
+      chartHoldingsInflight = null;
+      removeChartHoldings();
+    }
+    if (chartHoldingsInflight || Date.now() - chartHoldingsFetchedAt < CHART_HOLDINGS_TTL_MS) return;
+    if (!discoverTrackedHolderApi()) {
+      chartHoldingsFetchedAt = Date.now();
+      return;
+    }
+    const request = refreshChartHoldings(route, key);
+    chartHoldingsInflight = request;
+    request.finally(() => {
+      if (chartHoldingsInflight === request) chartHoldingsInflight = null;
+    });
   }
 
   function aggregateRows() {
@@ -372,6 +638,10 @@
 
   function applyLiveEvent(event) {
     const chain = String(event?.chain || '').toLowerCase();
+    if (chain && hasActiveNativeFilter()) {
+      scheduleChainRefresh(chain);
+      return;
+    }
     const incoming = sanitizeCard(chain, event);
     if (!chain || !incoming) return;
     const cards = cardsByChain.get(chain) || [];
@@ -427,7 +697,7 @@
     try {
       const response = await apiFetchCards({ type: 'follow', network: chain, interval });
       if (generation !== requestGeneration || interval !== currentInterval) return;
-      const cards = (Array.isArray(response?.cards) ? response.cards : [])
+      const cards = applyNativeMonitorFilter(Array.isArray(response?.cards) ? response.cards : [])
         .map((card) => sanitizeCard(chain, card))
         .filter(Boolean)
         .slice(0, MAX_ROWS);
@@ -499,11 +769,12 @@
 
   function scan() {
     if (destroyed) return;
+    scanChartHoldings();
     const monitor = document.querySelector(MONITOR_SELECTOR);
     const monitorTab = monitor && [...monitor.querySelectorAll('[role="tab"]')]
       .find((tab) => tab.textContent.trim() === '监控' || tab.textContent.trim().toLowerCase() === 'monitor');
     const host = monitor ? findContentHost(monitor) : null;
-    if (!monitor || monitorTab?.getAttribute('aria-selected') !== 'true' || !host) {
+    if (!isAggregateEnabled() || !monitor || monitorTab?.getAttribute('aria-selected') !== 'true' || !host) {
       restoreNative();
       return;
     }
@@ -513,11 +784,18 @@
     }
     const interval = readInterval(monitor);
     const intervalChanged = interval !== currentInterval;
+    const nextFilter = readNativeMonitorFilter(monitor);
+    const nextFilterFingerprint = nextFilter ? JSON.stringify(nextFilter) : currentFilterFingerprint;
+    const filterChanged = !!nextFilter && nextFilterFingerprint !== currentFilterFingerprint;
+    if (nextFilter) {
+      currentNativeFilter = nextFilter;
+      currentFilterFingerprint = nextFilterFingerprint;
+    }
     const entering = currentHost !== host || !panel?.isConnected;
     currentInterval = interval;
     if (!ensurePanel(host)) return;
     installLiveSubscription();
-    if (intervalChanged) {
+    if (intervalChanged || filterChanged) {
       cardsByChain.clear();
       lastFullFetchAt = 0;
       fetchAllChains(true);
@@ -541,6 +819,8 @@
     if (document.visibilityState === 'hidden') stopLiveSubscription();
     else scan();
   });
+
+  document.addEventListener(CONFIG_EVENT, scan);
 
   window.addEventListener('pagehide', () => {
     destroyed = true;

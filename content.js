@@ -307,6 +307,7 @@
     enableFomoFeed: true,
     enablePumpFeed: true,
     fomoFeedChainOnly: false,
+    enableMonitorAggregate: true,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
@@ -318,6 +319,17 @@
   };
 
   let settings = { ...DEFAULTS };
+  const MONITOR_AGGREGATE_ATTR = 'data-gdh-monitor-aggregate-enabled';
+
+  function syncMonitorAggregateSetting() {
+    if (location.hostname !== 'gmgn.ai') return;
+    document.documentElement.setAttribute(
+      MONITOR_AGGREGATE_ATTR,
+      settings.enableMonitorAggregate === false ? '0' : '1',
+    );
+    document.dispatchEvent(new Event('gdh-monitor-config-changed'));
+  }
+
   let watchedMap = new Map();
   let blockedWallets = new Set();
   let blockedHandles = new Set();
@@ -8147,6 +8159,7 @@ ${flapTooltipText(info)}
     rebuildBlockedTokenIndex();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
+    syncMonitorAggregateSetting();
     scheduleScan();
   });
 
@@ -8198,6 +8211,7 @@ ${flapTooltipText(info)}
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
     let fomoTokenArrived = false;
+    let monitorAggregateChanged = false;
     for (const [key, change] of Object.entries(changes)) {
       if (key === MANI_SEEN_STORE_KEY) {
         mergeManiSeenKeys(change.newValue);
@@ -8237,6 +8251,7 @@ ${flapTooltipText(info)}
         continue;
       }
       settings[key] = change.newValue;
+      if (key === 'enableMonitorAggregate') monitorAggregateChanged = true;
     }
     if (fomoTokenArrived && fomoPanelEl) {
       fomoLoadedKey = '';
@@ -8249,6 +8264,7 @@ ${flapTooltipText(info)}
     rebuildBlockedTokenIndex();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
+    if (monitorAggregateChanged) syncMonitorAggregateSetting();
     scheduleScan();
   });
 

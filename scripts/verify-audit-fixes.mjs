@@ -2402,4 +2402,56 @@ await test('全链监控归一化链地址并复用 GMGN 共享流与限频快�
   assert.ok(!monitorAggregate.includes('setInterval(fetch'));
 });
 
+await test('全链监控可开关并沿用 GMGN 当前筛选条件', () => {
+  assert.ok(popupHtml.includes('id="enable-monitor-aggregate"'));
+  assert.ok(popup.includes('enableMonitorAggregate: true'));
+  assert.ok(popup.includes("enableMonitorAggregate: document.querySelector('#enable-monitor-aggregate')"));
+  assert.ok(content.includes('enableMonitorAggregate: true'));
+  assert.ok(content.includes("const MONITOR_AGGREGATE_ATTR = 'data-gdh-monitor-aggregate-enabled'"));
+  assert.ok(content.includes("document.dispatchEvent(new Event('gdh-monitor-config-changed'))"));
+  assert.ok(monitorAggregate.includes("const CONFIG_ATTR = 'data-gdh-monitor-aggregate-enabled'"));
+  assert.ok(extractFunction(monitorAggregate, 'scan').includes('isAggregateEnabled()'));
+  assert.ok(monitorAggregate.includes("source.includes('is_open_or_close')"));
+  assert.ok(monitorAggregate.includes("source.includes('walletCount')"));
+  assert.ok(extractFunction(monitorAggregate, 'findCardFilter').includes('cardFilter'));
+  assert.ok(extractFunction(monitorAggregate, 'readNativeMonitorFilter').includes('findCardFilter'));
+  assert.ok(extractFunction(monitorAggregate, 'applyNativeMonitorFilter').includes('nativeFilterCards'));
+  assert.ok(extractFunction(monitorAggregate, 'fetchChain').includes('applyNativeMonitorFilter'));
+});
+
+await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利', () => {
+  const functions = [
+    extractFunction(monitorAggregate, 'sanitizeTrackedHolding'),
+    extractFunction(monitorAggregate, 'formatHoldingPercent'),
+    extractFunction(monitorAggregate, 'formatSignedMoney'),
+    extractFunction(monitorAggregate, 'formatSignedPercent'),
+  ];
+  const value = evaluate(functions, `(() => ({
+    holding: sanitizeTrackedHolding({
+      address: '0x1234567890abcdef', twitter_name: '阿峰', amount_percentage: '0.0049',
+      profit: '1970', profit_change: '1.5565', balance: '1200',
+    }),
+    percent: formatHoldingPercent(0.0049),
+    profit: formatSignedMoney(1970),
+    pnl: formatSignedPercent(1.5565),
+  }))()`);
+  const normalized = JSON.parse(JSON.stringify(value));
+  assert.equal(normalized.holding.name, '阿峰');
+  assert.equal(normalized.holding.holdingPercent, 0.49);
+  assert.equal(normalized.percent, '0.49%');
+  assert.equal(normalized.profit, '+$1.97K');
+  assert.equal(normalized.pnl, '+155.65%');
+  assert.ok(monitorAggregate.includes("source.includes('/vas/api/v1/token_holders/')"));
+  assert.match(monitorAggregate, /limit:\s*5/);
+  assert.match(monitorAggregate, /following:\s*true/);
+  assert.ok(monitorAggregate.includes("const CHART_HOLDINGS_SELECTOR = '.chart-anchor-main'"));
+  assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings'));
+  assert.ok(monitorAggregateStyles.includes('pointer-events: none'));
+  assert.ok(monitorAggregate.includes('holding.name'));
+  assert.ok(monitorAggregate.includes('holding.holdingPercent'));
+  assert.ok(monitorAggregate.includes('holding.profit'));
+  assert.ok(monitorAggregate.includes('holding.profitPercent'));
+  assert.ok(extractFunction(monitorAggregate, 'renderChartHoldings').includes('.slice(0, 5)'));
+});
+
 process.stdout.write(`1..${passed}\n`);

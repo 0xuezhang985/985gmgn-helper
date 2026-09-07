@@ -6,6 +6,63 @@
   display: none !important;
 }
 
+.gdh-chart-tracked-holdings {
+  position: absolute;
+  z-index: 8;
+  top: 28px;
+  left: 52px;
+  right: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.gdh-chart-tracked-holder {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 250px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border-2, #596071) 58%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-bg-1, #101114) 88%, transparent);
+  color: var(--color-text-2, #c5c8d0);
+  white-space: nowrap;
+}
+
+.gdh-chart-tracked-holder img {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.gdh-chart-tracked-holder b {
+  max-width: 78px;
+  overflow: hidden;
+  color: var(--color-text-1, #eef0f4);
+  text-overflow: ellipsis;
+}
+
+.gdh-chart-tracked-holder em {
+  color: #4aa8ff;
+  font-style: normal;
+}
+
+.gdh-chart-tracked-holder i {
+  font-style: normal;
+}
+
+.gdh-chart-tracked-holder .is-positive {
+  color: #20c997;
+}
+
+.gdh-chart-tracked-holder .is-negative {
+  color: #ff5d6c;
+}
+
 .gdh-monitor-aggregate {
   width: 100%;
   height: 100%;
