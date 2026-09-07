@@ -2422,6 +2422,7 @@ await test('全链监控可开关并沿用 GMGN 当前筛选条件', () => {
 await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利', () => {
   const functions = [
     extractFunction(monitorAggregate, 'sanitizeTrackedHolding'),
+    extractFunction(monitorAggregate, 'extractTrackedHoldingRows'),
     extractFunction(monitorAggregate, 'formatHoldingPercent'),
     extractFunction(monitorAggregate, 'formatSignedMoney'),
     extractFunction(monitorAggregate, 'formatSignedPercent'),
@@ -2441,6 +2442,11 @@ await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利
   assert.equal(normalized.percent, '0.49%');
   assert.equal(normalized.profit, '+$1.97K');
   assert.equal(normalized.pnl, '+155.65%');
+  const responseRows = evaluate(
+    [extractFunction(monitorAggregate, 'extractTrackedHoldingRows')],
+    "extractTrackedHoldingRows({ list: [{ address: 'tracked-wallet' }], next: '' })",
+  );
+  assert.equal(JSON.parse(JSON.stringify(responseRows))[0].address, 'tracked-wallet');
   assert.ok(monitorAggregate.includes("source.includes('/vas/api/v1/token_holders/')"));
   assert.match(monitorAggregate, /limit:\s*5/);
   assert.match(monitorAggregate, /following:\s*true/);
@@ -2452,6 +2458,10 @@ await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利
   assert.ok(monitorAggregate.includes('holding.profit'));
   assert.ok(monitorAggregate.includes('holding.profitPercent'));
   assert.ok(extractFunction(monitorAggregate, 'renderChartHoldings').includes('.slice(0, 5)'));
+  const chartScan = extractFunction(monitorAggregate, 'scanChartHoldings');
+  const unavailableBranch = chartScan.match(/if \(!discoverTrackedHolderApi\(\)\)[^;]*;/)?.[0] || '';
+  assert.ok(unavailableBranch.includes('return'));
+  assert.ok(!unavailableBranch.includes('chartHoldingsFetchedAt'));
 });
 
 process.stdout.write(`1..${passed}\n`);

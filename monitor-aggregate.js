@@ -361,6 +361,15 @@
     };
   }
 
+  function extractTrackedHoldingRows(response) {
+    if (Array.isArray(response)) return response;
+    if (Array.isArray(response?.list)) return response.list;
+    if (Array.isArray(response?.holders)) return response.holders;
+    if (Array.isArray(response?.data?.list)) return response.data.list;
+    if (Array.isArray(response?.data?.holders)) return response.data.holders;
+    return Array.isArray(response?.data) ? response.data : [];
+  }
+
   function formatHoldingPercent(value) {
     const percent = Number(value) * 100;
     if (!Number.isFinite(percent)) return '—';
@@ -432,10 +441,7 @@
         following: true,
       });
       if (key !== chartHoldingsKey || key !== `${route.chain}:${route.address}`) return;
-      const candidates = Array.isArray(response) ? response
-        : Array.isArray(response?.holders) ? response.holders
-          : Array.isArray(response?.data?.holders) ? response.data.holders
-            : Array.isArray(response?.data) ? response.data : [];
+      const candidates = extractTrackedHoldingRows(response);
       renderChartHoldings(candidates.map(sanitizeTrackedHolding).filter(Boolean));
     } catch {
       if (key === chartHoldingsKey) removeChartHoldings();
@@ -461,10 +467,7 @@
       removeChartHoldings();
     }
     if (chartHoldingsInflight || Date.now() - chartHoldingsFetchedAt < CHART_HOLDINGS_TTL_MS) return;
-    if (!discoverTrackedHolderApi()) {
-      chartHoldingsFetchedAt = Date.now();
-      return;
-    }
+    if (!discoverTrackedHolderApi()) return;
     const request = refreshChartHoldings(route, key);
     chartHoldingsInflight = request;
     request.finally(() => {
