@@ -310,6 +310,11 @@
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
+    badgeColors: {
+      fomo: '#6d4ed4',
+      rank: '#7c3aed',
+      marked: '#0f766e',
+    },
   };
 
   let settings = { ...DEFAULTS };
@@ -2473,7 +2478,10 @@ ${flapTooltipText(info)}
       badge = document.createElement('span');
       badge.className = 'gdh-token-relation';
     }
-    badge.textContent = relation === 'current' ? '当前币' : '同名币';
+    const relationLabel = relation === 'current' ? '当前币' : '同名币';
+    badge.textContent = tableMode ? (relation === 'current' ? '●' : '◆') : relationLabel;
+    badge.title = relationLabel;
+    badge.setAttribute('aria-label', relationLabel);
     badge.classList.toggle('is-current', relation === 'current');
     badge.classList.toggle('is-same-name', relation === 'same-name');
     badge.classList.toggle('is-table', tableMode);
@@ -6806,6 +6814,19 @@ ${flapTooltipText(info)}
       '--gdh-highlight',
       settings.highlightColor || DEFAULTS.highlightColor,
     );
+    const badgeColors = settings.badgeColors && typeof settings.badgeColors === 'object'
+      ? settings.badgeColors : {};
+    for (const [key, cssVar] of [
+      ['fomo', '--gdh-fomo-accent'],
+      ['rank', '--gdh-rank-accent'],
+      ['marked', '--gdh-marked-accent'],
+    ]) {
+      const color = String(badgeColors[key] || '');
+      document.documentElement.style.setProperty(
+        cssVar,
+        /^#[0-9a-f]{6}$/i.test(color) ? color : DEFAULTS.badgeColors[key],
+      );
+    }
     scanVisibleCards();
     ensureDeveloperBookmarkButtons();
   }

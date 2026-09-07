@@ -39,6 +39,11 @@ const DEFAULTS = {
   hideLightningTrade: false,
   watchedDevs: [],
   highlightColor: '#f5b83d',
+  badgeColors: {
+    fomo: '#6d4ed4',
+    rank: '#7c3aed',
+    marked: '#0f766e',
+  },
 };
 
 const featureInputs = {
@@ -67,6 +72,11 @@ const featureInputs = {
 };
 const devListInput = document.querySelector('#dev-list');
 const colorInput = document.querySelector('#highlight-color');
+const badgeColorInputs = {
+  fomo: document.querySelector('#fomo-label-color'),
+  rank: document.querySelector('#rank-badge-color'),
+  marked: document.querySelector('#marked-badge-color'),
+};
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
@@ -198,6 +208,11 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
     Array.isArray(stored.watchedDevs) ? stored.watchedDevs : [],
   );
   colorInput.value = stored.highlightColor || DEFAULTS.highlightColor;
+  const storedBadgeColors = stored.badgeColors && typeof stored.badgeColors === 'object'
+    ? stored.badgeColors : {};
+  for (const [key, input] of Object.entries(badgeColorInputs)) {
+    input.value = storedBadgeColors[key] || DEFAULTS.badgeColors[key];
+  }
   surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
   surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
   flapRpcInput.value = String(stored.flapRpc || '');
@@ -260,6 +275,10 @@ saveButton.addEventListener('click', async () => {
     ),
     watchedDevs: parsed.entries,
     highlightColor: colorInput.value || DEFAULTS.highlightColor,
+    badgeColors: Object.fromEntries(
+      Object.entries(badgeColorInputs)
+        .map(([key, input]) => [key, input.value || DEFAULTS.badgeColors[key]]),
+    ),
     holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
     holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
     flapRpc: flapRpcInput.value.trim(),

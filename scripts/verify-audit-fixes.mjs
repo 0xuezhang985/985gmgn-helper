@@ -954,7 +954,7 @@ await test('追踪流同时适配卡片、表格和无 testid 布局', () => {
   assert.match(bridge, /value\.maker[\s\S]*side === 'buy'[\s\S]*timestamp > 0/);
 });
 
-await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
+await test('GMGN 追踪卡片用文字、列表用红绿符号标记当前币与同名币', () => {
   const functions = [
     extractFunction(content, 'trackingFeedNormalizedAddress'),
     extractFunction(content, 'trackerTokenSymbol'),
@@ -977,6 +977,8 @@ await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
   assert.ok(apply.includes("'.gdh-fomofeed__r1'"));
   assert.ok(apply.includes('TRACKER_SYMBOL_CELL'));
   assert.ok(apply.includes('trackerCardTimeRow(card)'));
+  assert.ok(apply.includes("relation === 'current' ? '●' : '◆'"));
+  assert.ok(apply.includes('badge.title = relationLabel'));
   assert.ok(extractFunction(content, 'scanVisibleCards').includes("timed('token-relation', scanTrackerTokenRelations)"));
   assert.ok(extractFunction(content, 'fomoFeedCardFor').includes('applyTrackerTokenRelation'));
   const pageContextFns = [
@@ -993,7 +995,38 @@ await test('GMGN 追踪卡片和列表都标记当前币与同名币', () => {
   assert.equal(staleContext, null);
   assert.match(styles, /\.gdh-token-relation\.is-current[\s\S]*?color:\s*#43c07a/);
   assert.match(styles, /\.gdh-token-relation\.is-same-name[\s\S]*?color:\s*#ef5350/);
-  assert.ok(styles.includes('.gdh-token-relation.is-table'));
+  assert.match(styles, /\.gdh-token-relation\.is-table[\s\S]*?min-width:\s*10px[\s\S]*?background:\s*transparent/);
+});
+
+await test('GMGN 白色主题的 Fomo 标签与徽章颜色可配置且保持对比度', () => {
+  for (const id of ['fomo-label-color', 'rank-badge-color', 'marked-badge-color']) {
+    assert.ok(popupHtml.includes(`id="${id}"`));
+  }
+  assert.ok(popup.includes('badgeColorInputs'));
+  assert.ok(popup.includes('badgeColors: Object.fromEntries'));
+  const scanCards = extractFunction(content, 'scanCards');
+  for (const cssVar of ['--gdh-fomo-accent', '--gdh-rank-accent', '--gdh-marked-accent']) {
+    assert.ok(scanCards.includes(cssVar));
+  }
+  assert.match(styles, /html\[data-theme="light"\][\s\S]*?--gdh-fomo-ink:[^;]+#111827/);
+  assert.match(styles, /\.gdh-token-header-fomo[\s\S]*?var\(--gdh-fomo-ink\)/);
+  assert.match(styles, /\.gdh-fomofeed__rank[\s\S]*?var\(--gdh-rank-ink\)/);
+  assert.match(styles, /\.gdh-marked[\s\S]*?var\(--gdh-marked-ink\)/);
+
+  const channel = (value) => {
+    const normalized = value / 255;
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = ([r, g, b]) => (0.2126 * channel(r)) + (0.7152 * channel(g)) + (0.0722 * channel(b));
+  const mixForLightTheme = (hex) => {
+    const accent = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
+    const dark = [0x11, 0x18, 0x27];
+    return accent.map((value, index) => Math.round((value * 0.4) + (dark[index] * 0.6)));
+  };
+  const contrastOnWhite = (rgb) => 1.05 / (luminance(rgb) + 0.05);
+  for (const color of ['#6d4ed4', '#7c3aed', '#0f766e', '#ffffff', '#ffff00']) {
+    assert.ok(contrastOnWhite(mixForLightTheme(color)) >= 4.5, `${color} contrast is too low`);
+  }
 });
 
 await test('GMGN 特别关注按交易哈希或绝对事件时间去重', () => {

@@ -75,6 +75,12 @@
           <label class="switch-row"><span><strong>fomo 当前热门标签</strong><small>在 GMGN 原生热门面板新增 fomo 标签，使用自己的 fomo 登录态</small></span><input id="enable-fomo-trending" type="checkbox" /></label>
           <label class="switch-row"><span><strong>fomo 内容翻译</strong><small>观点、备注及失败原因自动显示中文译文</small></span><input id="fomo-translate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>标注人物持仓徽章</strong><small>显示 👤人数与这些人物的合计持仓占比</small></span><input id="enable-marked-holders" type="checkbox" /></label>
+          <div class="sub-settings compact control-grid">
+            <div class="option-row"><span><strong>标签与徽章颜色</strong><small>白色主题会自动使用更深的文字色，保存后即时生效</small></span></div>
+            <label class="control-row" for="fomo-label-color"><span>Fomo 标签</span><input id="fomo-label-color" type="color" value="#6d4ed4" /></label>
+            <label class="control-row" for="rank-badge-color"><span>排名 / 高收益徽章</span><input id="rank-badge-color" type="color" value="#7c3aed" /></label>
+            <label class="control-row" for="marked-badge-color"><span>标注人物徽章</span><input id="marked-badge-color" type="color" value="#0f766e" /></label>
+          </div>
           <div class="sub-settings">
             <label class="field" for="marked-list"><span>标注人物名单</span><small>每行：0x地址 备注</small></label>
             <textarea id="marked-list" rows="4" placeholder="0x地址 备注（一行一个）"></textarea>

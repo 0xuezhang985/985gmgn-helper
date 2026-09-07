@@ -1,5 +1,17 @@
 :root {
   --gdh-highlight: #f5b83d;
+  --gdh-fomo-accent: #6d4ed4;
+  --gdh-rank-accent: #7c3aed;
+  --gdh-marked-accent: #0f766e;
+  --gdh-fomo-ink: color-mix(in srgb, var(--gdh-fomo-accent) 58%, white);
+  --gdh-rank-ink: color-mix(in srgb, var(--gdh-rank-accent) 58%, white);
+  --gdh-marked-ink: color-mix(in srgb, var(--gdh-marked-accent) 58%, white);
+}
+
+html[data-theme="light"] {
+  --gdh-fomo-ink: color-mix(in srgb, var(--gdh-fomo-accent) 40%, #111827);
+  --gdh-rank-ink: color-mix(in srgb, var(--gdh-rank-accent) 40%, #111827);
+  --gdh-marked-ink: color-mix(in srgb, var(--gdh-marked-accent) 40%, #111827);
 }
 
 /* 只认 data-gdh-highlighted：祖先是否带 sentry 标记不该决定高亮显不显示 */
@@ -1026,15 +1038,15 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   font-weight: 700;
   line-height: 15px;
   white-space: nowrap;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.16);
+  color: var(--gdh-rank-ink);
+  background: color-mix(in srgb, var(--gdh-rank-accent) 14%, transparent);
   cursor: default;
 }
 
 .gdh-fomo__board.is-top {
-  color: #fde68a;
-  background: rgba(245, 158, 11, 0.2);
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.4);
+  color: var(--gdh-rank-ink);
+  background: color-mix(in srgb, var(--gdh-rank-accent) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gdh-rank-accent) 46%, transparent);
 }
 
 /* 翻译开关与已翻译的正文 */
@@ -1093,9 +1105,9 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-fomo__tag.is-t4 {
-  color: #ffd166;
-  background: rgba(255, 209, 102, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.32);
+  color: var(--gdh-rank-ink);
+  background: color-mix(in srgb, var(--gdh-rank-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gdh-rank-accent) 34%, transparent);
 }
 
 .gdh-fomo__tag.is-t3 {
@@ -2127,12 +2139,15 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-token-relation.is-table {
-  min-width: 34px;
+  min-width: 10px;
+  width: 10px;
   height: 16px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 10px;
-  line-height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 /* 管理面板里的「屏蔽的币」一栏 */
@@ -2205,8 +2220,8 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   flex: 0 0 auto;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(91, 155, 217, 0.18);
-  color: #7fb6e8;
+  background: color-mix(in srgb, var(--gdh-rank-accent) 14%, transparent);
+  color: var(--gdh-rank-ink);
   font-size: 10px;
   font-weight: 700;
   line-height: 15px;
@@ -2215,8 +2230,8 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-fomo-rank.is-top {
-  background: rgba(245, 184, 61, 0.2);
-  color: #f5b83d;
+  background: color-mix(in srgb, var(--gdh-rank-accent) 22%, transparent);
+  color: var(--gdh-rank-ink);
 }
 
 .gdh-fomo-rank.is-out {
@@ -2290,8 +2305,8 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   margin-left: 4px;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(245, 184, 61, 0.18);
-  color: #f5b83d;
+  background: color-mix(in srgb, var(--gdh-marked-accent) 16%, transparent);
+  color: var(--gdh-marked-ink);
   font-size: 10px;
   font-weight: 700;
   line-height: 15px;
@@ -2328,15 +2343,15 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-token-header-fomo {
-  border-color: rgba(142, 102, 255, 0.42);
-  background: rgba(142, 102, 255, 0.14);
-  color: #b89cff;
+  border-color: color-mix(in srgb, var(--gdh-fomo-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--gdh-fomo-accent) 14%, transparent);
+  color: var(--gdh-fomo-ink);
 }
 
 html[data-theme="light"] .gdh-token-header-fomo {
-  border-color: rgba(100, 66, 196, 0.34);
-  background: rgba(100, 66, 196, 0.1);
-  color: #6845bd;
+  border-color: color-mix(in srgb, var(--gdh-fomo-accent) 36%, transparent);
+  background: color-mix(in srgb, var(--gdh-fomo-accent) 10%, transparent);
+  color: var(--gdh-fomo-ink);
 }
 
 /* Flap 代币税收徽章：带边框的小 chip，按税收去向着色 */
@@ -2657,14 +2672,14 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
   font-weight: 700;
   line-height: 13px;
   white-space: nowrap;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.16);
+  color: var(--gdh-rank-ink);
+  background: color-mix(in srgb, var(--gdh-rank-accent) 14%, transparent);
   cursor: help;
 }
 .gdh-fomofeed__rank.is-top {
-  color: #fde68a;
-  background: rgba(245, 158, 11, 0.2);
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.38);
+  color: var(--gdh-rank-ink);
+  background: color-mix(in srgb, var(--gdh-rank-accent) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gdh-rank-accent) 44%, transparent);
 }
 .gdh-fomofeed__tag { font-size: 12px; font-weight: 500; flex: none; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__tag { color: #22c55e; }
@@ -2702,10 +2717,11 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-fomofeed.is-refund .gdh-fomofeed__tag { color: #fb923c; }
 .gdh-fomofeed__src {
   flex: none;
-  font-size: 9px; line-height: 12px; color: #6b7280;
-  border: 1px solid #374151; border-radius: 3px; padding: 0 3px;
+  font-size: 9px; line-height: 12px; color: var(--gdh-fomo-ink);
+  border: 1px solid color-mix(in srgb, var(--gdh-fomo-accent) 34%, transparent); border-radius: 3px; padding: 0 3px;
+  background: color-mix(in srgb, var(--gdh-fomo-accent) 9%, transparent);
 }
-.gdh-fomofeed.is-pump .gdh-fomofeed__src { color: #55d98b; border-color: rgba(85, 217, 139, 0.35); }
+.gdh-fomofeed.is-pump .gdh-fomofeed__src { color: #55d98b; border-color: rgba(85, 217, 139, 0.35); background: transparent; }
 .gdh-fomofeed__time { margin-left: auto; flex: none; color: #8a93a6; font-size: 12px; }
 .gdh-fomofeed__usd { font-weight: 600; flex: none; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__usd { color: #22c55e; }
