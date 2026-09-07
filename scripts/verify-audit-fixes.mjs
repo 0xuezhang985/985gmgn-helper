@@ -2483,7 +2483,7 @@ await test('GMGN 追踪人名防误触默认关闭且不影响币名', () => {
   });
 });
 
-await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利', () => {
+await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', () => {
   const functions = [
     extractFunction(monitorAggregate, 'sanitizeTrackedHolding'),
     extractFunction(monitorAggregate, 'extractTrackedHoldingRows'),
@@ -2517,11 +2517,16 @@ await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利
   assert.ok(monitorAggregate.includes("const CHART_HOLDINGS_SELECTOR = '.chart-anchor-main'"));
   assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings'));
   assert.ok(monitorAggregateStyles.includes('pointer-events: none'));
+  assert.match(monitorAggregateStyles, /\.gdh-chart-tracked-holdings\s*\{[^}]*right:\s*auto;[^}]*flex-direction:\s*column;/s);
+  assert.ok(monitorAggregateStyles.includes('.gdh-chart-tracked-holdings.is-empty'));
   assert.ok(monitorAggregate.includes('holding.name'));
   assert.ok(monitorAggregate.includes('holding.holdingPercent'));
   assert.ok(monitorAggregate.includes('holding.profit'));
   assert.ok(monitorAggregate.includes('holding.profitPercent'));
-  assert.ok(extractFunction(monitorAggregate, 'renderChartHoldings').includes('.slice(0, 5)'));
+  const chartRender = extractFunction(monitorAggregate, 'renderChartHoldings');
+  assert.ok(chartRender.includes('.slice(0, 5)'));
+  assert.ok(chartRender.includes("element.classList.add('is-empty')"));
+  assert.ok(chartRender.includes('暂无追踪持仓'));
   const chartScan = extractFunction(monitorAggregate, 'scanChartHoldings');
   const unavailableBranch = chartScan.match(/if \(!discoverTrackedHolderApi\(\)\)[^;]*;/)?.[0] || '';
   assert.ok(unavailableBranch.includes('return'));

@@ -414,11 +414,17 @@
     const host = anchor?.parentElement;
     const rows = holdings.filter(Boolean).sort((a, b) => b.holdingPercent - a.holdingPercent).slice(0, 5);
     removeChartHoldings();
-    if (!host || !rows.length) return;
+    if (!host) return;
     const element = document.createElement('div');
     element.className = 'gdh-chart-tracked-holdings';
     element.setAttribute('aria-label', '追踪持仓前五名');
-    element.innerHTML = rows.map((holding) => {
+    if (!rows.length) {
+      element.classList.add('is-empty');
+      element.innerHTML = '<b class="gdh-chart-tracked-title">追踪持仓</b><span>暂无追踪持仓</span>';
+      host.appendChild(element);
+      return;
+    }
+    element.innerHTML = `<b class="gdh-chart-tracked-title">追踪持仓</b>${rows.map((holding) => {
       const profitClass = Number(holding.profit) < 0 || Number(holding.profitPercent) < 0 ? 'is-negative' : 'is-positive';
       const title = `${holding.name} · 持仓 ${holding.holdingPercent}% · 盈利 ${holding.profit} · ${holding.profitPercent}`;
       return `<span class="gdh-chart-tracked-holder" title="${escapeHtml(title)}">
@@ -427,7 +433,7 @@
         <em>${holding.holdingPercent >= 10 ? holding.holdingPercent.toFixed(1) : holding.holdingPercent.toFixed(2)}%</em>
         <i class="${profitClass}">${formatSignedMoney(holding.profit)} (${formatSignedPercent(holding.profitPercent)})</i>
       </span>`;
-    }).join('');
+    }).join('')}`;
     host.appendChild(element);
   }
 
