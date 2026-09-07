@@ -275,6 +275,7 @@
     enableManifestoToast: true,
     enableManifestoTab: true,
     enableSpecialWallet: true,
+    disableTrackerPersonNavigation: false,
     enableRemindAlert: true,
     enableFomoPanel: true,
     enableFomoTrending: true,
@@ -2367,6 +2368,7 @@ ${flapTooltipText(info)}
   const TRACKER_DATA_SELECTOR = '[data-gdh-track-addr][data-gdh-track-ts]';
   const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
   const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
+  const TRACKER_PERSON_CONTROL_SELECTOR = '.gdh-star-button, .gdh-color-button, .gdh-tokenblock';
   let trackerCardsScanCache = null;
   let trackerCardsScanCacheActive = false;
   // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
@@ -2408,6 +2410,43 @@ ${flapTooltipText(info)}
     const cards = [...found];
     if (trackerCardsScanCacheActive) trackerCardsScanCache = cards;
     return cards;
+  }
+
+  function trackerPersonNameText(value) {
+    return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+  }
+
+  /**
+   * GMGN 追踪卡有两种布局：新版表格有 maker testid，卡片版通常
+   * 保留 /address/ 链接。A/B 包同时去掉两者时，只用 page-bridge 已提取的
+   * nick 做严格整串匹配；不做子串匹配，避免把币名或整行误判成人名。
+   */
+  function isTrackerPersonNavigationTarget(target) {
+    if (!target || typeof target.closest !== 'function') return false;
+    if (target.closest(TRACKER_PERSON_CONTROL_SELECTOR)) return false;
+    if (target.closest(TRACKER_MAKER_CELL)) return true;
+
+    const card = target.closest(`${TRACKER_ITEM_SELECTOR}, ${TRACKER_DATA_SELECTOR}`);
+    if (!card) return false;
+    const walletLink = target.closest('a[href*="/address/"]');
+    if (walletLink && card.contains(walletLink)) return true;
+
+    const nick = trackerPersonNameText(card.dataset?.gdhTrackNick);
+    if (!nick) return false;
+    let node = target;
+    while (node && node !== card) {
+      if (trackerPersonNameText(node.textContent) === nick) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function preventTrackerPersonNavigation(event) {
+    if (location.hostname !== 'gmgn.ai'
+      || settings.disableTrackerPersonNavigation !== true
+      || !isTrackerPersonNavigationTarget(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 
   function trackerTokenSymbol(raw) {
@@ -8113,6 +8152,7 @@ ${flapTooltipText(info)}
   );
 
   document.addEventListener('pointermove', positionTooltip, true);
+  document.addEventListener('click', preventTrackerPersonNavigation, true);
   document.addEventListener('click', openRobinhoodRwaPoolLink, true);
   document.addEventListener('keydown', openRobinhoodRwaPoolLink, true);
   window.addEventListener('resize', positionRobinhoodRwaPopover, { passive: true });

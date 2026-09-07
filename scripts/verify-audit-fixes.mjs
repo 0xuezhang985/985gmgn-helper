@@ -2419,6 +2419,70 @@ await test('全链监控可开关并沿用 GMGN 当前筛选条件', () => {
   assert.ok(extractFunction(monitorAggregate, 'fetchChain').includes('applyNativeMonitorFilter'));
 });
 
+await test('GMGN 追踪人名防误触默认关闭且不影响币名', () => {
+  assert.ok(popupHtml.includes('id="disable-tracker-person-navigation"'));
+  assert.ok(popup.includes('disableTrackerPersonNavigation: false'));
+  assert.ok(content.includes('disableTrackerPersonNavigation: false'));
+  assert.ok(popup.includes(
+    "disableTrackerPersonNavigation: document.querySelector('#disable-tracker-person-navigation')",
+  ));
+  const guard = extractFunction(content, 'preventTrackerPersonNavigation');
+  assert.ok(guard.includes("settings.disableTrackerPersonNavigation !== true"));
+  assert.ok(guard.includes('event.preventDefault()'));
+  assert.ok(guard.includes('event.stopImmediatePropagation()'));
+  assert.ok(content.includes("document.addEventListener('click', preventTrackerPersonNavigation, true)"));
+
+  const classify = extractFunction(content, 'isTrackerPersonNavigationTarget');
+  const normalize = extractFunction(content, 'trackerPersonNameText');
+  const result = evaluate([normalize, classify], `(() => {
+    class FakeElement {
+      constructor(kind, card = null, parent = null, text = '') {
+        this.kind = kind;
+        this.card = card;
+        this.parentElement = parent;
+        this.textContent = text;
+        this.dataset = kind === 'card' ? { gdhTrackNick: '阿峰' } : {};
+      }
+      closest(selector) {
+        if (selector.includes('.gdh-star-button') && this.kind === 'plugin') return this;
+        if (selector === TRACKER_MAKER_CELL && this.kind === 'maker') return this;
+        if (selector === 'a[href*="/address/"]' && this.kind === 'wallet-link') return this;
+        if (selector.includes(TRACKER_ITEM_SELECTOR) || selector.includes(TRACKER_DATA_SELECTOR)) {
+          return this.kind === 'card' ? this : this.card;
+        }
+        return null;
+      }
+      contains(node) { return node === this || node.card === this; }
+    }
+    const card = new FakeElement('card');
+    const maker = new FakeElement('maker', card, card, '阿峰');
+    const wallet = new FakeElement('wallet-link', card, card, '阿峰');
+    const nick = new FakeElement('nick', card, card, '阿峰');
+    const token = new FakeElement('token', card, card, 'MORALS');
+    const plugin = new FakeElement('plugin', card, card, '☆');
+    return {
+      maker: isTrackerPersonNavigationTarget(maker),
+      wallet: isTrackerPersonNavigationTarget(wallet),
+      nick: isTrackerPersonNavigationTarget(nick),
+      token: isTrackerPersonNavigationTarget(token),
+      plugin: isTrackerPersonNavigationTarget(plugin),
+    };
+  })()`, {
+    Element: class {},
+    TRACKER_MAKER_CELL: '[data-testid="follow-tracking-row-maker"]',
+    TRACKER_PERSON_CONTROL_SELECTOR: '.gdh-star-button, .gdh-color-button, .gdh-tokenblock',
+    TRACKER_ITEM_SELECTOR: '[data-sentry-component="TrackerListItem"]',
+    TRACKER_DATA_SELECTOR: '[data-gdh-track-addr][data-gdh-track-ts]',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    maker: true,
+    wallet: true,
+    nick: true,
+    token: false,
+    plugin: false,
+  });
+});
+
 await test('K 线左上角仅展示追踪持仓前五名的人名占比与盈利', () => {
   const functions = [
     extractFunction(monitorAggregate, 'sanitizeTrackedHolding'),
