@@ -292,6 +292,7 @@
     watchedDevs: [],
     blockedCallers: [],
     blockedTokens: [],
+    fomoTrendingBlockedTokens: [],
     mergeFomoHolders: true,
     markedHolders: [
       { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
@@ -3959,19 +3960,77 @@ ${flapTooltipText(info)}
     return `$${n.toPrecision(4)}`;
   }
 
+  function fomoTrendingBlockKey(networkId, address) {
+    const value = String(address || '').trim();
+    if (!value) return '';
+    return `${Number(networkId) || 0}:${Number(networkId) === 1399811149 ? value : value.toLowerCase()}`;
+  }
+
+  function getFomoTrendingBlockedTokens() {
+    return (Array.isArray(settings.fomoTrendingBlockedTokens) ? settings.fomoTrendingBlockedTokens : [])
+      .filter((item) => item && typeof item.key === 'string' && item.key);
+  }
+
+  function isFomoTrendingBlocked(item) {
+    const key = fomoTrendingBlockKey(item?.networkId, item?.address);
+    return Boolean(key && getFomoTrendingBlockedTokens().some((blocked) => blocked.key === key));
+  }
+
+  function persistFomoTrendingBlockedTokens(next) {
+    const previous = getFomoTrendingBlockedTokens();
+    settings.fomoTrendingBlockedTokens = next;
+    renderFomoTrendingPanel();
+    chrome.storage.local.set({ fomoTrendingBlockedTokens: next }, () => {
+      if (!chrome.runtime?.lastError) return;
+      settings.fomoTrendingBlockedTokens = previous;
+      renderFomoTrendingPanel();
+    });
+  }
+
+  function blockFomoTrendingToken(item) {
+    const key = fomoTrendingBlockKey(item?.networkId, item?.address);
+    if (!key) return;
+    const list = getFomoTrendingBlockedTokens();
+    if (list.some((blocked) => blocked.key === key)) return;
+    persistFomoTrendingBlockedTokens([
+      { key, symbol: String(item?.symbol || '').slice(0, 24), at: Date.now() },
+      ...list,
+    ].slice(0, 300));
+  }
+
   function renderFomoTrendingPanel() {
     const panel = fomoTrendingPanelEl;
     if (!panel) return;
     panel.replaceChildren();
 
+    const visibleItems = fomoTrendingItems.filter((item) => !isFomoTrendingBlocked(item));
+    const blockedCount = fomoTrendingItems.length - visibleItems.length;
+
     const meta = document.createElement('div');
     meta.className = 'gdh-fomo-trending__meta';
     const count = document.createElement('span');
-    count.textContent = fomoTrendingItems.length ? `当前热门 · ${fomoTrendingItems.length}` : 'fomo 当前热门';
+    count.textContent = fomoTrendingItems.length
+      ? `当前热门 · ${visibleItems.length}${blockedCount ? ` · 已屏蔽 ${blockedCount}` : ''}`
+      : 'fomo 当前热门';
     const updated = document.createElement('span');
     updated.textContent = fomoTrendingFetchedAt
       ? `更新 ${new Date(fomoTrendingFetchedAt).toLocaleTimeString('zh-CN', { hour12: false })}` : '';
-    meta.append(count, updated);
+    const metaActions = document.createElement('span');
+    metaActions.className = 'gdh-fomo-trending__meta-actions';
+    metaActions.append(updated);
+    if (getFomoTrendingBlockedTokens().length) {
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.textContent = '恢复屏蔽';
+      restore.title = '恢复 fomo 热门板块中已屏蔽的全部代币';
+      restore.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        persistFomoTrendingBlockedTokens([]);
+      });
+      metaActions.append(restore);
+    }
+    meta.append(count, metaActions);
     panel.append(meta);
 
     if (fomoTrendingLoading && !fomoTrendingItems.length) {
@@ -4009,13 +4068,26 @@ ${flapTooltipText(info)}
       return;
     }
 
+    if (fomoTrendingItems.length && !visibleItems.length) {
+      const state = document.createElement('div');
+      state.className = 'gdh-fomo-trending__state';
+      const title = document.createElement('strong');
+      title.textContent = '当前热门代币均已屏蔽';
+      const hint = document.createElement('span');
+      hint.textContent = '可在追踪面板的 🚫 列表中恢复显示。';
+      state.append(title, hint);
+      panel.append(state);
+      return;
+    }
+
     const list = document.createElement('div');
     list.className = 'gdh-fomo-trending__list';
-    fomoTrendingItems.forEach((item, index) => {
-      const row = document.createElement('button');
-      row.type = 'button';
+    visibleItems.forEach((item, index) => {
+      const row = document.createElement('div');
       row.className = 'gdh-fomo-trending__row';
       row.title = `${item.symbol} · 点击打开 GMGN 代币页`;
+      row.setAttribute('role', 'link');
+      row.tabIndex = 0;
 
       const rank = document.createElement('span');
       rank.className = 'gdh-fomo-trending__rank';
@@ -4052,12 +4124,30 @@ ${flapTooltipText(info)}
         change.dataset.tone = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
       } else change.textContent = '—';
       stats.append(mc, change);
-      row.append(rank, icon, identity, stats);
+
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.className = 'gdh-fomo-trending__block';
+      block.textContent = '🚫';
+      block.title = `屏蔽并隐藏 ${item.symbol || '该币'}`;
+      block.setAttribute('aria-label', block.title);
+      block.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        blockFomoTrendingToken(item);
+      });
+
+      row.append(rank, icon, identity, stats, block);
       row.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         const targetChain = FOMO_GMGN_CHAIN[item.networkId] || item.chain;
         if (targetChain && item.address) gdhSpaNavigate(`/${targetChain}/token/${item.address}`);
+      });
+      row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        row.click();
       });
       list.append(row);
     });
@@ -8252,6 +8342,7 @@ ${flapTooltipText(info)}
     if (areaName !== 'local') return;
     let fomoTokenArrived = false;
     let monitorAggregateChanged = false;
+    let fomoTrendingBlocksChanged = false;
     for (const [key, change] of Object.entries(changes)) {
       if (key === MANI_SEEN_STORE_KEY) {
         mergeManiSeenKeys(change.newValue);
@@ -8292,6 +8383,7 @@ ${flapTooltipText(info)}
       }
       settings[key] = change.newValue;
       if (key === 'enableMonitorAggregate') monitorAggregateChanged = true;
+      if (key === 'fomoTrendingBlockedTokens') fomoTrendingBlocksChanged = true;
     }
     if (fomoTokenArrived && fomoPanelEl) {
       fomoLoadedKey = '';
@@ -8302,6 +8394,7 @@ ${flapTooltipText(info)}
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     rebuildBlockedTokenIndex();
+    if (fomoTrendingBlocksChanged && fomoTrendingActive) renderFomoTrendingPanel();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
     if (monitorAggregateChanged) syncMonitorAggregateSetting();

@@ -2209,6 +2209,7 @@ await test('GMGN 热门面板新增 fomo 标签且登录失败时提供推荐登
   const scan = extractFunction(content, 'scanFomoTrendingTab');
   const poll = extractFunction(content, 'pollFomoTrending');
   const render = extractFunction(content, 'renderFomoTrendingPanel');
+  const blockKey = extractFunction(content, 'fomoTrendingBlockKey');
   assert.ok(mount.includes('[data-testid="filter-tag-trending"]'));
   assert.ok(mount.includes('let cursor = tabs.parentElement'));
   assert.ok(mount.includes('child.getBoundingClientRect().height >= 80'));
@@ -2220,10 +2221,26 @@ await test('GMGN 热门面板新增 fomo 标签且登录失败时提供推荐登
   assert.ok(poll.includes("type: 'fomo-trending'"));
   assert.ok(render.includes("window.open('https://fomo.family/r/Unipioneer'"));
   assert.ok(render.includes('gdhSpaNavigate(`/${targetChain}/token/${item.address}`)'));
+  assert.ok(render.includes('fomoTrendingItems.filter((item) => !isFomoTrendingBlocked(item))'));
+  assert.ok(render.includes("block.className = 'gdh-fomo-trending__block'"));
+  assert.ok(render.includes('blockFomoTrendingToken(item)'));
+  assert.ok(render.includes('persistFomoTrendingBlockedTokens([])'));
+  assert.ok(!render.includes('toggleBlockedToken(item.address, item.symbol)'));
+  const blockKeys = evaluate([blockKey], `({
+    bsc: fomoTrendingBlockKey(56, '0xAbCd'),
+    base: fomoTrendingBlockKey(8453, '0xAbCd'),
+    sol: fomoTrendingBlockKey(1399811149, 'AbCd'),
+  })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(blockKeys)), {
+    bsc: '56:0xabcd', base: '8453:0xabcd', sol: '1399811149:AbCd',
+  });
   assert.ok(styles.includes('.gdh-fomo-trending-native-hidden'));
   assert.ok(styles.includes('.gdh-fomo-trending-panel.is-active'));
+  assert.ok(styles.includes('.gdh-fomo-trending__block'));
+  assert.ok(styles.includes('.gdh-fomo-trending__meta-actions'));
   assert.ok(popup.includes("enableFomoTrending: document.querySelector('#enable-fomo-trending')"));
   assert.ok(content.includes('enableFomoTrending: true'));
+  assert.ok(content.includes('fomoTrendingBlockedTokens: []'));
 });
 
 await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {

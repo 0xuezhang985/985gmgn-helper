@@ -1985,6 +1985,28 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   line-height: 1;
 }
 
+.gdh-fomo-trending__meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gdh-fomo-trending__meta-actions button {
+  padding: 2px 5px;
+  border: 1px solid var(--color-line-200, rgba(128, 135, 150, 0.25));
+  border-radius: 5px;
+  color: var(--color-text-300, #8a93a6);
+  background: transparent;
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.gdh-fomo-trending__meta-actions button:hover {
+  color: var(--color-text-100, #f2f4f7);
+  background: var(--color-hover-100, rgba(128, 135, 150, 0.09));
+}
+
 .gdh-fomo-trending__list {
   flex: 1 1 auto;
   min-height: 0;
@@ -1995,7 +2017,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-fomo-trending__row {
   appearance: none;
   display: grid;
-  grid-template-columns: 18px 32px minmax(0, 1fr) auto;
+  grid-template-columns: 18px 32px minmax(0, 1fr) auto 22px;
   align-items: center;
   width: 100%;
   min-height: 52px;
@@ -2012,6 +2034,37 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 
 .gdh-fomo-trending__row:hover {
   background: var(--color-hover-100, rgba(128, 135, 150, 0.09));
+}
+
+.gdh-fomo-trending__row:focus-visible {
+  outline: 1px solid var(--color-primary, #8b6cff);
+  outline-offset: -1px;
+}
+
+.gdh-fomo-trending__block {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--color-text-300, #8a93a6);
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.52;
+  cursor: pointer;
+}
+
+.gdh-fomo-trending__row:hover .gdh-fomo-trending__block,
+.gdh-fomo-trending__block:focus-visible,
+.gdh-fomo-trending__block:hover {
+  color: var(--color-red, #ff5b62);
+  background: rgba(255, 91, 98, 0.1);
+  opacity: 1;
+  outline: none;
 }
 
 .gdh-fomo-trending__rank {
