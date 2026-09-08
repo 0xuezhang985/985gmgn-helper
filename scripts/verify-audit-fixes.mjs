@@ -697,6 +697,9 @@ await test('滚动期间推迟全量扫描且只保留一个静止后延时器',
     scanRafId: 1,
     scanDelayTimer: 0,
     scrollingUntil: 500,
+    lastScanAt: -Infinity,
+    SCAN_INTERVAL_MS: 200,
+    document: { visibilityState: 'visible' },
     scanScheduled: true,
     Date: { now: () => 150 },
     Math,
@@ -2366,7 +2369,7 @@ await test('GMGN 监控全链聚合完整接线且不触碰既有 FOMO/Pump 路�
   assert.ok(monitorAggregate.includes("const NAV_ATTR = 'data-gdh-nav'"));
   assert.ok(monitorAggregate.includes("document.dispatchEvent(new Event('gdh-navigate'))"));
   assert.ok(content.includes('.gdh-fomo-trending-panel, .gdh-monitor-aggregate, .gdh-flap-row'));
-  assert.ok(extractFunction(bridge, 'startDomScanner').includes("target?.closest('.gdh-monitor-aggregate')"));
+  assert.ok(extractFunction(bridge, 'startDomScanner').includes("target?.closest('.gdh-monitor-aggregate, "));
   assert.ok(privacy.includes('既有共享 WebSocket'));
   assert.ok(!monitorAggregate.includes('chrome.runtime'));
   assert.ok(!monitorAggregate.includes('985monitor'));
@@ -2562,6 +2565,11 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   const unavailableBranch = chartScan.match(/if \(!discoverTrackedHolderApi\(\)\)[^;]*;/)?.[0] || '';
   assert.ok(unavailableBranch.includes('return'));
   assert.ok(!unavailableBranch.includes('chartHoldingsFetchedAt'));
+});
+
+await test('页面扫描合帧、浮窗隔离与后台暂停回归', () => {
+  const result = spawnSync(process.execPath, ['--test', path.join(root, 'scripts/verify-scan-performance.mjs')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
 process.stdout.write(`1..${passed}\n`);
