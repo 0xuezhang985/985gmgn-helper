@@ -748,14 +748,12 @@
   }
 
   // 虚拟列表滚动时每帧回收/重建行，mutation 风暴会让 fiber 深遍历（每卡 16 层
-  // ×50 键×4 层递归）每帧全量跑。rAF 合帧并限制扫描间隔，滚动中推迟扫描。
+  // ×50 键×4 层递归）每帧全量跑——这是整页发粘的大头。rAF 合帧，滚动中降频。
   // 声明必须在 scanCards 之前：它在函数体里赋值，声明放后面会命中 TDZ，
   // 导致 scanCards 每次都从第一行崩掉（持仓行/追踪卡标记全部失效）。
   let scanRafId = 0;
   let scanDelayTimer = 0;
   let scrollingUntil = 0;
-  let lastScanAt = -Infinity;
-  const SCAN_INTERVAL_MS = 200;
 
   function scanCards() {
     scanScheduled = false;
@@ -813,15 +811,10 @@
 
   function runScheduledScan() {
     scanRafId = 0;
-    if (document.visibilityState === 'hidden') {
-      scanScheduled = false;
-      return;
-    }
     const now = Date.now();
-    const nextScanAt = Math.max(scrollingUntil, lastScanAt + SCAN_INTERVAL_MS);
-    if (now < nextScanAt) {
+    if (now < scrollingUntil) {
       if (!scanDelayTimer) {
-        const wait = Math.max(1, nextScanAt - now);
+        const wait = Math.max(1, scrollingUntil - now);
         scanDelayTimer = window.setTimeout(() => {
           scanDelayTimer = 0;
           scanScheduled = false;
@@ -830,7 +823,6 @@
       }
       return;
     }
-    lastScanAt = now;
     scanCards();
   }
 
@@ -852,9 +844,7 @@
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        // Independent injected panels contain no native React cards to inspect.
-        // Keep native parent mutations (including removals/SPA moves) observable.
-        if (target?.closest('.gdh-monitor-aggregate, #gmgn-zf-switch, #gmgn-zf-float, #robin-signal-panel')) continue;
+        if (target?.closest('.gdh-monitor-aggregate')) continue;
         scheduleScan();
         return;
       }
