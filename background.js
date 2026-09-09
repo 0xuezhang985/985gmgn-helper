@@ -8,6 +8,13 @@ const CHECK_INTERVAL_MINUTES = 360;
 const RUNNING_VERSION_KEY = 'gdhRunningVersion';
 const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
 const BREW_CHECKPOINT_URL = 'https://brewfamily.app/launch-checkpoint.json';
+const BREW_BASELINE_PATH = 'brew-launch-baseline.json';
+const BREW_CHAIN_CACHE_KEY = 'brewChainCheckpointV1';
+const BREW_LOG_RPC_URLS = ['https://rpc-bsc.48.club', 'https://bsc.rpc.blxrbdn.com'];
+const BREW_LAUNCH_TOPIC = '0xb091239373ed76ea7dc39ecbeef35cafced5943a8f7c9c5d88e711192f16910c';
+const BREW_LOG_BLOCK_SPAN = 5000;
+const BREW_LOG_MAX_CHUNKS = 8;
+const BREW_MAX_TOKENS = 300;
 const BREW_LOCAL_CACHE_MS = 2 * 60 * 1000;
 let brewLocalCache = null;
 let brewLocalPending = null;
@@ -58,6 +65,261 @@ refreshSupportedTabsAfterVersionChange();
 function brewMarketNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function brewCheckpointIsValid(checkpoint) {
+  return Boolean(checkpoint && String(checkpoint.factory || '').toLowerCase() === BREW_FACTORY
+    && Array.isArray(checkpoint.tokens));
+}
+
+async function brewFetchCheckpointFile(url, timeoutMs = 0) {
+  const controller = new AbortController();
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(url, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
+    const checkpoint = await response.json().catch(() => null);
+    if (!response.ok || !brewCheckpointIsValid(checkpoint)) throw new Error(`Brew HTTP ${response.status}`);
+    return checkpoint;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function fetchBrewBaseCheckpoint() {
+  const bundled = await brewFetchCheckpointFile(chrome.runtime.getURL(BREW_BASELINE_PATH));
+  try {
+    const official = await brewFetchCheckpointFile(BREW_CHECKPOINT_URL, 5000);
+    return brewMergeCheckpoints([bundled, official]);
+  } catch {
+    return bundled;
+  }
+}
+
+function brewCheckpointBlock(checkpoint) {
+  const direct = Number.parseInt(String(checkpoint?.head?.number || ''), 16);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  return Math.max(0, ...(Array.isArray(checkpoint?.tokens) ? checkpoint.tokens : [])
+    .map((token) => Number(token?.blockNumber) || 0));
+}
+
+function brewMergeCheckpoints(checkpoints) {
+  const valid = (Array.isArray(checkpoints) ? checkpoints : []).filter(brewCheckpointIsValid);
+  if (!valid.length) return null;
+  const freshest = [...valid].sort((a, b) => brewCheckpointBlock(b) - brewCheckpointBlock(a))[0];
+  const ordered = valid.flatMap((checkpoint) => checkpoint.tokens).filter((token) => token && typeof token === 'object')
+    .sort((a, b) => Number(b.blockNumber || 0) - Number(a.blockNumber || 0)
+      || Number(b.logIndex || 0) - Number(a.logIndex || 0)
+      || Number(b.launchedAt || 0) - Number(a.launchedAt || 0));
+  const seen = new Set();
+  const tokens = [];
+  for (const token of ordered) {
+    const address = String(token.address || '').toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(address) || seen.has(address)) continue;
+    seen.add(address);
+    tokens.push(token);
+    if (tokens.length >= BREW_MAX_TOKENS) break;
+  }
+  return { ...freshest, factory: BREW_FACTORY, total: tokens.length, tokens };
+}
+
+function brewLogBytes(hex) {
+  const body = String(hex || '').replace(/^0x/, '');
+  if (!body || body.length % 2) return null;
+  const bytes = new Uint8Array(body.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = Number.parseInt(body.slice(index * 2, index * 2 + 2), 16);
+    if (!Number.isFinite(byte)) return null;
+    bytes[index] = byte;
+  }
+  return bytes;
+}
+
+function brewLogWord(bytes, index) {
+  return bytes?.slice(index * 32, (index + 1) * 32) || new Uint8Array();
+}
+
+function brewLogBigInt(bytes) {
+  let hex = '';
+  for (const byte of bytes || []) hex += byte.toString(16).padStart(2, '0');
+  return BigInt(`0x${hex || '0'}`);
+}
+
+function brewLogAddress(value) {
+  const hex = typeof value === 'string'
+    ? value.replace(/^0x/, '')
+    : [...(value || [])].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  const address = `0x${hex.slice(-40)}`.toLowerCase();
+  return /^0x[a-f0-9]{40}$/.test(address) ? address : '';
+}
+
+function brewLogText(bytes, offsetWord) {
+  try {
+    const offset = Number(brewLogBigInt(offsetWord));
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset + 32 > bytes.length) return '';
+    const length = Number(brewLogBigInt(bytes.slice(offset, offset + 32)));
+    if (!Number.isSafeInteger(length) || length < 0 || length > 100000 || offset + 32 + length > bytes.length) return '';
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(offset + 32, offset + 32 + length)).trim();
+  } catch {
+    return '';
+  }
+}
+
+function brewMetadata(uri) {
+  try {
+    const match = String(uri || '').match(/^data:application\/json(?:;charset=[^;,]+)?(;base64)?,(.*)$/is);
+    if (!match) return {};
+    let text;
+    if (match[1]) {
+      const binary = atob(match[2]);
+      text = new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+    } else {
+      text = decodeURIComponent(match[2]);
+    }
+    const doc = JSON.parse(text);
+    const socials = doc?.socials && typeof doc.socials === 'object' ? doc.socials : {};
+    return {
+      description: String(doc?.description || '').slice(0, 1000) || null,
+      imageUrl: String(doc?.image || doc?.imageUrl || '').slice(0, 50000) || null,
+      website: String(doc?.website || socials.website || '').slice(0, 500) || null,
+      twitter: String(doc?.twitter || socials.twitter || socials.x || '').slice(0, 500) || null,
+      telegram: String(doc?.telegram || socials.telegram || '').slice(0, 500) || null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function decodeBrewLaunchLog(log) {
+  const topics = Array.isArray(log?.topics) ? log.topics : [];
+  const bytes = brewLogBytes(log?.data);
+  if (topics.length !== 4 || String(topics[0]).toLowerCase() !== BREW_LAUNCH_TOPIC || !bytes || bytes.length < 256) return null;
+  const address = brewLogAddress(topics[1]);
+  const creator = brewLogAddress(topics[2]);
+  const quoteAddress = brewLogAddress(topics[3]);
+  const pool = brewLogAddress(brewLogWord(bytes, 0));
+  const name = brewLogText(bytes, brewLogWord(bytes, 5));
+  const symbol = brewLogText(bytes, brewLogWord(bytes, 6));
+  const metadataUri = brewLogText(bytes, brewLogWord(bytes, 7));
+  const launchedAt = Number.parseInt(String(log.blockTimestamp || ''), 16) * 1000;
+  const blockNumber = Number.parseInt(String(log.blockNumber || ''), 16);
+  if (!address || !creator || !quoteAddress || !pool || !name || !symbol
+    || !Number.isFinite(launchedAt) || !Number.isFinite(blockNumber)) return null;
+  return {
+    address,
+    creator,
+    quoteAddress,
+    pool,
+    name: name.slice(0, 64),
+    symbol: symbol.slice(0, 32),
+    ...brewMetadata(metadataUri),
+    launchedAt,
+    blockNumber,
+    blockHash: String(log.blockHash || '').slice(0, 80),
+    transactionHash: String(log.transactionHash || '').slice(0, 80),
+    logIndex: Number.parseInt(String(log.logIndex || ''), 16) || 0,
+  };
+}
+
+async function brewLogRpc(method, params) {
+  let lastError = null;
+  for (const rpcUrl of BREW_LOG_RPC_URLS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.error || body?.result == null) throw new Error(body?.error?.message || `Brew RPC ${response.status}`);
+      return body.result;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error('Brew RPC unavailable');
+}
+
+async function hydrateBrewQuoteSymbols(tokens, knownTokens) {
+  const known = new Map((Array.isArray(knownTokens) ? knownTokens : [])
+    .map((token) => [String(token?.quoteAddress || '').toLowerCase(), String(token?.quoteSymbol || '')])
+    .filter(([address, symbol]) => /^0x[a-f0-9]{40}$/.test(address) && symbol && symbol !== 'Quote'));
+  const missing = [...new Set((Array.isArray(tokens) ? tokens : [])
+    .map((token) => token.quoteAddress).filter((address) => address && !known.has(address)))];
+  for (let index = 0; index < missing.length; index += 25) {
+    const batch = missing.slice(index, index + 25);
+    let symbols = null;
+    for (const rpc of FLAP_RPCS) {
+      try {
+        symbols = await flapRpc(rpc, batch.map((address) => ({ to: address, data: '0x95d89b41' })));
+        break;
+      } catch {
+        // 换公共节点；计价币符号缺失不影响发行与行情主体。
+      }
+    }
+    if (!symbols) continue;
+    batch.forEach((address, offset) => {
+      const symbol = flapString(symbols[offset]);
+      if (symbol) known.set(address, symbol.slice(0, 40));
+    });
+  }
+  return (Array.isArray(tokens) ? tokens : []).map((token) => ({
+    ...token,
+    quoteSymbol: known.get(token.quoteAddress) || 'Quote',
+  }));
+}
+
+async function advanceBrewCheckpoint(checkpoint) {
+  const start = brewCheckpointBlock(checkpoint) + 1;
+  const latest = Number.parseInt(await brewLogRpc('eth_blockNumber', []), 16);
+  if (!Number.isFinite(latest) || start > latest) return { ...checkpoint, complete: true, catchUp: [] };
+  const ranges = [];
+  for (let from = start; from <= latest && ranges.length < BREW_LOG_MAX_CHUNKS; from += BREW_LOG_BLOCK_SPAN) {
+    ranges.push({ from, to: Math.min(latest, from + BREW_LOG_BLOCK_SPAN - 1) });
+  }
+  const logs = [];
+  for (let index = 0; index < ranges.length; index += 4) {
+    const wave = ranges.slice(index, index + 4);
+    const results = await Promise.all(wave.map(({ from, to }) => brewLogRpc('eth_getLogs', [{
+      fromBlock: `0x${from.toString(16)}`,
+      toBlock: `0x${to.toString(16)}`,
+      address: BREW_FACTORY,
+      topics: [BREW_LAUNCH_TOPIC],
+    }])));
+    results.forEach((rows) => logs.push(...(Array.isArray(rows) ? rows : [])));
+  }
+  const decoded = await hydrateBrewQuoteSymbols(logs.map(decodeBrewLaunchLog).filter(Boolean), checkpoint.tokens);
+  const scannedTo = ranges.at(-1)?.to || latest;
+  const merged = brewMergeCheckpoints([checkpoint, {
+    factory: BREW_FACTORY,
+    head: { number: `0x${scannedTo.toString(16)}` },
+    complete: scannedTo >= latest,
+    tokens: decoded,
+  }]);
+  return {
+    ...merged,
+    complete: scannedTo >= latest,
+    catchUp: scannedTo < latest ? [{ from: scannedTo + 1, to: latest }] : [],
+  };
+}
+
+async function loadBrewCheckpoint() {
+  const base = await fetchBrewBaseCheckpoint();
+  const stored = await chrome.storage.local.get({ [BREW_CHAIN_CACHE_KEY]: null }).catch(() => ({}));
+  let checkpoint = brewMergeCheckpoints([base, stored[BREW_CHAIN_CACHE_KEY]]) || base;
+  let chainPartial = false;
+  try {
+    checkpoint = await advanceBrewCheckpoint(checkpoint);
+    await chrome.storage.local.set({ [BREW_CHAIN_CACHE_KEY]: checkpoint });
+  } catch {
+    chainPartial = true;
+  }
+  return { ...checkpoint, chainPartial };
 }
 
 const BREW_ARTWORK_RE = /^onchain:\/\/56\/(0x[a-fA-F0-9]{40})$/;
@@ -251,15 +513,12 @@ async function fetchBrewGmgnMarkets(tokens) {
   }
 }
 
-async function fetchBrewTrenches() {
-  if (brewLocalCache && Date.now() - brewLocalCache.fetchedAt < BREW_LOCAL_CACHE_MS) return brewLocalCache;
+async function fetchBrewTrenches(force = false) {
+  if (!force && brewLocalCache && Date.now() - brewLocalCache.fetchedAt < BREW_LOCAL_CACHE_MS) return brewLocalCache;
   if (brewLocalPending) return brewLocalPending;
   brewLocalPending = (async () => {
     try {
-      const response = await fetch(BREW_CHECKPOINT_URL, { cache: 'no-store', credentials: 'omit' });
-      const checkpoint = await response.json().catch(() => null);
-      if (!response.ok || String(checkpoint?.factory || '').toLowerCase() !== BREW_FACTORY
-        || !Array.isArray(checkpoint?.tokens)) throw new Error(`Brew HTTP ${response.status}`);
+      const checkpoint = await loadBrewCheckpoint();
       const [market, tokens] = await Promise.all([
         fetchBrewGmgnMarkets(checkpoint.tokens),
         hydrateBrewArtwork(checkpoint.tokens),
@@ -269,6 +528,7 @@ async function fetchBrewTrenches() {
         checkpoint: { ...checkpoint, tokens },
         pairs: market.pairs,
         marketPartial: market.failedBatches > 0,
+        launchPartial: checkpoint.chainPartial === true || checkpoint.complete === false,
         fetchedAt: Date.now(),
         localSource: true,
       };
@@ -2402,7 +2662,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'brew-trenches') {
-    fetchBrewTrenches()
+    fetchBrewTrenches(message.force === true)
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;

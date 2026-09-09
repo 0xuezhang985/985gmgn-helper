@@ -17,6 +17,8 @@ const debotBridge = read('debot-bridge.js');
 const debotStyles = read('debot-styles.css');
 const brewContent = read('brew-content.js');
 const brewStyles = read('brew-styles.css');
+const brewBaseline = JSON.parse(read('brew-launch-baseline.json'));
+const brewLaunchFixture = JSON.parse(read('scripts/fixtures/brew-token-launched.json'));
 const manifest = JSON.parse(read('manifest.json'));
 const releaseBuild = read('scripts/build-release.ps1');
 const popup = read('popup.js');
@@ -1971,6 +1973,8 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(brewStyles.includes('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto'));
   assert.ok(brewStyles.includes('content-visibility: auto'));
   assert.ok(manifest.host_permissions.includes('https://brewfamily.app/*'));
+  assert.ok(manifest.host_permissions.includes('https://rpc-bsc.48.club/*'));
+  assert.ok(manifest.host_permissions.includes('https://bsc.rpc.blxrbdn.com/*'));
   assert.ok(!manifest.host_permissions.includes('https://brew.family/*'));
   assert.ok(!manifest.host_permissions.includes('https://api.dexscreener.com/*'));
   assert.ok(!manifest.content_scripts.some((entry) => entry.matches.includes('https://brew.family/*')));
@@ -1984,14 +1988,15 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(popup.includes("enableBrewPanel: document.querySelector('#enable-brew-panel')"));
   assert.ok(releaseBuild.includes("'brew-content.js'"));
   assert.ok(releaseBuild.includes("'brew-styles.css'"));
-  assert.ok(privacy.includes('/launch-checkpoint.json'));
+  assert.ok(releaseBuild.includes("'brew-launch-baseline.json'"));
+  assert.ok(privacy.includes('内置链上基线'));
   assert.ok(privacy.includes('每批最多 10 个'));
 });
 
-await test('Brew 页面脚本只向扩展后台请求本地快照', async () => {
+await test('Brew 页面脚本向后台透传强制刷新并定时更新市值排序', async () => {
   const fn = extractFunction(brewContent, 'requestBrewTrenches');
   const sent = [];
-  const response = await evaluate([fn], 'requestBrewTrenches()', {
+  const response = await evaluate([fn], 'requestBrewTrenches(true)', {
     chrome: { runtime: {
       lastError: null,
       sendMessage: (message, callback) => {
@@ -2004,27 +2009,103 @@ await test('Brew 页面脚本只向扩展后台请求本地快照', async () => 
   });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'brew-trenches');
+  assert.equal(sent[0].force, true);
   assert.equal(response.ok, true);
+  assert.ok(brewContent.includes('const BREW_AUTO_REFRESH_MS = 2 * 60 * 1000'));
+  assert.match(brewContent, /setInterval\(\(\) =>[\s\S]*?refreshBrewPanel\(true\)[\s\S]*?BREW_AUTO_REFRESH_MS/);
+  assert.ok(background.includes("fetchBrewTrenches(message.force === true)"));
 });
 
-await test('Brew 后台只读取用户本地官方快照与 GMGN 行情', async () => {
-  const fn = extractFunction(background, 'fetchBrewTrenches');
+await test('Brew 官方快照 404 时回退插件内置链上基线', async () => {
+  const validFn = extractFunction(background, 'brewCheckpointIsValid');
+  const fetchFn = extractFunction(background, 'brewFetchCheckpointFile');
+  const baseFn = extractFunction(background, 'fetchBrewBaseCheckpoint');
   const calls = [];
-  const response = await evaluate([fn], 'fetchBrewTrenches()', {
+  const fallback = { factory: '0xfactory', head: { number: '0x10' }, tokens: [{ address: '0x1' }] };
+  const result = await evaluate([validFn, fetchFn, baseFn], 'fetchBrewBaseCheckpoint()', {
     BREW_FACTORY: '0xfactory',
     BREW_CHECKPOINT_URL: 'https://brewfamily.app/launch-checkpoint.json',
-    BREW_LOCAL_CACHE_MS: 120000,
-    brewLocalCache: null,
-    brewLocalPending: null,
-    fetchBrewGmgnMarkets: async () => ({ pairs: [{ pairAddress: '0xpool' }], failedBatches: 0 }),
-    hydrateBrewArtwork: async (tokens) => tokens,
+    BREW_BASELINE_PATH: 'brew-launch-baseline.json',
+    chrome: { runtime: { getURL: (path) => `chrome-extension://test/${path}` } },
     fetch: async (url) => {
       calls.push(url);
-      return { ok: true, status: 200, json: async () => ({ factory: '0xfactory', tokens: [] }) };
+      if (url.startsWith('https://')) return { ok: false, status: 404, json: async () => null };
+      return { ok: true, status: 200, json: async () => fallback };
     },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    Error,
+  });
+  assert.deepEqual(calls, [
+    'chrome-extension://test/brew-launch-baseline.json',
+    'https://brewfamily.app/launch-checkpoint.json',
+  ]);
+  assert.equal(result.tokens.length, 1);
+  assert.equal(result.head.number, '0x10');
+  assert.ok(background.includes('brewFetchCheckpointFile(BREW_CHECKPOINT_URL, 5000)'));
+});
+
+await test('Brew 内置基线来自固定工厂且包含最近 300 个唯一发行', () => {
+  assert.equal(brewBaseline.factory, '0xeea6c3bfb29fd9a35380438956bae7b109c63d85');
+  assert.equal(brewBaseline.tokens.length, 300);
+  assert.equal(new Set(brewBaseline.tokens.map((token) => token.address.toLowerCase())).size, 300);
+  assert.ok(brewBaseline.tokens.every((token) => /^0x[a-f0-9]{40}$/.test(token.address)
+    && /^0x[a-f0-9]{40}$/.test(token.pool) && Number(token.launchedAt) > 0));
+  assert.ok(background.includes("brewLogRpc('eth_getLogs'"));
+  assert.ok(background.includes('BREW_LAUNCH_TOPIC'));
+  assert.ok(background.includes("const BREW_LOG_RPC_URLS = ['https://rpc-bsc.48.club', 'https://bsc.rpc.blxrbdn.com']"));
+  assert.ok(background.includes('for (const rpcUrl of BREW_LOG_RPC_URLS)'));
+});
+
+await test('Brew 本地 RPC 的真实 TokenLaunched 日志可无损解码', () => {
+  const names = ['brewLogBytes', 'brewLogWord', 'brewLogBigInt', 'brewLogAddress', 'brewLogText', 'brewMetadata', 'decodeBrewLaunchLog'];
+  const decoded = JSON.parse(JSON.stringify(evaluate(
+    names.map((name) => extractFunction(background, name)),
+    'logs.map(decodeBrewLaunchLog)',
+    {
+      logs: brewLaunchFixture,
+      BREW_LAUNCH_TOPIC: '0xb091239373ed76ea7dc39ecbeef35cafced5943a8f7c9c5d88e711192f16910c',
+      Uint8Array,
+      BigInt,
+      Number,
+      TextDecoder,
+      atob,
+      decodeURIComponent,
+      JSON,
+    },
+  )));
+  const dust = decoded.find((token) => token.address === '0x8519a83aec3e38f7609b1e767c3e0eeb54f47bb6');
+  assert.deepEqual({
+    pool: dust.pool,
+    name: dust.name,
+    symbol: dust.symbol,
+    imageUrl: dust.imageUrl,
+    twitter: dust.twitter,
+    launchedAt: dust.launchedAt,
+    blockNumber: dust.blockNumber,
+  }, {
+    pool: '0xae0fe241dc697d5740d83b3fc3738b0914862492',
+    name: 'Dust Astherus',
+    symbol: 'Dust',
+    imageUrl: 'onchain://56/0x4ed048f3d05539676b3a5ac72f1df0acfa034b9a',
+    twitter: 'https://x.com/Aster_DEX/status/1883818620482175124',
+    launchedAt: 1788715548000,
+    blockNumber: 120342166,
+  });
+});
+
+await test('Brew 后台使用本地基线与 GMGN 行情且强制刷新可绕过缓存', async () => {
+  const fn = extractFunction(background, 'fetchBrewTrenches');
+  const response = await evaluate([fn], 'fetchBrewTrenches(true)', {
+    BREW_LOCAL_CACHE_MS: 120000,
+    brewLocalCache: { ok: true, fetchedAt: Date.now(), checkpoint: { tokens: [{ address: 'old' }] } },
+    brewLocalPending: null,
+    loadBrewCheckpoint: async () => ({ factory: '0xfactory', tokens: [] }),
+    fetchBrewGmgnMarkets: async () => ({ pairs: [{ pairAddress: '0xpool' }], failedBatches: 0 }),
+    hydrateBrewArtwork: async (tokens) => tokens,
     Date,
   });
-  assert.deepEqual(calls, ['https://brewfamily.app/launch-checkpoint.json']);
   assert.equal(response.ok, true);
   assert.equal(response.localSource, true);
   assert.equal(response.pairs.length, 1);

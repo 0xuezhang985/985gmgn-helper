@@ -7,6 +7,7 @@
   const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
   const CACHE_KEY = 'brewTrenchCacheV1';
   const CACHE_TTL_MS = 2 * 60 * 1000;
+  const BREW_AUTO_REFRESH_MS = 2 * 60 * 1000;
   const STALE_CACHE_MS = 24 * 60 * 60 * 1000;
   const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
   const DEFAULTS = {
@@ -107,10 +108,10 @@
     return list.sort((a, b) => b.launchedAt - a.launchedAt);
   }
 
-  function requestBrewTrenches() {
+  function requestBrewTrenches(force = false) {
     return new Promise((resolve, reject) => {
       try {
-        chrome.runtime.sendMessage({ type: 'brew-trenches' }, (response) => {
+        chrome.runtime.sendMessage({ type: 'brew-trenches', force: force === true }, (response) => {
           const runtimeError = chrome.runtime.lastError;
           if (runtimeError) return reject(new Error(runtimeError.message || '后台连接失败'));
           if (!response?.ok || !response?.checkpoint || !Array.isArray(response?.pairs)) {
@@ -139,7 +140,7 @@
     if (!force && cache && Date.now() - Number(cache.fetchedAt || 0) < CACHE_TTL_MS) return cache;
     if (loading) return loading;
     loading = (async () => {
-      const response = await requestBrewTrenches();
+      const response = await requestBrewTrenches(force);
       const checkpoint = response.checkpoint;
       const tokens = compactBrewCheckpoint(checkpoint);
       if (!tokens.length) throw new Error('Brew 官方发行快照暂时为空');
@@ -148,6 +149,7 @@
         fetchedAt: Date.now(),
         localSource: response.localSource === true,
         marketPartial: response.marketPartial === true,
+        launchPartial: response.launchPartial === true,
         complete: checkpoint?.complete === true,
         total: Number(checkpoint?.total) || tokens.length,
         indexed: pairs.length,
@@ -313,7 +315,10 @@
     const stale = state.error ? ' · 行情刷新失败，显示缓存' : '';
     const local = cache.localSource ? ' · 本地 GMGN 行情' : '';
     const partial = cache.marketPartial ? ' · 部分行情待收录' : '';
-    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${local}${partial}${stale}`;
+    const launchPartial = cache.launchPartial ? ' · 新发行同步中' : '';
+    const updated = Number(cache.fetchedAt) > 0
+      ? ` · 更新 ${new Date(cache.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '';
+    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${local}${partial}${launchPartial}${updated}${stale}`;
     const fragment = document.createDocumentFragment();
     sorted.forEach((item) => fragment.appendChild(renderBrewRow(item)));
     list.replaceChildren(fragment);
@@ -451,10 +456,11 @@
   });
 
   window.setInterval(() => {
-    if (settings.brewPanelOpen && document.visibilityState === 'visible') refreshBrewPanel(false);
-  }, 60 * 1000);
+    if (settings.brewPanelOpen && document.visibilityState === 'visible') refreshBrewPanel(true);
+  }, BREW_AUTO_REFRESH_MS);
   document.addEventListener('visibilitychange', () => {
-    if (settings.brewPanelOpen && document.visibilityState === 'visible') refreshBrewPanel(false);
+    if (settings.brewPanelOpen && document.visibilityState === 'visible'
+      && (!cache || Date.now() - Number(cache.fetchedAt || 0) >= BREW_AUTO_REFRESH_MS)) refreshBrewPanel(true);
   });
 
   try {

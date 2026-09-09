@@ -1,6 +1,6 @@
 # 隐私说明
 
-better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985monitor.xyz` 时注入固定的本地扩展代码，用于页面增强、公开发行/底池展示、登录态镜像和配置同步；扩展不在 `brew.family` 页面注入界面，也不包含远程执行代码。
+better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985monitor.xyz` 时注入固定的本地扩展代码，用于页面增强、公开发行/底池展示、登录态镜像和配置同步；扩展不在 Brew 官网注入界面，也不包含远程执行代码。
 
 ## 本地保存的数据
 
@@ -16,7 +16,8 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 - `https://debot.ai/*`：仅在 DeBot 追踪页插入 FOMO/Pump 事件，并在 DeBot 代币页显示 FOMO 小窗与 RWA 资料浮窗。扩展读取已渲染追踪行的链、代币、钱包、买卖方向、金额、时间和交易哈希用于排序与去重，同源读取 DeBot 已公开展示的代币详情总供应量用于计算 FOMO 持仓占比，并读取 DeBot 原生池表中的代币地址与 985monitor 公开 RWA 目录在浏览器内匹配；不读取或保存 DeBot 登录凭据，不新建 DeBot WebSocket，也不执行交易。
 - `https://prod-api.fomo.family/*`、`https://fomo.family/*`：读取 FOMO 持仓者、观点、交易与当前热门代币数据，并保活一个由站点 Privy SDK 自行续期的真实页面；扩展不直接请求 Privy sessions 接口。所有 Fomo 官方 API 请求全局串行且至少间隔 1.5 秒，同一代币同一标签合并并发请求；热门数据只在用户打开 GMGN 的 `fomo` 热门标签时读取并缓存 60 秒。收到 429 后插件在本地断路退避，冷却期不再请求官方接口。
 - `https://www.stonkfun.xyz/*`：只读取公开的 `/api/quote-tokens` 目录，并只保留站点明确标记为 `xstock` 的 Solana mint、简称、名称与小数位，用于在 GMGN 的 Solana 底池中精确识别 RWA 配对资产；不向 StonkFun 发送 GMGN 登录态或用户配置。
-- `https://brew.family/*`：不在 Brew 官网注入内容，也不读取 Brew 钱包、登录态或交易数据。Brew 浮窗打开时，扩展后台通过用户本地网络读取公开 `/launch-checkpoint.json`；该权限还用于扩展升级时清除 v0.46.44 可能遗留的插件按钮/浮窗。清理只匹配插件自己的两个私有类名，不刷新页面。
+- `https://brewfamily.app/*`：不在 Brew 官网注入内容，也不读取 Brew 钱包、登录态或交易数据。Brew 浮窗打开时，扩展后台优先通过用户本地网络读取公开 `/launch-checkpoint.json`；官网文件失效时自动使用随扩展发布的内置链上基线，不会把 404 显示成空面板。
+- `https://rpc-bsc.48.club/*`、`https://bsc.rpc.blxrbdn.com/*`：官网发行文件不可用时，只按固定 Brew 工厂与固定 `TokenLaunched` 事件读取基线之后的 BSC 区块日志，第二个节点仅在首选节点失败时退避使用；每段最多 5,000 个区块、每次刷新最多 8 段，扫描进度和公开发行记录只保存在浏览器本地。请求不包含账号、钱包、登录态或 985monitor 数据。
 - `https://bsc-dataseed.bnbchain.org/*` 等现有 BSC RPC：只对 Brew 官方快照声明的链上图片合约批量调用只读 `eth_getCode`，在浏览器本地验证 PNG/JPEG/WebP 文件头并生成头像，不发送账号、钱包、登录态或 985monitor 数据。
 - `https://985monitor.xyz/*`：在用户已登录时签发 FOMO/Pump 专用只读会话，并读取服务端按该账号关注、屏蔽、事件类型、金额和代币过滤后的配置与事件流。账号会话失效时插件停止读取，不回退到公共全量 FOMO/Pump 源。默认标注人物持仓产物仍按公开静态文件读取；用户自己添加的标注人物不会自动上报服务器，而是在浏览器内直查 GMGN。Brew 战壕不使用 985monitor 接口或服务器资源。
 - 用户填写自定义 BSC RPC 时，扩展会在确认后申请该 HTTPS 域名权限，并只发送公开链上只读调用。

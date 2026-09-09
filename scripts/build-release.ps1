@@ -24,6 +24,7 @@ $files = @(
   'debot-content.js',
   'fomo-early.js',
   'brew-content.js',
+  'brew-launch-baseline.json',
   'styles.css',
   'monitor-aggregate.css',
   'debot-styles.css',
