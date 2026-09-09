@@ -1906,6 +1906,7 @@ await test('Brew 官方发行快照按固定工厂和完整地址清洗', () => 
   assert.equal(valid.length, 1);
   assert.equal(valid[0].address, '0x1111111111111111111111111111111111111111');
   assert.equal(valid[0].pool, '0x2222222222222222222222222222222222222222');
+  assert.ok(!fn.includes('.slice(0, 300)'));
   const wrongFactory = evaluate(
     [fn],
     `compactBrewCheckpoint({factory:'0x0000000000000000000000000000000000000000',tokens:[]}, 2000)`,
@@ -1993,10 +1994,10 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(privacy.includes('每批最多 10 个'));
 });
 
-await test('Brew 页面脚本向后台透传强制刷新并定时更新市值排序', async () => {
+await test('Brew 页面脚本区分全量手动刷新与两分钟快速更新', async () => {
   const fn = extractFunction(brewContent, 'requestBrewTrenches');
   const sent = [];
-  const response = await evaluate([fn], 'requestBrewTrenches(true)', {
+  const response = await evaluate([fn], "requestBrewTrenches('full')", {
     chrome: { runtime: {
       lastError: null,
       sendMessage: (message, callback) => {
@@ -2009,11 +2010,12 @@ await test('Brew 页面脚本向后台透传强制刷新并定时更新市值排
   });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'brew-trenches');
-  assert.equal(sent[0].force, true);
+  assert.equal(sent[0].refreshMode, 'full');
   assert.equal(response.ok, true);
+  assert.ok(brewContent.includes("const CACHE_KEY = 'brewTrenchCacheV2'"));
   assert.ok(brewContent.includes('const BREW_AUTO_REFRESH_MS = 2 * 60 * 1000'));
-  assert.match(brewContent, /setInterval\(\(\) =>[\s\S]*?refreshBrewPanel\(true\)[\s\S]*?BREW_AUTO_REFRESH_MS/);
-  assert.ok(background.includes("fetchBrewTrenches(message.force === true)"));
+  assert.match(brewContent, /setInterval\(\(\) =>[\s\S]*?refreshBrewPanel\('fast'\)[\s\S]*?BREW_AUTO_REFRESH_MS/);
+  assert.ok(background.includes("['cache', 'fast', 'full'].includes(message.refreshMode)"));
 });
 
 await test('Brew 官方快照 404 时回退插件内置链上基线', async () => {
@@ -2046,10 +2048,12 @@ await test('Brew 官方快照 404 时回退插件内置链上基线', async () =
   assert.ok(background.includes('brewFetchCheckpointFile(BREW_CHECKPOINT_URL, 5000)'));
 });
 
-await test('Brew 内置基线来自固定工厂且包含最近 300 个唯一发行', () => {
+await test('Brew 内置基线来自固定工厂且包含全部 1106 个唯一发行', () => {
   assert.equal(brewBaseline.factory, '0xeea6c3bfb29fd9a35380438956bae7b109c63d85');
-  assert.equal(brewBaseline.tokens.length, 300);
-  assert.equal(new Set(brewBaseline.tokens.map((token) => token.address.toLowerCase())).size, 300);
+  assert.equal(brewBaseline.tokens.length, 1106);
+  assert.equal(new Set(brewBaseline.tokens.map((token) => token.address.toLowerCase())).size, 1106);
+  assert.equal(Math.min(...brewBaseline.tokens.map((token) => token.blockNumber)), 120206663);
+  assert.equal(Math.max(...brewBaseline.tokens.map((token) => token.blockNumber)), 120882990);
   assert.ok(brewBaseline.tokens.every((token) => /^0x[a-f0-9]{40}$/.test(token.address)
     && /^0x[a-f0-9]{40}$/.test(token.pool) && Number(token.launchedAt) > 0));
   assert.ok(background.includes("brewLogRpc('eth_getLogs'"));
@@ -2095,20 +2099,26 @@ await test('Brew 本地 RPC 的真实 TokenLaunched 日志可无损解码', () =
   });
 });
 
-await test('Brew 后台使用本地基线与 GMGN 行情且强制刷新可绕过缓存', async () => {
+await test('Brew 后台使用本地基线与 GMGN 行情且全量刷新可绕过缓存', async () => {
   const fn = extractFunction(background, 'fetchBrewTrenches');
-  const response = await evaluate([fn], 'fetchBrewTrenches(true)', {
+  const modes = [];
+  const response = await evaluate([fn], "fetchBrewTrenches('full')", {
     BREW_LOCAL_CACHE_MS: 120000,
     brewLocalCache: { ok: true, fetchedAt: Date.now(), checkpoint: { tokens: [{ address: 'old' }] } },
     brewLocalPending: null,
     loadBrewCheckpoint: async () => ({ factory: '0xfactory', tokens: [] }),
-    fetchBrewGmgnMarkets: async () => ({ pairs: [{ pairAddress: '0xpool' }], failedBatches: 0 }),
+    fetchBrewGmgnMarkets: async (_tokens, mode) => {
+      modes.push(mode);
+      return { pairs: [{ pairAddress: '0xpool' }], failedBatches: 0, fullFetchedAt: 123 };
+    },
     hydrateBrewArtwork: async (tokens) => tokens,
     Date,
   });
   assert.equal(response.ok, true);
   assert.equal(response.localSource, true);
   assert.equal(response.pairs.length, 1);
+  assert.equal(response.marketFullFetchedAt, 123);
+  assert.deepEqual(modes, ['full']);
   assert.ok(brewContent.includes("cache.localSource ? ' · 本地 GMGN 行情' : ''"));
 });
 
@@ -2126,6 +2136,9 @@ await test('Brew 链上头像由用户本地 BSC RPC 字节码解码且严格校
   const hydrateFn = extractFunction(background, 'hydrateBrewArtwork');
   assert.ok(hydrateFn.includes('BREW_ARTWORK_RE'));
   assert.ok(hydrateFn.includes('FLAP_RPCS'));
+  assert.ok(hydrateFn.includes('await loadBrewArtworkCache()'));
+  assert.ok(background.includes("const BREW_ARTWORK_CACHE_KEY = 'brewArtworkCacheV1'"));
+  assert.ok(background.includes('[BREW_ARTWORK_CACHE_KEY]: Object.fromEntries(brewArtworkCache)'));
   assert.ok(background.includes("method: 'eth_getCode'"));
   assert.ok(!background.includes('api/extension/brew-trenches'));
 });
@@ -2180,6 +2193,41 @@ await test('Brew 本地 GMGN 行情按十地址批量且最多四路并发', asy
   assert.ok(localFn.includes("url: ['https://gmgn.ai/*']"));
   assert.ok(localFn.includes("url: 'https://gmgn.ai/?chain=bsc', active: false"));
   assert.ok(localFn.includes("world: 'MAIN'"));
+  assert.ok(!localFn.includes('.slice(0, 300)'));
+
+  const numberFn = extractFunction(background, 'brewMarketNumber');
+  const valueFn = extractFunction(background, 'brewMarketValue');
+  const planFn = extractFunction(background, 'brewMarketRefreshPlan');
+  const universe = Array.from({ length: 1106 }, (_, index) => ({
+    address: `0x${index.toString(16).padStart(40, '0')}`,
+  }));
+  const cachedPairs = universe.slice(500, 800).map((token, index) => ({
+    baseToken: { address: token.address }, marketCap: 1000000 - index,
+  }));
+  const context = {
+    BREW_MARKET_FULL_REFRESH_MS: 600000,
+    BREW_MARKET_FAST_TOP: 200,
+    BREW_MARKET_FAST_RECENT: 100,
+    Date,
+    Number,
+    Set,
+  };
+  const initial = evaluate([numberFn, valueFn, planFn],
+    `brewMarketRefreshPlan(${JSON.stringify(universe)}, {fullFetchedAt:0,pairs:[]}, 'fast', 1000000)`, context);
+  assert.equal(initial.full, true);
+  assert.equal(initial.addresses.length, 1106);
+  const fast = evaluate([numberFn, valueFn, planFn],
+    `brewMarketRefreshPlan(${JSON.stringify(universe)}, {fullFetchedAt:999999,pairs:${JSON.stringify(cachedPairs)}}, 'fast', 1000000)`, context);
+  assert.equal(fast.full, false);
+  assert.equal(fast.addresses.length, 300);
+  const afterPartial = evaluate([numberFn, valueFn, planFn],
+    `brewMarketRefreshPlan(${JSON.stringify(universe)}, {fullFetchedAt:0,fullAttemptedAt:999999,pairs:${JSON.stringify(cachedPairs)}}, 'fast', 1000000)`, context);
+  assert.equal(afterPartial.full, false);
+  assert.equal(afterPartial.addresses.length, 300);
+  const expired = evaluate([numberFn, valueFn, planFn],
+    `brewMarketRefreshPlan(${JSON.stringify(universe)}, {fullFetchedAt:1,pairs:${JSON.stringify(cachedPairs)}}, 'fast', 1000000)`, context);
+  assert.equal(expired.full, true);
+  assert.equal(expired.addresses.length, 1106);
 });
 
 await test('Brew 本地 GMGN 行情换算市值、涨幅与官方池字段', () => {

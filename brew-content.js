@@ -5,7 +5,7 @@
   window.__gdhBrewStarted = true;
 
   const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
-  const CACHE_KEY = 'brewTrenchCacheV1';
+  const CACHE_KEY = 'brewTrenchCacheV2';
   const CACHE_TTL_MS = 2 * 60 * 1000;
   const BREW_AUTO_REFRESH_MS = 2 * 60 * 1000;
   const STALE_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -60,7 +60,7 @@
           && String(token.imageUrl).length <= 40000 ? String(token.imageUrl) : '',
       });
     }
-    return items.sort((a, b) => b.launchedAt - a.launchedAt).slice(0, 300);
+    return items.sort((a, b) => b.launchedAt - a.launchedAt);
   }
 
   function mergeBrewMarkets(tokens, pairs) {
@@ -108,10 +108,10 @@
     return list.sort((a, b) => b.launchedAt - a.launchedAt);
   }
 
-  function requestBrewTrenches(force = false) {
+  function requestBrewTrenches(refreshMode = 'cache') {
     return new Promise((resolve, reject) => {
       try {
-        chrome.runtime.sendMessage({ type: 'brew-trenches', force: force === true }, (response) => {
+        chrome.runtime.sendMessage({ type: 'brew-trenches', refreshMode }, (response) => {
           const runtimeError = chrome.runtime.lastError;
           if (runtimeError) return reject(new Error(runtimeError.message || '后台连接失败'));
           if (!response?.ok || !response?.checkpoint || !Array.isArray(response?.pairs)) {
@@ -135,12 +135,12 @@
     }
   }
 
-  async function loadBrewData(force = false) {
+  async function loadBrewData(refreshMode = 'cache') {
     await hydrateBrewCache();
-    if (!force && cache && Date.now() - Number(cache.fetchedAt || 0) < CACHE_TTL_MS) return cache;
+    if (refreshMode === 'cache' && cache && Date.now() - Number(cache.fetchedAt || 0) < CACHE_TTL_MS) return cache;
     if (loading) return loading;
     loading = (async () => {
-      const response = await requestBrewTrenches(force);
+      const response = await requestBrewTrenches(refreshMode);
       const checkpoint = response.checkpoint;
       const tokens = compactBrewCheckpoint(checkpoint);
       if (!tokens.length) throw new Error('Brew 官方发行快照暂时为空');
@@ -149,6 +149,7 @@
         fetchedAt: Date.now(),
         localSource: response.localSource === true,
         marketPartial: response.marketPartial === true,
+        marketFullFetchedAt: Number(response.marketFullFetchedAt) || 0,
         launchPartial: response.launchPartial === true,
         complete: checkpoint?.complete === true,
         total: Number(checkpoint?.total) || tokens.length,
@@ -304,7 +305,7 @@
       const error = createText('div', 'gdh-brew__empty is-error', String(state.error));
       const retry = createText('button', 'gdh-brew__retry', '重试');
       retry.type = 'button';
-      retry.addEventListener('click', () => refreshBrewPanel(true));
+      retry.addEventListener('click', () => refreshBrewPanel('full'));
       error.appendChild(retry);
       list.replaceChildren(error);
       return;
@@ -318,16 +319,17 @@
     const launchPartial = cache.launchPartial ? ' · 新发行同步中' : '';
     const updated = Number(cache.fetchedAt) > 0
       ? ` · 更新 ${new Date(cache.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '';
-    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${local}${partial}${launchPartial}${updated}${stale}`;
+    const fullRank = Number(cache.marketFullFetchedAt) > 0 ? ' · 全量排行' : ' · 全量行情同步中';
+    status.textContent = `${cache.items.length} 个代币 · ${indexedCount} 个官方池已收录${local}${partial}${launchPartial}${fullRank}${updated}${stale}`;
     const fragment = document.createDocumentFragment();
     sorted.forEach((item) => fragment.appendChild(renderBrewRow(item)));
     list.replaceChildren(fragment);
   }
 
-  async function refreshBrewPanel(force = false) {
+  async function refreshBrewPanel(refreshMode = 'cache') {
     renderBrewPanel({ loading: true });
     try {
-      await loadBrewData(force);
+      await loadBrewData(refreshMode);
       renderBrewPanel();
     } catch (error) {
       renderBrewPanel({ error: error?.message || '请求失败' });
@@ -399,7 +401,7 @@
     const reload = createText('button', 'gdh-brew__icon', '↻');
     reload.type = 'button';
     reload.title = '刷新官方发行与底池行情';
-    reload.addEventListener('click', () => refreshBrewPanel(true));
+    reload.addEventListener('click', () => refreshBrewPanel('full'));
     const close = createText('button', 'gdh-brew__icon', '×');
     close.type = 'button';
     close.title = '关闭浮窗';
@@ -445,7 +447,7 @@
       panelEl = buildBrewPanel();
       document.body.appendChild(panelEl);
       setPanelPosition(panelEl);
-      refreshBrewPanel(false);
+      refreshBrewPanel('cache');
     }
   }
 
@@ -456,11 +458,11 @@
   });
 
   window.setInterval(() => {
-    if (settings.brewPanelOpen && document.visibilityState === 'visible') refreshBrewPanel(true);
+    if (settings.brewPanelOpen && document.visibilityState === 'visible') refreshBrewPanel('fast');
   }, BREW_AUTO_REFRESH_MS);
   document.addEventListener('visibilitychange', () => {
     if (settings.brewPanelOpen && document.visibilityState === 'visible'
-      && (!cache || Date.now() - Number(cache.fetchedAt || 0) >= BREW_AUTO_REFRESH_MS)) refreshBrewPanel(true);
+      && (!cache || Date.now() - Number(cache.fetchedAt || 0) >= BREW_AUTO_REFRESH_MS)) refreshBrewPanel('fast');
   });
 
   try {

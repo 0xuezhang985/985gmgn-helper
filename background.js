@@ -10,14 +10,19 @@ const BREW_FACTORY = '0xeea6c3bfb29fd9a35380438956bae7b109c63d85';
 const BREW_CHECKPOINT_URL = 'https://brewfamily.app/launch-checkpoint.json';
 const BREW_BASELINE_PATH = 'brew-launch-baseline.json';
 const BREW_CHAIN_CACHE_KEY = 'brewChainCheckpointV1';
+const BREW_MARKET_CACHE_KEY = 'brewMarketCacheV1';
+const BREW_ARTWORK_CACHE_KEY = 'brewArtworkCacheV1';
 const BREW_LOG_RPC_URLS = ['https://rpc-bsc.48.club', 'https://bsc.rpc.blxrbdn.com'];
 const BREW_LAUNCH_TOPIC = '0xb091239373ed76ea7dc39ecbeef35cafced5943a8f7c9c5d88e711192f16910c';
 const BREW_LOG_BLOCK_SPAN = 5000;
 const BREW_LOG_MAX_CHUNKS = 8;
-const BREW_MAX_TOKENS = 300;
+const BREW_MARKET_FULL_REFRESH_MS = 10 * 60 * 1000;
+const BREW_MARKET_FAST_TOP = 200;
+const BREW_MARKET_FAST_RECENT = 100;
 const BREW_LOCAL_CACHE_MS = 2 * 60 * 1000;
 let brewLocalCache = null;
 let brewLocalPending = null;
+let brewMarketCache = null;
 
 /**
  * v0.46.44 曾把 Brew 面板误注入 brew.family。扩展升级会让旧脚本失效，
@@ -117,7 +122,6 @@ function brewMergeCheckpoints(checkpoints) {
     if (!/^0x[a-f0-9]{40}$/.test(address) || seen.has(address)) continue;
     seen.add(address);
     tokens.push(token);
-    if (tokens.length >= BREW_MAX_TOKENS) break;
   }
   return { ...freshest, factory: BREW_FACTORY, total: tokens.length, tokens };
 }
@@ -326,6 +330,7 @@ const BREW_ARTWORK_RE = /^onchain:\/\/56\/(0x[a-fA-F0-9]{40})$/;
 const BREW_ARTWORK_DATA_RE = /^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/;
 const BREW_ARTWORK_MAX_DATA_URL = 40000;
 const brewArtworkCache = new Map();
+let brewArtworkCacheLoaded = false;
 
 function brewArtworkMime(bytes) {
   if (bytes.length > 12 && bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70
@@ -377,10 +382,26 @@ async function brewArtworkRpc(rpc, contracts) {
   }
 }
 
+async function loadBrewArtworkCache() {
+  if (brewArtworkCacheLoaded) return;
+  brewArtworkCacheLoaded = true;
+  const stored = await chrome.storage.local.get({ [BREW_ARTWORK_CACHE_KEY]: null }).catch(() => ({}));
+  const raw = stored[BREW_ARTWORK_CACHE_KEY];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+  Object.entries(raw).forEach(([contract, dataUrl]) => {
+    const address = String(contract).toLowerCase();
+    const image = String(dataUrl || '');
+    if (/^0x[a-f0-9]{40}$/.test(address) && image.length <= BREW_ARTWORK_MAX_DATA_URL
+      && BREW_ARTWORK_DATA_RE.test(image)) brewArtworkCache.set(address, image);
+  });
+}
+
 async function hydrateBrewArtwork(tokens) {
+  await loadBrewArtworkCache();
   const list = Array.isArray(tokens) ? tokens : [];
   const contracts = [...new Set(list.map((token) => String(token?.imageUrl || '').match(BREW_ARTWORK_RE)?.[1]?.toLowerCase())
     .filter((contract) => contract && !brewArtworkCache.has(contract)))];
+  let changed = false;
   for (let index = 0; index < contracts.length; index += 30) {
     const batch = contracts.slice(index, index + 30);
     let codes = null;
@@ -395,8 +416,14 @@ async function hydrateBrewArtwork(tokens) {
     if (!codes) continue;
     batch.forEach((contract, offset) => {
       const dataUrl = brewDecodeArtworkCode(codes[offset]);
-      if (dataUrl) brewArtworkCache.set(contract, dataUrl);
+      if (dataUrl) {
+        brewArtworkCache.set(contract, dataUrl);
+        changed = true;
+      }
     });
+  }
+  if (changed) {
+    await chrome.storage.local.set({ [BREW_ARTWORK_CACHE_KEY]: Object.fromEntries(brewArtworkCache) }).catch(() => {});
   }
   return list.map((token) => {
     const raw = String(token?.imageUrl || '');
@@ -476,11 +503,55 @@ async function waitForBrewGmgnTab(tabId) {
   return false;
 }
 
-async function fetchBrewGmgnMarkets(tokens) {
-  const addresses = [...new Set((Array.isArray(tokens) ? tokens : [])
+function brewMarketValue(pair) {
+  const marketCap = brewMarketNumber(pair?.marketCap);
+  return marketCap ?? brewMarketNumber(pair?.fdv) ?? -1;
+}
+
+function brewMarketRefreshPlan(tokens, cache, refreshMode = 'cache', now = Date.now()) {
+  const all = [...new Set((Array.isArray(tokens) ? tokens : [])
     .map((token) => String(token?.address || '').toLowerCase())
-    .filter((address) => /^0x[a-f0-9]{40}$/.test(address)))].slice(0, 300);
-  if (!addresses.length) return { pairs: [], failedBatches: 0, totalBatches: 0 };
+    .filter((address) => /^0x[a-f0-9]{40}$/.test(address)))];
+  const fullFetchedAt = Number(cache?.fullFetchedAt) || 0;
+  const fullAttemptedAt = Number(cache?.fullAttemptedAt) || 0;
+  const lastFull = Math.max(fullFetchedAt, fullAttemptedAt);
+  const full = refreshMode === 'full' || !lastFull || now - lastFull >= BREW_MARKET_FULL_REFRESH_MS;
+  if (full) return { addresses: all, full: true };
+  const recent = all.slice(0, BREW_MARKET_FAST_RECENT);
+  const top = [...(Array.isArray(cache?.pairs) ? cache.pairs : [])]
+    .sort((a, b) => brewMarketValue(b) - brewMarketValue(a))
+    .slice(0, BREW_MARKET_FAST_TOP)
+    .map((pair) => String(pair?.baseToken?.address || '').toLowerCase());
+  return {
+    addresses: [...new Set([...recent, ...top])].filter((address) => all.includes(address)),
+    full: false,
+  };
+}
+
+function brewMarketPairIsValid(pair) {
+  return /^0x[a-f0-9]{40}$/.test(String(pair?.pairAddress || '').toLowerCase())
+    && /^0x[a-f0-9]{40}$/.test(String(pair?.baseToken?.address || '').toLowerCase());
+}
+
+async function loadBrewMarketCache() {
+  if (brewMarketCache) return brewMarketCache;
+  const stored = await chrome.storage.local.get({ [BREW_MARKET_CACHE_KEY]: null }).catch(() => ({}));
+  const raw = stored[BREW_MARKET_CACHE_KEY];
+  brewMarketCache = {
+    fullFetchedAt: Number(raw?.fullFetchedAt) || 0,
+    fullAttemptedAt: Number(raw?.fullAttemptedAt) || 0,
+    pairs: (Array.isArray(raw?.pairs) ? raw.pairs : []).filter(brewMarketPairIsValid),
+  };
+  return brewMarketCache;
+}
+
+async function fetchBrewGmgnMarkets(tokens, refreshMode = 'cache') {
+  const marketCache = await loadBrewMarketCache();
+  const plan = brewMarketRefreshPlan(tokens, marketCache, refreshMode);
+  const addresses = plan.addresses;
+  if (!addresses.length) {
+    return { pairs: marketCache.pairs, failedBatches: 0, totalBatches: 0, fullFetchedAt: marketCache.fullFetchedAt };
+  }
   let temporaryTabId = null;
   try {
     const openTabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*'] });
@@ -501,26 +572,54 @@ async function fetchBrewGmgnMarkets(tokens) {
     });
     const result = execution?.[0]?.result;
     if (!result || !Array.isArray(result.items)) throw new Error('GMGN 本地行情无响应');
+    const fresh = result.items.map(compactBrewGmgnMarket).filter(Boolean);
+    const failedBatches = Number(result.failedBatches) || 0;
+    const universe = new Set((Array.isArray(tokens) ? tokens : [])
+      .map((token) => String(token?.address || '').toLowerCase()));
+    const pairsByToken = new Map((plan.full && failedBatches === 0 ? [] : marketCache.pairs)
+      .filter((pair) => universe.has(String(pair?.baseToken?.address || '').toLowerCase()))
+      .map((pair) => [String(pair.baseToken.address).toLowerCase(), pair]));
+    fresh.forEach((pair) => pairsByToken.set(String(pair.baseToken.address).toLowerCase(), pair));
+    brewMarketCache = {
+      fullFetchedAt: plan.full && failedBatches === 0 ? Date.now() : marketCache.fullFetchedAt,
+      fullAttemptedAt: plan.full ? Date.now() : marketCache.fullAttemptedAt,
+      pairs: [...pairsByToken.values()],
+    };
+    await chrome.storage.local.set({ [BREW_MARKET_CACHE_KEY]: brewMarketCache }).catch(() => {});
     return {
-      pairs: result.items.map(compactBrewGmgnMarket).filter(Boolean),
-      failedBatches: Number(result.failedBatches) || 0,
+      pairs: brewMarketCache.pairs,
+      failedBatches,
       totalBatches: Number(result.totalBatches) || 0,
+      fullFetchedAt: brewMarketCache.fullFetchedAt,
+      refreshedAll: plan.full,
     };
   } catch {
-    return { pairs: [], failedBatches: 1, totalBatches: Math.ceil(addresses.length / 10) };
+    brewMarketCache = {
+      ...marketCache,
+      fullAttemptedAt: plan.full ? Date.now() : marketCache.fullAttemptedAt,
+    };
+    await chrome.storage.local.set({ [BREW_MARKET_CACHE_KEY]: brewMarketCache }).catch(() => {});
+    return {
+      pairs: brewMarketCache.pairs,
+      failedBatches: 1,
+      totalBatches: Math.ceil(addresses.length / 10),
+      fullFetchedAt: brewMarketCache.fullFetchedAt,
+      refreshedAll: plan.full,
+    };
   } finally {
     if (Number.isInteger(temporaryTabId)) chrome.tabs.remove(temporaryTabId).catch(() => {});
   }
 }
 
-async function fetchBrewTrenches(force = false) {
+async function fetchBrewTrenches(refreshMode = 'cache') {
+  const force = refreshMode !== 'cache';
   if (!force && brewLocalCache && Date.now() - brewLocalCache.fetchedAt < BREW_LOCAL_CACHE_MS) return brewLocalCache;
   if (brewLocalPending) return brewLocalPending;
   brewLocalPending = (async () => {
     try {
       const checkpoint = await loadBrewCheckpoint();
       const [market, tokens] = await Promise.all([
-        fetchBrewGmgnMarkets(checkpoint.tokens),
+        fetchBrewGmgnMarkets(checkpoint.tokens, refreshMode),
         hydrateBrewArtwork(checkpoint.tokens),
       ]);
       brewLocalCache = {
@@ -528,6 +627,7 @@ async function fetchBrewTrenches(force = false) {
         checkpoint: { ...checkpoint, tokens },
         pairs: market.pairs,
         marketPartial: market.failedBatches > 0,
+        marketFullFetchedAt: market.fullFetchedAt,
         launchPartial: checkpoint.chainPartial === true || checkpoint.complete === false,
         fetchedAt: Date.now(),
         localSource: true,
@@ -2662,7 +2762,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'brew-trenches') {
-    fetchBrewTrenches(message.force === true)
+    fetchBrewTrenches(['cache', 'fast', 'full'].includes(message.refreshMode)
+      ? message.refreshMode : message.force === true ? 'full' : 'cache')
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
     return true;
