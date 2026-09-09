@@ -1952,7 +1952,8 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(!brewContent.includes('https://brew.family/launch-checkpoint.json'));
   assert.ok(!brewContent.includes('https://api.dexscreener.com/latest/dex/pairs/bsc/'));
   assert.ok(!background.includes('api/extension/brew-trenches'));
-  assert.ok(background.includes('https://brew.family/launch-checkpoint.json'));
+  assert.ok(background.includes('https://brewfamily.app/launch-checkpoint.json'));
+  assert.ok(!background.includes("'https://brew.family/launch-checkpoint.json'"));
   assert.ok(background.includes("fetch('/api/v1/mutil_window_token_info'"));
   assert.ok(background.includes("message?.type === 'brew-trenches'"));
   const pathFn = extractFunction(brewContent, 'brewTokenPath');
@@ -1969,7 +1970,8 @@ await test('Brew 浮窗、设置、权限、隐私与发布包完整接线', () 
   assert.ok(brewStyles.includes('.gdh-brew__avatar img'));
   assert.ok(brewStyles.includes('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto'));
   assert.ok(brewStyles.includes('content-visibility: auto'));
-  assert.ok(manifest.host_permissions.includes('https://brew.family/*'));
+  assert.ok(manifest.host_permissions.includes('https://brewfamily.app/*'));
+  assert.ok(!manifest.host_permissions.includes('https://brew.family/*'));
   assert.ok(!manifest.host_permissions.includes('https://api.dexscreener.com/*'));
   assert.ok(!manifest.content_scripts.some((entry) => entry.matches.includes('https://brew.family/*')));
   for (const origin of ['https://gmgn.ai/*', 'https://debot.ai/*']) {
@@ -2010,7 +2012,7 @@ await test('Brew 后台只读取用户本地官方快照与 GMGN 行情', async 
   const calls = [];
   const response = await evaluate([fn], 'fetchBrewTrenches()', {
     BREW_FACTORY: '0xfactory',
-    BREW_CHECKPOINT_URL: 'https://brew.family/launch-checkpoint.json',
+    BREW_CHECKPOINT_URL: 'https://brewfamily.app/launch-checkpoint.json',
     BREW_LOCAL_CACHE_MS: 120000,
     brewLocalCache: null,
     brewLocalPending: null,
@@ -2022,7 +2024,7 @@ await test('Brew 后台只读取用户本地官方快照与 GMGN 行情', async 
     },
     Date,
   });
-  assert.deepEqual(calls, ['https://brew.family/launch-checkpoint.json']);
+  assert.deepEqual(calls, ['https://brewfamily.app/launch-checkpoint.json']);
   assert.equal(response.ok, true);
   assert.equal(response.localSource, true);
   assert.equal(response.pairs.length, 1);
