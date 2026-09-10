@@ -23,6 +23,7 @@ const manifest = JSON.parse(read('manifest.json'));
 const releaseBuild = read('scripts/build-release.ps1');
 const popup = read('popup.js');
 const popupHtml = read('popup.html');
+const popupStyles = read('popup.css');
 const styles = read('styles.css');
 const site = read('site/index.html');
 const bgmSync = read('scripts/sync-bgm-download.py');
@@ -1000,6 +1001,56 @@ await test('GMGN 追踪卡片用文字、列表用红绿符号标记当前币与
   assert.match(styles, /\.gdh-token-relation\.is-current[\s\S]*?color:\s*#43c07a/);
   assert.match(styles, /\.gdh-token-relation\.is-same-name[\s\S]*?color:\s*#ef5350/);
   assert.match(styles, /\.gdh-token-relation\.is-table[\s\S]*?min-width:\s*10px[\s\S]*?background:\s*transparent/);
+});
+
+await test('追踪列表相似币按完整币名九成相似度匹配、去重并按实时市值排序', () => {
+  const functions = [
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'similarTokenNormalizedName'),
+    extractFunction(content, 'similarTokenSimilarity'),
+    extractFunction(content, 'similarTokenRows'),
+  ];
+  assert.equal(evaluate(functions.slice(1, 3), "similarTokenSimilarity('Leveraged.lol', 'leveraged lol')"), 1);
+  assert.equal(evaluate(functions.slice(1, 3), "similarTokenSimilarity('abcdefghij', 'abcdefghiX')"), 0.9);
+  assert.equal(evaluate(functions.slice(1, 3), "similarTokenSimilarity('abcdefghij', 'abcdefghXX')"), 0.8);
+
+  const current = { chain: 'eth', address: '0xcurrent', name: 'Leveraged.lol' };
+  const rows = [
+    { chain: 'base', address: '0xlow', name: 'Leveraged lol', symbol: 'LEV1', marketCap: 12000, poolSymbol: 'WETH' },
+    { chain: 'bsc', address: '0xhigh', name: 'Leveraged.lol', symbol: 'LEV2', marketCap: 88000, poolSymbol: 'WBNB' },
+    { chain: 'bsc', address: '0xhigh', name: 'Leveraged.lol', symbol: 'LEV2', marketCap: 87000, poolSymbol: 'WBNB' },
+    { chain: 'sol', address: 'other', name: 'Unrelated token', symbol: 'NO', marketCap: 999000, poolSymbol: 'SOL' },
+  ];
+  const result = evaluate(functions, `similarTokenRows(${JSON.stringify(current)}, ${JSON.stringify(rows)})`);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.map((item) => item.address))), ['0xhigh', '0xlow']);
+  assert.equal(result[0].poolSymbol, 'WBNB');
+
+  const meta = evaluate([
+    extractFunction(content, 'trackingFeedNormalizedAddress'),
+    extractFunction(content, 'similarTokenMetaFromApi'),
+  ], `similarTokenMetaFromApi(${JSON.stringify({
+    address: '0xABC', name: 'Ethereum Cat', symbol: 'ETHCAT', logo: 'https://gmgn.ai/icon.webp',
+    total_supply: '1000000', price: { price: '0.0125' },
+    pool: { quote_symbol: 'WETH', exchange: 'uniswap_v3' },
+  })}, 'eth')`);
+  assert.equal(meta.marketCap, 12500);
+  assert.equal(meta.poolSymbol, 'WETH');
+  assert.equal(meta.poolExchange, 'uniswap v3');
+  const request = extractFunction(content, 'requestSimilarTokenMeta');
+  assert.ok(request.includes('https://gmgn.ai/api/v1/mutil_window_token_info'));
+  assert.ok(!request.includes('985monitor'));
+});
+
+await test('相似币浮窗默认关闭、设置带 NEW 标记并接入主扫描', () => {
+  assert.match(content, /enableSimilarTokenPanel:\s*false/);
+  assert.match(popup, /enableSimilarTokenPanel:\s*false/);
+  assert.ok(popup.includes("enableSimilarTokenPanel: document.querySelector('#enable-similar-token-panel')"));
+  assert.match(popupHtml, /同名 \/ 相似币浮窗[\s\S]*?class="new-badge"[\s\S]*?id="enable-similar-token-panel"/);
+  assert.match(popupStyles, /\.new-badge\s*\{/);
+  assert.ok(extractFunction(content, 'scanVisibleCards').includes("timed('similar-token-panel', scanSimilarTokenPanel)"));
+  assert.match(content, /GDH_SELF_SELECTOR[^;]+\.gdh-similar-token-panel/);
+  assert.match(styles, /\.gdh-similar-token-panel\s*\{[\s\S]*?position:\s*fixed/);
+  assert.match(styles, /\.gdh-similar-token__pool\s*\{/);
 });
 
 await test('GMGN 白色主题的 Fomo 标签与徽章颜色可配置且保持对比度', () => {
@@ -2496,7 +2547,9 @@ await test('GMGN 监控全链聚合完整接线且不触碰既有 FOMO/Pump 路�
   assert.ok(monitorAggregateStyles.includes('[data-gdh-monitor-content-host="1"] > :not(.gdh-monitor-aggregate)'));
   assert.ok(monitorAggregate.includes("const NAV_ATTR = 'data-gdh-nav'"));
   assert.ok(monitorAggregate.includes("document.dispatchEvent(new Event('gdh-navigate'))"));
-  assert.ok(content.includes('.gdh-fomo-trending-panel, .gdh-monitor-aggregate, .gdh-flap-row'));
+  for (const selector of ['.gdh-fomo-trending-panel', '.gdh-monitor-aggregate', '.gdh-flap-row']) {
+    assert.ok(content.includes(selector));
+  }
   assert.ok(extractFunction(bridge, 'startDomScanner').includes("target?.closest('.gdh-monitor-aggregate')"));
   assert.ok(privacy.includes('既有共享 WebSocket'));
   assert.ok(!monitorAggregate.includes('chrome.runtime'));

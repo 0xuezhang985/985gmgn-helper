@@ -310,6 +310,7 @@
     enablePumpFeed: true,
     fomoFeedChainOnly: false,
     enableMonitorAggregate: true,
+    enableSimilarTokenPanel: false,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
@@ -2610,6 +2611,314 @@ ${flapTooltipText(info)}
         context,
       );
     });
+  }
+
+  // ---- 追踪列表：当前币的同名 / 九成相似币浮窗 ----
+  // 代币完整名称、当前价格和主池均取 GMGN 页面自己使用的同源批量接口；只在用户
+  // 主动打开开关时请求，不经过 985monitor，也不为每条追踪成交单独发请求。
+  const SIMILAR_TOKEN_META_TTL = 60 * 1000;
+  const SIMILAR_TOKEN_ERROR_TTL = 15 * 1000;
+  const SIMILAR_TOKEN_BATCH_MAX = 50;
+  const SIMILAR_TOKEN_CACHE_MAX = 400;
+  const similarTokenMetaCache = new Map();
+  const similarTokenMetaPending = new Set();
+  let similarTokenPanelEl = null;
+  let similarTokenPanelKey = '';
+
+  function similarTokenNormalizedName(value) {
+    return String(value || '')
+      .normalize('NFKC')
+      .toLocaleLowerCase()
+      .replace(/[\p{P}\p{S}\s_]+/gu, '');
+  }
+
+  function similarTokenSimilarity(left, right) {
+    const a = similarTokenNormalizedName(left);
+    const b = similarTokenNormalizedName(right);
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i += 1) {
+      let diagonal = previous[0];
+      previous[0] = i;
+      for (let j = 1; j <= b.length; j += 1) {
+        const above = previous[j];
+        previous[j] = Math.min(
+          previous[j] + 1,
+          previous[j - 1] + 1,
+          diagonal + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+        diagonal = above;
+      }
+    }
+    return 1 - (previous[b.length] / Math.max(a.length, b.length));
+  }
+
+  function similarTokenRows(current, rows) {
+    if (!similarTokenNormalizedName(current?.name)) return [];
+    const unique = new Map();
+    for (const item of rows || []) {
+      const score = similarTokenSimilarity(current.name, item?.name);
+      if (score + Number.EPSILON < 0.9) continue;
+      const chain = String(item?.chain || '').trim().toLowerCase();
+      const address = trackingFeedNormalizedAddress(item?.address);
+      if (!chain || !address) continue;
+      const key = `${chain}|${address}`;
+      const normalized = { ...item, chain, address, similarity: score };
+      const previous = unique.get(key);
+      if (!previous || Number(normalized.marketCap) > Number(previous.marketCap)) {
+        unique.set(key, normalized);
+      }
+    }
+    return [...unique.values()].sort((a, b) => (
+      (Number(b.marketCap) || 0) - (Number(a.marketCap) || 0)
+      || String(a.symbol || '').localeCompare(String(b.symbol || ''))
+    ));
+  }
+
+  function similarTokenMetaKey(chain, address) {
+    return `${String(chain || '').trim().toLowerCase()}|${trackingFeedNormalizedAddress(address)}`;
+  }
+
+  function similarTokenMetaFromApi(item, chain) {
+    const address = trackingFeedNormalizedAddress(item?.address);
+    if (!address) return null;
+    const price = Number(item?.price?.price ?? item?.price);
+    const supply = Number(item?.total_supply ?? item?.circulating_supply);
+    const marketCap = Number.isFinite(price) && price > 0 && Number.isFinite(supply) && supply > 0
+      ? price * supply : 0;
+    return {
+      chain: String(chain || '').trim().toLowerCase(),
+      address,
+      name: String(item?.name || item?.symbol || '').trim().slice(0, 80),
+      symbol: String(item?.symbol || '').trim().slice(0, 32),
+      logo: String(item?.logo || '').trim().slice(0, 500),
+      marketCap,
+      poolSymbol: String(item?.pool?.quote_symbol || '').trim().slice(0, 24),
+      poolExchange: String(item?.pool?.exchange || '').trim().replace(/_/g, ' ').slice(0, 32),
+    };
+  }
+
+  function similarTokenCachedMeta(chain, address) {
+    return similarTokenMetaCache.get(similarTokenMetaKey(chain, address))?.data || null;
+  }
+
+  function requestSimilarTokenMeta(entries) {
+    const apiQuery = gmgnApiQuery();
+    if (!apiQuery) return;
+    const now = Date.now();
+    const groups = new Map();
+    for (const entry of entries) {
+      const chain = String(entry?.chain || '').trim().toLowerCase();
+      const address = trackingFeedNormalizedAddress(entry?.address);
+      if (!chain || !address) continue;
+      const key = similarTokenMetaKey(chain, address);
+      const hit = similarTokenMetaCache.get(key);
+      const ttl = hit?.failed ? SIMILAR_TOKEN_ERROR_TTL : SIMILAR_TOKEN_META_TTL;
+      if ((hit && now - hit.at < ttl) || similarTokenMetaPending.has(key)) continue;
+      if (!groups.has(chain)) groups.set(chain, []);
+      groups.get(chain).push({ key, address });
+    }
+
+    for (const [chain, pending] of groups) {
+      const batch = pending.slice(0, SIMILAR_TOKEN_BATCH_MAX);
+      if (!batch.length) continue;
+      batch.forEach(({ key }) => similarTokenMetaPending.add(key));
+      fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain, addresses: batch.map(({ address }) => address) }),
+      }).then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+        .then(({ ok, body }) => {
+          const items = ok && body?.code === 0 && Array.isArray(body?.data) ? body.data : [];
+          const received = new Set();
+          for (const item of items) {
+            const data = similarTokenMetaFromApi(item, chain);
+            if (!data) continue;
+            const key = similarTokenMetaKey(chain, data.address);
+            received.add(key);
+            setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), data }, SIMILAR_TOKEN_CACHE_MAX);
+          }
+          for (const { key } of batch) {
+            if (!received.has(key)) {
+              setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+            }
+          }
+        })
+        .catch(() => {
+          for (const { key } of batch) {
+            setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+          }
+        })
+        .finally(() => {
+          batch.forEach(({ key }) => similarTokenMetaPending.delete(key));
+          scheduleScan();
+        });
+    }
+  }
+
+  function similarTokenTrackerPanel() {
+    const body = document.querySelector('[data-sentry-component="TrackingBody"]');
+    if (!(body instanceof HTMLElement)) return null;
+    const marked = body.closest('[data-sentry-component="WalletTrack"]');
+    if (marked instanceof HTMLElement) return marked;
+    let node = body.parentElement;
+    for (let level = 0; level < 8 && node instanceof HTMLElement; level += 1) {
+      if (node.querySelector(TRACK_TAB_CELL)) return node;
+      node = node.parentElement;
+    }
+    return body.parentElement;
+  }
+
+  function clearSimilarTokenPanel() {
+    similarTokenPanelEl?.remove();
+    similarTokenPanelEl = null;
+    similarTokenPanelKey = '';
+  }
+
+  function similarTokenMoney(value) {
+    const number = Number(value) || 0;
+    if (number >= 1e9) return `$${(number / 1e9).toFixed(2).replace(/\.00$/, '')}B`;
+    if (number >= 1e6) return `$${(number / 1e6).toFixed(2).replace(/\.00$/, '')}M`;
+    if (number >= 1e3) return `$${(number / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
+    return `$${Math.round(number)}`;
+  }
+
+  function positionSimilarTokenPanel(trackerPanel) {
+    if (!similarTokenPanelEl?.isConnected || !(trackerPanel instanceof HTMLElement)) return;
+    const trackingBody = trackerPanel.querySelector('[data-sentry-component="TrackingBody"]');
+    const panelRect = trackerPanel.getBoundingClientRect();
+    const bodyRect = (trackingBody || trackerPanel).getBoundingClientRect();
+    if (panelRect.width < 100 || panelRect.height < 100) return void clearSimilarTokenPanel();
+    const gap = 8;
+    const edge = 8;
+    const width = similarTokenPanelEl.offsetWidth || 292;
+    const leftSpace = panelRect.left - gap - edge;
+    const rightSpace = window.innerWidth - panelRect.right - gap - edge;
+    let left;
+    if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
+    else left = panelRect.right + gap;
+    left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
+    const top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    similarTokenPanelEl.style.left = `${Math.round(left)}px`;
+    similarTokenPanelEl.style.top = `${Math.round(top)}px`;
+    similarTokenPanelEl.style.maxHeight = `${Math.max(160, Math.round(window.innerHeight - top - edge))}px`;
+  }
+
+  function renderSimilarTokenPanel(trackerPanel, current, rows) {
+    const key = `${current.chain}|${current.address}|${rows.map((item) => [
+      item.chain, item.address, item.name, item.symbol, Math.round(Number(item.marketCap) || 0),
+      item.poolSymbol, item.poolExchange,
+    ].join(':')).join('|')}`;
+    if (!similarTokenPanelEl?.isConnected) {
+      similarTokenPanelEl = document.createElement('aside');
+      similarTokenPanelEl.className = 'gdh-similar-token-panel';
+      similarTokenPanelEl.setAttribute('aria-label', '追踪列表同名与相似币');
+      document.body.appendChild(similarTokenPanelEl);
+      similarTokenPanelKey = '';
+    }
+    if (similarTokenPanelKey !== key) {
+      similarTokenPanelKey = key;
+      similarTokenPanelEl.replaceChildren();
+      const header = document.createElement('div');
+      header.className = 'gdh-similar-token__header';
+      const heading = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = '同名 / 相似币';
+      const subtitle = document.createElement('span');
+      subtitle.textContent = `${rows.length} 个 · 名称相似度 ≥90%`;
+      heading.append(title, subtitle);
+      header.appendChild(heading);
+
+      const list = document.createElement('div');
+      list.className = 'gdh-similar-token__list';
+      for (const item of rows) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'gdh-similar-token__row';
+        row.title = `${item.name} (${item.symbol}) · 点击在 GMGN 内打开`;
+        row.addEventListener('click', () => gdhSpaNavigate(`/${item.chain}/token/${item.address}`));
+
+        const icon = document.createElement('span');
+        icon.className = 'gdh-similar-token__icon';
+        if (item.logo) {
+          const image = document.createElement('img');
+          image.src = item.logo;
+          image.alt = '';
+          image.loading = 'lazy';
+          icon.appendChild(image);
+        } else icon.textContent = String(item.symbol || item.name || '?').slice(0, 1).toUpperCase();
+
+        const identity = document.createElement('span');
+        identity.className = 'gdh-similar-token__identity';
+        const name = document.createElement('strong');
+        name.textContent = item.name || item.symbol || '未命名';
+        const meta = document.createElement('span');
+        const ticker = document.createElement('span');
+        ticker.textContent = item.symbol ? `$${item.symbol}` : '--';
+        const chain = document.createElement('span');
+        chain.className = 'gdh-similar-token__chain';
+        chain.textContent = item.chain.toUpperCase();
+        meta.append(ticker, chain);
+        if (item.chain === current.chain && item.address === current.address) {
+          const currentBadge = document.createElement('span');
+          currentBadge.className = 'gdh-similar-token__current';
+          currentBadge.textContent = '当前';
+          meta.appendChild(currentBadge);
+        }
+        identity.append(name, meta);
+
+        const stats = document.createElement('span');
+        stats.className = 'gdh-similar-token__stats';
+        const marketCap = document.createElement('strong');
+        marketCap.textContent = similarTokenMoney(item.marketCap);
+        marketCap.title = '当前市值';
+        stats.appendChild(marketCap);
+        const poolText = item.poolSymbol || item.poolExchange;
+        if (poolText) {
+          const pool = document.createElement('span');
+          pool.className = 'gdh-similar-token__pool';
+          pool.textContent = `🪙${poolText}`;
+          pool.title = item.poolSymbol
+            ? `主池底池资产：${item.poolSymbol}${item.poolExchange ? ` · ${item.poolExchange}` : ''}`
+            : `主池：${item.poolExchange}`;
+          stats.appendChild(pool);
+        }
+        row.append(icon, identity, stats);
+        list.appendChild(row);
+      }
+      similarTokenPanelEl.append(header, list);
+    }
+    positionSimilarTokenPanel(trackerPanel);
+  }
+
+  function scanSimilarTokenPanel() {
+    if (location.hostname !== 'gmgn.ai' || settings.enableSimilarTokenPanel !== true) {
+      return void clearSimilarTokenPanel();
+    }
+    const route = currentTokenRoute();
+    const trackerPanel = similarTokenTrackerPanel();
+    if (!route || !trackerPanel) return void clearSimilarTokenPanel();
+    const candidates = [];
+    const seen = new Set();
+    for (const card of trackerCards()) {
+      if (!trackerPanel.contains(card)) continue;
+      const chain = String(card.dataset?.gdhTrackChain || '').trim().toLowerCase();
+      const address = trackingFeedNormalizedAddress(card.dataset?.gdhTrackAddr);
+      const key = similarTokenMetaKey(chain, address);
+      if (!chain || !address || seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({ chain, address });
+    }
+    requestSimilarTokenMeta([{ chain: route.chain, address: route.address }, ...candidates]);
+    const current = similarTokenCachedMeta(route.chain, route.address);
+    if (!current) return void clearSimilarTokenPanel();
+    const rows = similarTokenRows(current, candidates
+      .map(({ chain, address }) => similarTokenCachedMeta(chain, address))
+      .filter(Boolean));
+    if (!rows.length) return void clearSimilarTokenPanel();
+    renderSimilarTokenPanel(trackerPanel, current, rows);
   }
 
   function requestStonkfunRwaCatalog() {
@@ -8089,6 +8398,7 @@ ${flapTooltipText(info)}
       timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
       timed('special', scanSpecialWallets);
       timed('token-relation', scanTrackerTokenRelations);
+      timed('similar-token-panel', scanSimilarTokenPanel);
       // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
       // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
       // 「特别关注高亮」关掉就 return 的分支，于是用户一关特别关注，
@@ -8292,7 +8602,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
