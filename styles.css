@@ -2429,7 +2429,9 @@ html[data-theme="light"] .gdh-token-header-fomo {
 .gdh-flap.is-holder  { color: #6fd3f2; }   /* 💎 持币分红 */
 .gdh-flap.is-lp      { color: #5b9bd9; }   /* 💧 加池子 */
 .gdh-flap.is-burn    { color: #f0703c; }   /* 🔥 销毁通缩 */
-.gdh-flap.is-gift    { color: #f5b83d; }   /* 🎁 金库/营销 */
+.gdh-flap.is-gift    { color: #f5b83d; }   /* 🎁 真实金库 */
+.gdh-flap.is-creator { color: #d97706; }   /* 👨‍🍳 创作者/营销收款 */
+.gdh-flap.is-market  { color: #a16207; }   /* 💰 未确认类别的市场收款 */
 .gdh-flap.is-hybrid  { color: #b48ae0; }   /* 混合分配 */
 .gdh-flap.is-unknown { color: #8b93a1; }
 

@@ -2695,4 +2695,95 @@ await test('K 线左上角纵向展示追踪持仓前五名并保留空状态', 
   assert.ok(!unavailableBranch.includes('chartHoldingsFetchedAt'));
 });
 
+await test('Flap 底池保留完整计价币符号并区分分红、创作者与金库', () => {
+  const functions = [
+    extractFunction(content, 'flapSym'),
+    extractFunction(content, 'flapPoolSym'),
+    extractFunction(content, 'flapMarketMode'),
+    extractFunction(content, 'flapSegPct'),
+    extractFunction(content, 'flapMode'),
+    extractFunction(content, 'flapBadgeText'),
+  ];
+  const value = evaluate(functions, `(() => {
+    const creator = { quoteSymbol: 'SPCXB', dist: {
+      dividendBps: 0, lpBps: 0, deflationBps: 0, marketBps: 10000,
+      marketRecipients: [], isVault: false,
+    } };
+    const vault = { quoteSymbol: 'HIMSB', dist: {
+      dividendBps: 0, lpBps: 0, deflationBps: 0, marketBps: 10000,
+      marketRecipients: [], isVault: true,
+    } };
+    const holder = { quoteSymbol: 'AAPLB', dividendSymbol: 'AAPLB', dist: {
+      dividendBps: 10000, lpBps: 0, deflationBps: 0, marketBps: 0,
+      marketRecipients: [], isVault: null,
+    } };
+    const unknown = { quoteSymbol: 'BNC4', dist: {
+      dividendBps: 0, lpBps: 0, deflationBps: 0, marketBps: 10000,
+      marketRecipients: [], isVault: null,
+    } };
+    return {
+      creatorMode: flapMode(creator.dist), creator: flapBadgeText(creator),
+      vaultMode: flapMode(vault.dist), vault: flapBadgeText(vault),
+      holder: flapBadgeText(holder), wrapped: flapPoolSym('WBNB'),
+      unknownMode: flapMode(unknown.dist), unknown: flapBadgeText(unknown),
+    };
+  })()`);
+  const normalized = JSON.parse(JSON.stringify(value));
+  assert.equal(normalized.creatorMode.cls, 'creator');
+  assert.equal(normalized.creator, '🪙SPCXB | 👨‍🍳→SPCX');
+  assert.equal(normalized.vaultMode.cls, 'gift');
+  assert.equal(normalized.vault, '🪙HIMSB | 🎁→HIMS');
+  assert.equal(normalized.holder, '🪙AAPLB | 💎→AAPL');
+  assert.equal(normalized.wrapped, 'BNB');
+  assert.equal(normalized.unknownMode.cls, 'market');
+  assert.equal(normalized.unknown, '🪙BNC4 | 💰→BNC4');
+  assert.ok(styles.includes('.gdh-flap.is-creator'));
+  assert.ok(styles.includes('.gdh-flap.is-market'));
+});
+
+await test('Flap 链上 symbol 按 UTF-8 解码并限制异常长度', () => {
+  const functions = [extractFunction(background, 'flapWords'), extractFunction(background, 'flapString')];
+  const word = (hex) => hex.padStart(64, '0');
+  const encoded = `0x${word('20')}${word('6')}${'e4b8ade69687'.padEnd(64, '0')}`;
+  assert.equal(evaluate(functions, `flapString(${JSON.stringify(encoded)})`, { TextDecoder, Uint8Array }), '中文');
+  const invalid = `0x${word('20')}${word('41')}${''.padEnd(128, '0')}`;
+  assert.equal(evaluate(functions, `flapString(${JSON.stringify(invalid)})`, { TextDecoder, Uint8Array }), '');
+});
+
+await test('Flap Lens 能从链上 ABI 区分普通创作者收款与真实金库', () => {
+  const functions = [
+    extractFunction(background, 'flapWords'),
+    extractFunction(background, 'flapVaultInfo'),
+  ];
+  const word = (hex) => hex.replace(/^0x/, '').padStart(64, '0');
+  const vaultAddress = '0xe8a4c3c8a10afcc1aa0b8f858662233754fa2b58';
+  const factoryAddress = '0x1234567890abcdef1234567890abcdef12345678';
+  const noVault = `0x${word('0')}${word('40')}${word('0')}${word('0')}`;
+  const withVault = `0x${word('1')}${word('40')}${word(vaultAddress)}${word(factoryAddress)}${word('60')}`;
+  const value = evaluate(functions, `({
+    noVault: flapVaultInfo(${JSON.stringify(noVault)}),
+    withVault: flapVaultInfo(${JSON.stringify(withVault)}),
+    malformed: flapVaultInfo('0x01'),
+  })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(value)), {
+    noVault: { known: true, isVault: false, vaultAddress: '', vaultFactory: '' },
+    withVault: { known: true, isVault: true, vaultAddress, vaultFactory: factoryAddress },
+    malformed: { known: false, isVault: null, vaultAddress: '', vaultFactory: '' },
+  });
+  assert.ok(background.includes("const FLAP_LENS = '0x90497450f2a706f1951b5bdda52b4e5d16f34c06'"));
+  assert.match(background, /async function flapTokenInfo[\s\S]*FLAP_SEL\.vaultInfo[\s\S]*Object\.assign\(dist, flapVaultInfo\(vaultRaw\)\)/);
+});
+
+await test('Flap 成功结果定时刷新、失败保留旧值且 RPC 只用实测可用节点', () => {
+  const request = extractFunction(content, 'requestFlapInfo');
+  assert.ok(content.includes('const FLAP_SUCCESS_TTL = 5 * 60 * 1000'));
+  assert.ok(request.includes('cached.fetchedAt'));
+  assert.ok(request.includes('fetchedAt: Date.now()'));
+  assert.ok(request.includes('if (!cached?.ok)'));
+  assert.ok(background.includes("'https://rpc-bsc.48.club'"));
+  assert.ok(background.includes("'https://bsc.rpc.blxrbdn.com'"));
+  assert.ok(!background.includes("'https://bsc-dataseed1.defibit.io'"));
+  assert.ok(!background.includes("'https://bsc-dataseed1.ninicoin.io'"));
+});
+
 process.stdout.write(`1..${passed}\n`);

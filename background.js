@@ -1391,14 +1391,16 @@ const FLAP_SEL = {
   dividendContract: '0x6124e4e7',
   quoteToken: '0x217a4b70',
   feeConfigV3: '0x46e62d07',
+  vaultInfo: '0xd493059b',
   symbol: '0x95d89b41',
   totalSupply: '0x18160ddd',
   decimals: '0x313ce567',
 };
+const FLAP_LENS = '0x90497450f2a706f1951b5bdda52b4e5d16f34c06';
 const FLAP_RPCS = [
   'https://bsc-dataseed.bnbchain.org',
-  'https://bsc-dataseed1.defibit.io',
-  'https://bsc-dataseed1.ninicoin.io',
+  'https://rpc-bsc.48.club',
+  'https://bsc.rpc.blxrbdn.com',
 ];
 
 // 各链公共 RPC（端点逐个实测过能读 totalSupply/decimals）。
@@ -1428,13 +1430,30 @@ function flapString(hex) {
   if (w.length < 3) return '';
   const len = Number(BigInt('0x' + w[1]));
   if (!len || len > 64) return '';
-  const bytes = w.slice(2).join('').slice(0, len * 2);
-  let out = '';
-  for (let i = 0; i + 1 < bytes.length; i += 2) {
-    const code = parseInt(bytes.slice(i, i + 2), 16);
-    if (code) out += String.fromCharCode(code);
+  const hexBytes = w.slice(2).join('').slice(0, len * 2);
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) bytes[i] = parseInt(hexBytes.slice(i * 2, i * 2 + 2), 16);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim();
+  } catch {
+    return '';
   }
-  return out.trim();
+}
+
+/** Flap Lens getVaultInfo(address) 返回 bool 与静态 tuple 头；只读取识别所需字段。 */
+function flapVaultInfo(hex) {
+  const w = flapWords(hex);
+  const empty = { known: false, isVault: null, vaultAddress: '', vaultFactory: '' };
+  if (!w.length) return empty;
+  const isVault = BigInt('0x' + w[0]) !== 0n;
+  if (!isVault) return { known: true, isVault: false, vaultAddress: '', vaultFactory: '' };
+  if (w.length < 4) return empty;
+  return {
+    known: true,
+    isVault: true,
+    vaultAddress: '0x' + w[2].slice(24),
+    vaultFactory: '0x' + w[3].slice(24),
+  };
 }
 
 // 代币符号基本不变，单独长缓存，多个币共用同一分红资产时只读一次
@@ -1588,10 +1607,16 @@ async function flapTokenInfo({ token, rpc }) {
           const [cfg] = await flapRpc(endpoint, [{ to: processor, data: FLAP_SEL.feeConfigV3 }]);
           const w = flapWords(cfg);
           if (w.length >= 15) {
+            const marketRecipients = [0, 1, 2, 3].map((i) => ({
+              bps: flapNum(w[i]), address: flapAddr(w[11 + i]),
+            })).filter((x) => x.bps > 0 || (x.address && !/^0x0{40}$/.test(x.address)));
             dist = {
-              vault: [0, 1, 2, 3].map((i) => ({
-                bps: flapNum(w[i]), address: flapAddr(w[11 + i]),
-              })).filter((x) => x.bps > 0 || (x.address && !/^0x0{40}$/.test(x.address))),
+              marketRecipients,
+              marketBps: marketRecipients.reduce((sum, item) => sum + item.bps, 0),
+              known: false,
+              isVault: null,
+              vaultAddress: '',
+              vaultFactory: '',
               deflationBps: flapNum(w[4]),
               lpBps: flapNum(w[5]),
               dividendBps: flapNum(w[6]),
@@ -1599,6 +1624,17 @@ async function flapTokenInfo({ token, rpc }) {
               commissionBps: flapNum(w[9]),
               dividendToken: flapAddr(w[10]),
             };
+            // feeConfigV3 的前四项既可能是创作者/营销收款，也可能是真实 vault。
+            // 只有存在这类分配时才多读一次 Lens，纯持币分红币不增加请求。
+            if (dist.marketBps > 0) {
+              try {
+                const calldata = FLAP_SEL.vaultInfo + address.slice(2).padStart(64, '0');
+                const [vaultRaw] = await flapRpc(endpoint, [{ to: FLAP_LENS, data: calldata }]);
+                Object.assign(dist, flapVaultInfo(vaultRaw));
+              } catch {
+                // Lens 暂时失败时保留主税收信息，但不把创作者收款误报成金库。
+              }
+            }
           }
         } catch {
           // 分配读不到不影响主信息

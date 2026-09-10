@@ -1062,17 +1062,28 @@
   const FLAP_RETRY_BASE = 8000;
   const FLAP_RETRY_MAX = 5;
   const FLAP_CACHE_MAX = 400;
+  const FLAP_SUCCESS_TTL = 5 * 60 * 1000;
+
+  /** feeConfigV3 前四项是市场收款；由 Lens 再判定是真金库还是创作者收款。 */
+  function flapMarketMode(dist) {
+    const recipients = Array.isArray(dist?.marketRecipients)
+      ? dist.marketRecipients : (Array.isArray(dist?.vault) ? dist.vault : []);
+    const bps = Number(dist?.marketBps) || recipients.reduce((sum, item) => sum + Number(item?.bps || 0), 0);
+    if (bps <= 0) return null;
+    if (dist?.isVault === true) return { bps, icon: '🎁', name: '金库', cls: 'gift', pri: 1 };
+    if (dist?.isVault === false) return { bps, icon: '👨‍🍳', name: '创作者收款', cls: 'creator', pri: 2 };
+    return { bps, icon: '💰', name: '市场收款', cls: 'market', pri: 2 };
+  }
 
   /** 按税收去向判定模式，与展示图标一一对应。 */
   function flapMode(dist) {
     if (!dist) return { icon: '❓', name: '未知', cls: 'unknown' };
-    const vault = dist.vault.reduce((sum, x) => sum + x.bps, 0);
     const parts = [
-      { bps: dist.dividendBps, icon: '💎', name: '持币分红', cls: 'holder' },
-      { bps: dist.lpBps, icon: '💧', name: '加池子', cls: 'lp' },
-      { bps: dist.deflationBps, icon: '🔥', name: '销毁通缩', cls: 'burn' },
-      { bps: vault, icon: '🎁', name: '金库/营销', cls: 'gift' },
-    ].filter((x) => x.bps > 0).sort((a, b) => b.bps - a.bps);
+      { bps: dist.dividendBps, icon: '💎', name: '持币分红', cls: 'holder', pri: 0 },
+      flapMarketMode(dist),
+      { bps: dist.deflationBps, icon: '🔥', name: '销毁通缩', cls: 'burn', pri: 3 },
+      { bps: dist.lpBps, icon: '💧', name: '加池子', cls: 'lp', pri: 4 },
+    ].filter((x) => x?.bps > 0).sort((a, b) => b.bps - a.bps || a.pri - b.pri);
     if (!parts.length) return { icon: '❓', name: '无分配', cls: 'unknown' };
     if (parts.length > 1) return { icon: parts[0].icon, name: '混合分配', cls: 'hybrid', multi: parts.length };
     return parts[0];
@@ -1097,6 +1108,16 @@
     return raw.slice(0, 4);
   }
 
+  /** 底池币需要保留可辨识名称；分红箭头仍用上面的紧凑四字符格式。 */
+  function flapPoolSym(sym) {
+    const cleaned = String(sym || '').trim().replace(/[^一-鿿A-Za-z0-9]/g, '');
+    if (!cleaned) return '';
+    if (/[一-鿿]/.test(cleaned)) return cleaned.slice(0, 8);
+    const raw = cleaned.toUpperCase();
+    if (raw === 'WBNB') return 'BNB';
+    return raw.slice(0, 8);
+  }
+
   function flapSegPct(bps) {
     const n = Number(bps) || 0;
     if (n % 100 === 0) return `${n / 100}%`;
@@ -1105,15 +1126,15 @@
 
   function flapBadgeText(info) {
     const d = info.dist;
-    if (!d) return `🪙${flapSym(info.quoteSymbol)}`.trim() || '❓';
-    const vaultBps = d.vault.reduce((a, b) => a + b.bps, 0);
+    if (!d) return `🪙${flapPoolSym(info.quoteSymbol)}`.trim() || '❓';
+    const market = flapMarketMode(d);
     const segs = [
       { kind: 'holder', emoji: '💎', bps: d.dividendBps, pri: 0 },
-      { kind: 'gift', emoji: '🎁', bps: vaultBps, pri: 1 },
+      market && { kind: market.cls, emoji: market.icon, bps: market.bps, pri: market.pri },
       { kind: 'burn', emoji: '🔥', bps: d.deflationBps, pri: 3 },
       { kind: 'lp', emoji: '💧', bps: d.lpBps, pri: 4 },
-    ].filter((x) => x.bps > 0).sort((a, b) => b.bps - a.bps || a.pri - b.pri);
-    if (!segs.length) return `🪙${flapSym(info.quoteSymbol)}`.trim() || '❓';
+    ].filter((x) => x?.bps > 0).sort((a, b) => b.bps - a.bps || a.pri - b.pri);
+    if (!segs.length) return `🪙${flapPoolSym(info.quoteSymbol)}`.trim() || '❓';
 
     const top = segs[0].kind;
     const topSym = top === 'holder'
@@ -1123,7 +1144,7 @@
       const base = `${seg.emoji}${seg.bps === 10000 ? '' : flapSegPct(seg.bps)}`;
       return seg.kind === top && topSym ? `${base}→${topSym}` : base;
     }).join('');
-    const pool = flapSym(info.quoteSymbol);
+    const pool = flapPoolSym(info.quoteSymbol);
     return pool ? `🪙${pool} | ${fee}` : fee;
   }
 
@@ -1142,8 +1163,13 @@
       }
       if (d.lpBps) lines.push(`💧 加池子 ${flapPct(d.lpBps)}`);
       if (d.deflationBps) lines.push(`🔥 销毁通缩 ${flapPct(d.deflationBps)}`);
-      d.vault.forEach((v, i) => {
-        if (v.bps) lines.push(`🎁 金库${d.vault.length > 1 ? i + 1 : ''} ${flapPct(v.bps)}　${flapShort(v.address)}`);
+      const market = flapMarketMode(d);
+      const recipients = Array.isArray(d.marketRecipients)
+        ? d.marketRecipients : (Array.isArray(d.vault) ? d.vault : []);
+      recipients.forEach((v, i) => {
+        if (!v.bps) return;
+        const index = recipients.length > 1 ? i + 1 : '';
+        lines.push(`${market?.icon || '💰'} ${market?.name || '市场收款'}${index} ${flapPct(v.bps)}　${flapShort(v.address)}`);
       });
       if (d.commissionBps) lines.push(`平台抽成 ${flapPct(d.commissionBps)}`);
     }
@@ -1267,11 +1293,17 @@ ${flapTooltipText(info)}
     if (flapPending.has(token)) return;
     const cached = flapInfoCache.get(token);
     if (cached) {
-      if (cached.ok !== false || cached.reason === 'not-flap') return;
+      if (cached.reason === 'not-flap') return;
       const last = flapRetry.get(token);
-      if (!last || last.tries >= FLAP_RETRY_MAX) return;
-      // 指数退避，别拿一堆失败的币去连打节点
-      if (Date.now() - last.at < FLAP_RETRY_BASE * 2 ** (last.tries - 1)) return;
+      if (cached.ok) {
+        if (Date.now() - Number(cached.fetchedAt || 0) < FLAP_SUCCESS_TTL) return;
+        // 刷新失败仍展示旧值，并冷却五分钟后再试，避免页面扫描持续打节点。
+        if (last && Date.now() - last.at < FLAP_SUCCESS_TTL) return;
+      } else {
+        if (!last || last.tries >= FLAP_RETRY_MAX) return;
+        // 指数退避，别拿一堆失败的币去连打节点
+        if (Date.now() - last.at < FLAP_RETRY_BASE * 2 ** (last.tries - 1)) return;
+      }
     }
     if (flapPending.size >= 4) return;
     flapPending.add(token);
@@ -1280,13 +1312,22 @@ ${flapTooltipText(info)}
       payload: { token, rpc: String(settings.flapRpc || '').trim() },
     }).then((res) => {
       // sendMessage 在 SW 被挂起时会拿到 undefined，那也是暂时的，同样要能重试
-      setBoundedMap(flapInfoCache, token, res || { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
-      if (res?.ok || res?.reason === 'not-flap') {
+      if (res?.ok) {
+        setBoundedMap(flapInfoCache, token, { ...res, fetchedAt: Date.now() }, FLAP_CACHE_MAX);
+        flapRetry.delete(token);
+      } else if (res?.reason === 'not-flap') {
+        setBoundedMap(flapInfoCache, token, res, FLAP_CACHE_MAX);
         flapRetry.delete(token);
       } else {
+        if (!cached?.ok) {
+          setBoundedMap(flapInfoCache, token, res || { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
+        }
         setBoundedMap(flapRetry, token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 }, FLAP_CACHE_MAX);
       }
-    }).catch(() => {}).finally(() => {
+    }).catch(() => {
+      if (!cached?.ok) setBoundedMap(flapInfoCache, token, { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
+      setBoundedMap(flapRetry, token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 }, FLAP_CACHE_MAX);
+    }).finally(() => {
       flapPending.delete(token);
       scheduleScan();
     });
