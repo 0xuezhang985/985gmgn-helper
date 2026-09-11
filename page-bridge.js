@@ -579,6 +579,9 @@
       return null;
     };
     let fiber = element[fiberKey];
+    let root = fiber;
+    for (let depth = 0; root?.return && depth < 80; depth += 1) root = root.return;
+    if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate || fiber;
     for (let level = 0; fiber && level < 16; level += 1) {
       for (const node of [fiber, fiber.alternate]) {
         if (!node) continue;
@@ -589,6 +592,11 @@
               address: String(hit.base_address || hit.base_token?.address || hit.token_address || '').slice(0, 64),
               symbol: String(hit.base_symbol || hit.base_token?.symbol || '').slice(0, 24),
               chain: String(hit.chain || '').slice(0, 16),
+              // 与原生 TrackerListItem / TableItem 相同的市值计算，不使用成交金额。
+              mc: (() => {
+                const value = Number(hit.price_usd) * Number(hit.base_total_supply || hit.base_token?.total_supply);
+                return Number.isFinite(value) && value > 0 ? value : 0;
+              })(),
               // maker = 这条推送的钱包地址。GMGN 改版后卡片里的钱包名不一定还是
               // <a href="/address/0x..."> 了，只靠 DOM 取地址会整段失效。
               maker: String(hit.maker || hit.maker_info_address || hit.maker_info?.address || '').slice(0, 64),
@@ -638,6 +646,7 @@
       else element.removeAttribute('data-gdh-track-usd');
       if (data.ts) setAttribute(element, 'data-gdh-track-ts', String(data.ts));
       else element.removeAttribute('data-gdh-track-ts');
+      setAttribute(element, 'data-gdh-track-mc', data.mc || '');
       return;
     }
     // 兜底：卡片本身是 next/link 渲染的 <a>，href 里可能带代币地址
@@ -648,7 +657,7 @@
     for (const attr of [
       'data-gdh-track-symbol', 'data-gdh-track-maker', 'data-gdh-track-nick',
       'data-gdh-track-chain', 'data-gdh-track-side', 'data-gdh-track-tx',
-      'data-gdh-track-usd', 'data-gdh-track-ts',
+      'data-gdh-track-usd', 'data-gdh-track-ts', 'data-gdh-track-mc',
     ]) element.removeAttribute(attr);
   }
 

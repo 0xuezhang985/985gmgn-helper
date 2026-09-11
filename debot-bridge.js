@@ -4,7 +4,7 @@
   if (location.hostname !== 'debot.ai') return;
 
   const ROW_SELECTOR = 'tbody tr';
-  const OWNED_SELECTOR = '[data-gdh-debot-fomo-key]';
+  const OWNED_SELECTOR = '[data-gdh-debot-fomo-key], .gdh-debot-similar-token-panel';
   const TRACK_ATTRS = [
     'data-gdh-debot-track-chain',
     'data-gdh-debot-track-token',
@@ -21,6 +21,7 @@
   let scanDelay = 0;
   let lastScanAt = 0;
   let scrollingUntil = 0;
+  let lastSimilarQuoteScanAt = 0;
 
   function onTrackPage() {
     if (location.pathname !== '/track') return false;
@@ -68,11 +69,12 @@
     };
   }
 
-  function findTrackRecord(value, depth = 0, seen = new Set()) {
+  function findTrackRecord(value, depth = 0, seen = new Set(), expected = null) {
     if (!value || typeof value !== 'object' || depth > 4 || seen.has(value)) return null;
     seen.add(value);
     const direct = normalizeTrackRecord(value);
-    if (direct) return direct;
+    if (direct && (!expected || (direct.chain === expected.chain
+      && normalizedToken(direct.token) === expected.address))) return direct;
     let keys;
     try { keys = Object.keys(value); } catch { return null; }
     for (const key of keys.slice(0, 60)) {
@@ -80,25 +82,33 @@
       let child;
       try { child = value[key]; } catch { continue; }
       if (!child || typeof child !== 'object') continue;
-      const hit = findTrackRecord(child, depth + 1, seen);
+      const hit = findTrackRecord(child, depth + 1, seen, expected);
       if (hit) return hit;
     }
     return null;
   }
 
-  function readTrackRecord(element) {
+  function normalizedToken(value) {
+    const text = String(value || '').trim();
+    return /^0x[\da-f]{40}$/i.test(text) ? text.toLowerCase() : text;
+  }
+
+  function readTrackRecord(element, expected = null) {
     const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
     const propsKey = Object.keys(element).find((key) => key.startsWith('__reactProps$'));
     if (propsKey) {
-      const hit = findTrackRecord(element[propsKey]);
+      const hit = findTrackRecord(element[propsKey], 0, new Set(), expected);
       if (hit) return hit;
     }
     let fiber = fiberKey ? element[fiberKey] : null;
+    let root = fiber;
+    for (let depth = 0; root?.return && depth < 80; depth += 1) root = root.return;
+    if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate || fiber;
     for (let level = 0; fiber && level < 16; level += 1) {
       for (const node of [fiber, fiber.alternate]) {
         if (!node) continue;
         for (const props of [node.memoizedProps, node.pendingProps]) {
-          const hit = findTrackRecord(props);
+          const hit = findTrackRecord(props, 0, new Set(), expected);
           if (hit) return hit;
         }
       }
@@ -154,9 +164,35 @@
     return changed;
   }
 
+  function scanSimilarTrackQuotes() {
+    if (document.documentElement.getAttribute('data-gdh-debot-similar-enabled') !== '1'
+      || !location.pathname.startsWith('/token/')) return false;
+    const now = Date.now();
+    // 合并同一轮行情引发的大量 DOM 变化；末次变动由已有 1.2 秒扫描兜底补齐。
+    if (now - lastSimilarQuoteScanAt < 200) return false;
+    lastSimilarQuoteScanAt = now;
+    let changed = false;
+    // Sidebar 卡片保存原始 {data:{token,chain,wallet,unix_time,op,volume,mc}}；
+    // 列表保存清洗后的事件。findTrackRecord 同时识别两者，并用本行链接严格核对身份。
+    const rows = document.querySelectorAll('[data-edge-dock-panel="track"] [data-index][data-known-size]');
+    for (const row of [...rows].slice(0, 120)) {
+      if (row.matches(OWNED_SELECTOR)) continue;
+      const href = row.querySelector('a[href*="/token/"]')?.getAttribute('href');
+      let match;
+      try { match = new URL(href, location.origin).pathname.match(/^\/token\/([a-z0-9_-]+)\/(?:[a-zA-Z0-9-]+_)?(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/); } catch { continue; }
+      const record = match && readTrackRecord(row, { chain: match[1], address: normalizedToken(match[2]) });
+      const quote = record?.mc > 0
+        ? JSON.stringify({ chain: record.chain, address: normalizedToken(record.token), marketCap: record.mc, ts: record.ts }) : '';
+      changed = setAttr(row, 'data-gdh-debot-similar-quote', quote) || changed;
+    }
+    return changed;
+  }
+
   function scan() {
     scanRaf = 0;
-    if (!onTrackPage() || document.visibilityState === 'hidden') return;
+    if (document.visibilityState === 'hidden') return;
+    if (scanSimilarTrackQuotes()) document.dispatchEvent(new Event('gdh-debot-similar-ready'));
+    if (!onTrackPage()) return;
     const now = Date.now();
     if (now < scrollingUntil && now - lastScanAt < 150) {
       if (!scanDelay) {
@@ -216,6 +252,7 @@
     }, true);
     document.addEventListener('visibilitychange', scheduleScan);
     document.addEventListener('gdh-debot-navigate', navigateTokenRoute);
+    document.addEventListener('gdh-debot-similar-request', scheduleScan);
     window.addEventListener('popstate', scheduleScan);
     window.setInterval(scheduleScan, 1200);
     scheduleScan();

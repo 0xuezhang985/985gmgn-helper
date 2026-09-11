@@ -1076,3 +1076,139 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
 @media (prefers-reduced-motion: reduce) {
   .gdh-debot-feed__row.is-new { animation: none; }
 }
+
+
+/* 同名 / 相似币：不改变原生追踪卡或 FOMO/Pump 的布局。 */
+.gdh-debot-similar-token-panel {
+  position: fixed;
+  z-index: 2147483000;
+  display: flex;
+  width: min(292px, calc(100vw - 16px));
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid var(--border-muted, #404754);
+  border-radius: 9px;
+  color: var(--text-primary, #f2f4f7);
+  background: color-mix(in srgb, var(--bg-page, #101114) 96%, transparent);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(8px);
+  contain: layout paint;
+  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.gdh-debot-similar-token__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid var(--border-muted, #404754);
+}
+
+.gdh-debot-similar-token__header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gdh-debot-similar-token__header strong {
+  color: var(--text-primary, #f2f4f7);
+  font-size: 12px;
+}
+
+.gdh-debot-similar-token__header span {
+  color: var(--text-tertiary, #8a93a6);
+  font-size: 10px;
+}
+
+.gdh-debot-similar-token__list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.gdh-debot-similar-token__row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 54px;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--border-muted, #404754);
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gdh-debot-similar-token__row:last-child { border-bottom: 0; }
+.gdh-debot-similar-token__row:hover { background: var(--bg-page-hover, #24282e); }
+.gdh-debot-similar-token__row:focus-visible { outline: 1px solid var(--text-brand, #8b6cff); outline-offset: -1px; }
+
+.gdh-debot-similar-token__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--border-muted, #404754);
+  border-radius: 50%;
+  color: var(--text-secondary, #c9cfda);
+  background: var(--bg-page-hover, #191b20);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gdh-debot-similar-token__icon img { width: 100%; height: 100%; object-fit: cover; }
+.gdh-debot-similar-token__identity,
+.gdh-debot-similar-token__stats { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.gdh-debot-similar-token__identity > strong {
+  overflow: hidden;
+  color: var(--text-primary, #f2f4f7);
+  font-size: 12px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gdh-debot-similar-token__identity > span { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--text-tertiary, #8a93a6); font-size: 10px; }
+.gdh-debot-similar-token__chain,
+.gdh-debot-similar-token__cached,
+.gdh-debot-similar-token__current {
+  padding: 0 4px;
+  border: 1px solid var(--border-muted, #404754);
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 14px;
+}
+.gdh-debot-similar-token__current { color: var(--text-success, #25d987); border-color: color-mix(in srgb, var(--text-success, #25d987) 42%, transparent); }
+.gdh-debot-similar-token__row.is-current {
+  background: rgba(37, 217, 135, 0.12);
+  box-shadow: inset 3px 0 #25d987;
+}
+.gdh-debot-similar-token__row.is-holding { opacity: 0.6; }
+.gdh-debot-similar-token__row.is-current .gdh-debot-similar-token__identity > strong { color: #25d987; }
+html[data-theme="light"] .gdh-debot-similar-token__row.is-current .gdh-debot-similar-token__identity > strong { color: #087a49; }
+html[data-theme="light"] .gdh-debot-similar-token__current { color: #087a49; }
+.gdh-debot-similar-token__stats { align-items: flex-end; padding-left: 4px; }
+.gdh-debot-similar-token__stats > strong { color: var(--text-primary, #f2f4f7); font-size: 12px; line-height: 14px; }
+.gdh-debot-similar-token__pool {
+  display: inline-flex;
+  max-width: 92px;
+  overflow: hidden;
+  align-items: center;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, #3b9ddd 42%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, #3b9ddd 65%, var(--text-primary, #f2f4f7));
+  background: color-mix(in srgb, #3b9ddd 10%, transparent);
+  font-size: 9px;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

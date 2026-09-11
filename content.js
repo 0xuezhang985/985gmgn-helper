@@ -2723,10 +2723,21 @@ ${flapTooltipText(info)}
   const similarTokenMetaCache = new Map();
   const similarTokenMetaPending = new Set();
   const similarTokenRetained = new Map();
+  const similarTokenTrackQuotes = new Map();
   let similarTokenActiveRequests = 0;
   let similarTokenPanelEl = null;
   let similarTokenPanelKey = '';
   let similarTokenTrackerAnchor = null;
+  let similarTokenScanRaf = 0;
+
+  function scheduleSimilarTokenScan() {
+    if (similarTokenScanRaf || settings.enabled === false || settings.enableSimilarTokenPanel !== true
+      || document.visibilityState === 'hidden') return;
+    similarTokenScanRaf = window.requestAnimationFrame(() => {
+      similarTokenScanRaf = 0;
+      scanSimilarTokenPanel();
+    });
+  }
 
   function similarTokenNormalizedName(value) {
     return String(value || '')
@@ -2810,7 +2821,24 @@ ${flapTooltipText(info)}
   }
 
   function similarTokenCachedMeta(chain, address) {
-    return similarTokenMetaCache.get(similarTokenMetaKey(chain, address))?.data || null;
+    const key = similarTokenMetaKey(chain, address);
+    const data = similarTokenMetaCache.get(key)?.data || similarTokenRetained.get(key)?.data;
+    if (!data) return null;
+    const quote = similarTokenTrackQuotes.get(key);
+    return quote ? { ...data, marketCap: quote.marketCap, marketCapSource: 'track' } : data;
+  }
+
+  function rememberSimilarTokenTrackQuote(chain, address, marketCap, ts, now = Date.now()) {
+    const value = Number(marketCap);
+    const timestamp = Number(ts);
+    if (!chain || !address || !Number.isFinite(value) || value <= 0
+      || !Number.isFinite(timestamp) || timestamp <= 0) return;
+    const key = similarTokenMetaKey(chain, address);
+    const previous = similarTokenTrackQuotes.get(key);
+    // 同币多笔交易不能按市值大小选，也不能让较旧成交把最新值倒灌回来。
+    if (previous && previous.ts > timestamp) return;
+    if (previous?.ts === timestamp && previous.marketCap === value) return;
+    setBoundedMap(similarTokenTrackQuotes, key, { marketCap: value, ts: timestamp, at: now }, SIMILAR_TOKEN_CACHE_MAX);
   }
 
   function similarTokenRetentionMs() {
@@ -2973,7 +3001,7 @@ ${flapTooltipText(info)}
   function renderSimilarTokenPanel(trackerPanel, current, rows) {
     const key = `${current.chain}|${current.address}|${rows.map((item) => [
       item.chain, item.address, item.name, item.symbol, Math.round(Number(item.marketCap) || 0),
-      item.poolSymbol, item.poolExchange, item.logo, item.isCached,
+      item.poolSymbol, item.poolExchange, item.logo, item.isCached, item.marketCapSource,
     ].join(':')).join('|')}`;
     if (!similarTokenPanelEl?.isConnected) {
       similarTokenPanelEl = document.createElement('aside');
@@ -3046,7 +3074,9 @@ ${flapTooltipText(info)}
         stats.className = 'gdh-similar-token__stats';
         const marketCap = document.createElement('strong');
         marketCap.textContent = similarTokenMoney(item.marketCap);
-        marketCap.title = item.isCached ? '缓存市值，可能滞后' : '最近读取市值';
+        marketCap.title = item.marketCapSource === 'track'
+          ? '追踪面板最新市值；有新数据时自动更新，无新数据时保留最后值'
+          : item.isCached ? '缓存市值，可能滞后' : '最近读取市值';
         stats.appendChild(marketCap);
         const poolText = item.poolSymbol || item.poolExchange;
         if (poolText) {
@@ -3067,8 +3097,9 @@ ${flapTooltipText(info)}
   }
 
   function scanSimilarTokenPanel() {
-    if (location.hostname !== 'gmgn.ai' || settings.enableSimilarTokenPanel !== true) {
+    if (location.hostname !== 'gmgn.ai' || settings.enabled === false || settings.enableSimilarTokenPanel !== true) {
       similarTokenRetained.clear();
+      similarTokenTrackQuotes.clear();
       similarTokenTrackerAnchor = null;
       return void clearSimilarTokenPanel();
     }
@@ -3078,6 +3109,7 @@ ${flapTooltipText(info)}
     similarTokenTrackerAnchor = trackerPanel;
     const candidates = [];
     const seen = new Set();
+    const quotes = new Map();
     for (const card of trackerCards()) {
       if (!trackerPanel.contains(card)) continue;
       const href = (card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '')
@@ -3085,9 +3117,19 @@ ${flapTooltipText(info)}
       const chain = String(href?.[1] || card.dataset?.gdhTrackChain || '').trim().toLowerCase();
       const address = trackingFeedNormalizedAddress(href?.[2] || card.dataset?.gdhTrackAddr);
       const key = similarTokenMetaKey(chain, address);
+      const ts = Number(card.dataset?.gdhTrackTs);
+      const marketCap = Number(card.dataset?.gdhTrackMc);
+      const quoteMatchesRow = trackingFeedNormalizedAddress(card.dataset?.gdhTrackAddr) === address
+        && String(card.dataset?.gdhTrackChain || '').toLowerCase() === chain;
+      if (quoteMatchesRow && chain && address && marketCap > 0 && ts > 0 && (!quotes.has(key) || quotes.get(key).ts < ts)) {
+        quotes.set(key, { chain, address, marketCap, ts });
+      }
       if (!chain || !address || seen.has(key) || isTokenBlocked(address, chain)) continue;
       seen.add(key);
       candidates.push({ chain, address });
+    }
+    for (const quote of quotes.values()) {
+      rememberSimilarTokenTrackQuote(quote.chain, quote.address, quote.marketCap, quote.ts);
     }
     // 保留历史结果不额外刷新行情；仍在追踪列表中的代币继续沿用原有请求节奏。
     if (candidates.length) requestSimilarTokenMeta([{ chain: route.chain, address: route.address }, ...candidates]);
@@ -8826,6 +8868,10 @@ ${flapTooltipText(info)}
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
+      if (record.type === 'attributes' && record.attributeName === 'data-gdh-track-mc') {
+        scheduleSimilarTokenScan();
+        continue;
+      }
       // 虚拟列表新挂载的行必须在本帧绘制前继承已有插卡位移。合到同一 rAF，
       // 避免一次 mutation delivery 里反复读 offsetHeight / 写 transform。
       scheduleFomoFeedRowReflow();
@@ -8838,6 +8884,7 @@ ${flapTooltipText(info)}
     subtree: true,
     attributes: true,
     attributeFilter: [
+      'data-gdh-track-mc',
       'data-gdh-creator',
       'data-gdh-migrated',
       'data-gdh-total',

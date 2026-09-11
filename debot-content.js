@@ -13,6 +13,8 @@
     fomoFeedTypes: {
       buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true,
     },
+    enableSimilarTokenPanel: false,
+    similarTokenCacheMinutes: 5,
     enableSpecialWallet: true,
     specialWallets: [],
     blockedTokens: [],
@@ -2296,7 +2298,426 @@
     }
   }
 
+  // ---- DeBot 同名 / 相似币：页面内存缓存，复用原生追踪市值 ----
+  function setBoundedMap(map, key, value, max) {
+    if (map.has(key)) map.delete(key);
+    map.set(key, value);
+    while (map.size > max) map.delete(map.keys().next().value);
+  }
+
+  const SIMILAR_TOKEN_META_TTL = 10 * 60 * 1000;
+  const SIMILAR_TOKEN_ERROR_TTL = 15 * 1000;
+  const SIMILAR_TOKEN_CACHE_MAX = 400;
+  const SIMILAR_TOKEN_REQUEST_TIMEOUT = 12000;
+  const SIMILAR_TOKEN_MAX_REQUESTS = 2;
+  const similarTokenMetaCache = new Map();
+  const similarTokenMetaPending = new Set();
+  const similarTokenRetained = new Map();
+  const similarTokenTrackQuotes = new Map();
+  let similarTokenActiveRequests = 0;
+  let similarTokenPanelEl = null;
+  let similarTokenPanelKey = '';
+  let similarTokenNextRequestAt = 0;
+  let similarTokenScanRaf = 0;
+
+  function similarTokenNormalizedName(value) {
+    return String(value || '')
+      .normalize('NFKC')
+      .toLocaleLowerCase()
+      .replace(/[\p{P}\p{S}\s_]+/gu, '');
+  }
+
+  function similarTokenSimilarity(left, right) {
+    const a = similarTokenNormalizedName(left);
+    const b = similarTokenNormalizedName(right);
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i += 1) {
+      let diagonal = previous[0];
+      previous[0] = i;
+      for (let j = 1; j <= b.length; j += 1) {
+        const above = previous[j];
+        previous[j] = Math.min(
+          previous[j] + 1,
+          previous[j - 1] + 1,
+          diagonal + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+        diagonal = above;
+      }
+    }
+    return 1 - (previous[b.length] / Math.max(a.length, b.length));
+  }
+
+  function similarTokenRows(current, rows) {
+    if (!current?.chain || !current?.address) return [];
+    const currentKey = `${current.chain}|${normalizeAddress(current.address)}`;
+    const unique = new Map();
+    for (const item of rows || []) {
+      // 追踪列表显示 ticker，全名不同但 ticker 相同也属于用户看到的同名币。
+      const score = Math.max(similarTokenSimilarity(current.name, item?.name),
+        similarTokenSimilarity(current.symbol, item?.symbol));
+      if (score + Number.EPSILON < 0.9) continue;
+      const chain = String(item?.chain || '').trim().toLowerCase();
+      const address = normalizeAddress(item?.address);
+      if (!chain || !address) continue;
+      const key = `${chain}|${address}`;
+      if (key === currentKey) continue;
+      const normalized = { ...item, chain, address, similarity: score };
+      const previous = unique.get(key);
+      if (!previous || Number(normalized.marketCap) > Number(previous.marketCap)) {
+        unique.set(key, normalized);
+      }
+    }
+    if (!unique.size) return [];
+    // 当前币不一定在追踪流里，出现匹配币时也必须一起比较。
+    unique.set(currentKey, { ...current, address: normalizeAddress(current.address), similarity: 1 });
+    return [...unique.values()].sort((a, b) => (
+      (Number(b.marketCap) || 0) - (Number(a.marketCap) || 0)
+      || String(a.symbol || '').localeCompare(String(b.symbol || ''))
+    ));
+  }
+
+  function similarTokenMetaKey(chain, address) {
+    return `${String(chain || '').trim().toLowerCase()}|${normalizeAddress(address)}`;
+  }
+
+  function similarTokenMetaFromApi(data, chain, expectedAddress) {
+    const pair = data?.pair;
+    const meta = data?.token?.meta;
+    const address = normalizeAddress(pair?.tokenAddress || meta?.address);
+    if (!address || address !== normalizeAddress(expectedAddress)
+      || String(pair?.chain || meta?.chain || '').toLowerCase() !== chain) return null;
+    const mc = Number(pair?.market_cap);
+    const computed = Number(pair?.price) * Number(pair?.totalSupply);
+    return { chain, address,
+      name: safeText(meta?.name || pair?.tokenName || pair?.tokenSymbol, 80),
+      symbol: safeText(meta?.symbol || pair?.tokenSymbol, 32),
+      logo: validImageUrl(pair?.tokenIcon) || validImageUrl(meta?.logo),
+      marketCap: Number.isFinite(mc) && mc > 0 ? mc : Number.isFinite(computed) && computed > 0 ? computed : 0,
+      poolSymbol: safeText(pair?.base_token_symbol, 24),
+      poolExchange: safeText(pair?.dex?.dex_name || pair?.contract, 32),
+    };
+  }
+
+  function similarTokenCachedMeta(chain, address) {
+    const key = similarTokenMetaKey(chain, address);
+    const data = similarTokenMetaCache.get(key)?.data || similarTokenRetained.get(key)?.data;
+    if (!data) return null;
+    const quote = similarTokenTrackQuotes.get(key);
+    return quote ? { ...data, marketCap: quote.marketCap, marketCapSource: 'track' } : data;
+  }
+
+  function rememberSimilarTokenTrackQuote(chain, address, marketCap, ts, now = Date.now()) {
+    const value = Number(marketCap);
+    const timestamp = Number(ts);
+    if (!chain || !address || !Number.isFinite(value) || value <= 0
+      || !Number.isFinite(timestamp) || timestamp <= 0) return;
+    const key = similarTokenMetaKey(chain, address);
+    const previous = similarTokenTrackQuotes.get(key);
+    // 同币多笔交易不能按市值大小选，也不能让较旧成交把最新值倒灌回来。
+    if (previous && previous.ts > timestamp) return;
+    if (previous?.ts === timestamp && previous.marketCap === value) return;
+    setBoundedMap(similarTokenTrackQuotes, key, { marketCap: value, ts: timestamp, at: now }, SIMILAR_TOKEN_CACHE_MAX);
+  }
+
+  function similarTokenRetentionMs() {
+    const minutes = Number(settings.similarTokenCacheMinutes);
+    return ([1, 5, 10, 30].includes(minutes) ? minutes : 5) * 60000;
+  }
+
+  function retainedSimilarTokenRows(current, visibleRows, now = Date.now()) {
+    const ttl = similarTokenRetentionMs();
+    for (const [key, entry] of similarTokenRetained) {
+      if (now - entry.seenAt >= ttl || isTokenBlocked(entry.data.address, entry.data.chain)) {
+        similarTokenRetained.delete(key);
+      }
+    }
+    // 仅真实追踪行重新出现时续期，不能由缓存显示或行情刷新给自己续命。
+    for (const item of similarTokenRows(current, visibleRows)) {
+      setBoundedMap(similarTokenRetained, similarTokenMetaKey(item.chain, item.address),
+        { seenAt: now, data: item }, SIMILAR_TOKEN_CACHE_MAX);
+    }
+    const visibleKeys = new Set(visibleRows.map((item) => similarTokenMetaKey(item.chain, item.address)));
+    const currentKey = similarTokenMetaKey(current.chain, current.address);
+    const rows = similarTokenRows(current, [...similarTokenRetained.values()].map(({ data }) =>
+      similarTokenCachedMeta(data.chain, data.address) || data));
+    return rows.map((item) => ({ ...item, isCached: similarTokenMetaKey(item.chain, item.address) !== currentKey
+      && !visibleKeys.has(similarTokenMetaKey(item.chain, item.address)) }));
+  }
+
+  function requestSimilarTokenMeta(entries) {
+    if (!settings.enabled || settings.enableSimilarTokenPanel !== true || document.visibilityState === 'hidden'
+      || Date.now() < similarTokenNextRequestAt) return;
+    let started = false;
+    for (const { chain, address } of entries) {
+      if (similarTokenActiveRequests >= SIMILAR_TOKEN_MAX_REQUESTS) break;
+      const key = similarTokenMetaKey(chain, address);
+      const hit = similarTokenMetaCache.get(key);
+      if (similarTokenMetaPending.has(key) || (hit && Date.now() - hit.at < (hit.failed ? 60000 : SIMILAR_TOKEN_META_TTL))) continue;
+      started = true;
+      similarTokenMetaPending.add(key);
+      similarTokenActiveRequests += 1;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), SIMILAR_TOKEN_REQUEST_TIMEOUT);
+      const url = new URL('/api/dashboard/token/detail', location.origin);
+      url.searchParams.set('chain', chain);
+      url.searchParams.set('token', address);
+      url.searchParams.set('request_id', `gdh_similar_${Date.now()}`);
+      fetch(url, { credentials: 'include', headers: { Accept: 'application/json' }, signal: controller.signal })
+        .then(async (response) => {
+          const body = await response.json();
+          const data = response.ok && (body?.code === 0 || body?.code === 200)
+            ? similarTokenMetaFromApi(body.data, chain, address) : null;
+          if (!data) throw new Error('invalid-token-detail');
+          setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), data }, SIMILAR_TOKEN_CACHE_MAX);
+        }).catch(() => {
+          setBoundedMap(similarTokenMetaCache, key, { ...similarTokenMetaCache.get(key), at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+        }).finally(() => {
+          window.clearTimeout(timeout);
+          similarTokenActiveRequests -= 1;
+          similarTokenMetaPending.delete(key);
+          scheduleDebotSimilarScan();
+        });
+    }
+    // 只补齐已显示代币的名称/底池资料，市值刷新不触发此请求。
+    if (started) similarTokenNextRequestAt = Date.now() + 3000;
+  }
+
+  function similarTokenTrackerPanel() {
+    const panel = document.querySelector('[data-edge-dock-panel="track"]');
+    const rect = panel?.getBoundingClientRect();
+    return panel instanceof HTMLElement && rect.width > 0 && rect.height > 0 ? panel : null;
+  }
+
+  function clearSimilarTokenPanel() {
+    similarTokenPanelEl?.remove();
+    similarTokenPanelEl = null;
+    similarTokenPanelKey = '';
+  }
+
+  function similarTokenMoney(value) {
+    const number = Number(value) || 0;
+    if (number >= 1e9) return `$${(number / 1e9).toFixed(2).replace(/\.00$/, '')}B`;
+    if (number >= 1e6) return `$${(number / 1e6).toFixed(2).replace(/\.00$/, '')}M`;
+    if (number >= 1e3) return `$${(number / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
+    return `$${Math.round(number)}`;
+  }
+
+  function positionSimilarTokenPanel(trackerPanel) {
+    if (!similarTokenPanelEl?.isConnected || !(trackerPanel instanceof HTMLElement)) return;
+    const trackingBody = trackerPanel.querySelector('[data-testid="virtuoso-scroller"]');
+    const panelRect = trackerPanel.getBoundingClientRect();
+    const bodyRect = (trackingBody || trackerPanel).getBoundingClientRect();
+    if (panelRect.width < 100 || panelRect.height < 100) return void clearSimilarTokenPanel();
+    const gap = 8;
+    const edge = 8;
+    const width = similarTokenPanelEl.offsetWidth || 292;
+    const leftSpace = panelRect.left - gap - edge;
+    const rightSpace = window.innerWidth - panelRect.right - gap - edge;
+    let left;
+    if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
+    else left = panelRect.right + gap;
+    left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
+    const top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    const placement = { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`,
+      maxHeight: `${Math.max(160, Math.round(window.innerHeight - top - edge))}px` };
+    for (const [property, value] of Object.entries(placement)) {
+      if (similarTokenPanelEl.style[property] !== value) similarTokenPanelEl.style[property] = value;
+    }
+  }
+
+  function renderSimilarTokenPanel(trackerPanel, current, rows) {
+    const key = `${current.chain}|${current.address}|${rows.map((item) => [
+      item.chain, item.address, item.name, item.symbol, Math.round(Number(item.marketCap) || 0),
+      item.poolSymbol, item.poolExchange, item.logo, item.isCached, item.marketCapSource,
+    ].join(':')).join('|')}`;
+    if (!similarTokenPanelEl?.isConnected) {
+      similarTokenPanelEl = document.createElement('aside');
+      similarTokenPanelEl.className = 'gdh-debot-similar-token-panel';
+      similarTokenPanelEl.setAttribute('aria-label', '追踪列表同名与相似币');
+      document.body.appendChild(similarTokenPanelEl);
+      similarTokenPanelKey = '';
+    }
+    if (similarTokenPanelKey !== key) {
+      similarTokenPanelKey = key;
+      similarTokenPanelEl.replaceChildren();
+      const header = document.createElement('div');
+      header.className = 'gdh-debot-similar-token__header';
+      const heading = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = '同名 / 相似币';
+      const subtitle = document.createElement('span');
+      subtitle.textContent = `${rows.length} 个 · 币名 / ticker 相似度 ≥90%`;
+      heading.append(title, subtitle);
+      header.appendChild(heading);
+
+      const list = document.createElement('div');
+      list.className = 'gdh-debot-similar-token__list';
+      for (const item of rows) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'gdh-debot-similar-token__row';
+        const isCurrent = item.chain === current.chain && item.address === current.address;
+        row.classList.toggle('is-current', isCurrent);
+        if (isCurrent) row.setAttribute('aria-current', 'true');
+        row.title = `${item.name} (${item.symbol}) · 点击无刷新打开，长按一秒在插件内屏蔽`;
+        bindSimilarTokenRowActions(row, item);
+
+        const icon = document.createElement('span');
+        icon.className = 'gdh-debot-similar-token__icon';
+        if (item.logo) {
+          const image = document.createElement('img');
+          image.src = item.logo;
+          image.alt = '';
+          image.loading = 'lazy';
+          icon.appendChild(image);
+        } else icon.textContent = String(item.symbol || item.name || '?').slice(0, 1).toUpperCase();
+
+        const identity = document.createElement('span');
+        identity.className = 'gdh-debot-similar-token__identity';
+        const name = document.createElement('strong');
+        name.textContent = item.name || item.symbol || '未命名';
+        const meta = document.createElement('span');
+        const ticker = document.createElement('span');
+        ticker.textContent = item.symbol ? `$${item.symbol}` : '--';
+        const chain = document.createElement('span');
+        chain.className = 'gdh-debot-similar-token__chain';
+        chain.textContent = item.chain.toUpperCase();
+        meta.append(ticker, chain);
+        if (isCurrent) {
+          const currentBadge = document.createElement('span');
+          currentBadge.className = 'gdh-debot-similar-token__current';
+          currentBadge.textContent = '当前币';
+          meta.appendChild(currentBadge);
+        } else if (item.isCached) {
+          const cachedBadge = document.createElement('span');
+          cachedBadge.className = 'gdh-debot-similar-token__cached';
+          cachedBadge.textContent = '缓存';
+          cachedBadge.title = '追踪记录已移出列表，暂时保留缓存结果；市值可能滞后';
+          meta.appendChild(cachedBadge);
+        }
+        identity.append(name, meta);
+
+        const stats = document.createElement('span');
+        stats.className = 'gdh-debot-similar-token__stats';
+        const marketCap = document.createElement('strong');
+        marketCap.textContent = similarTokenMoney(item.marketCap);
+        marketCap.title = item.marketCapSource === 'track'
+          ? '追踪面板最新市值；有新数据时自动更新，无新数据时保留最后值'
+          : item.isCached ? '缓存市值，可能滞后' : '最近读取市值';
+        stats.appendChild(marketCap);
+        const poolText = item.poolSymbol || item.poolExchange;
+        if (poolText) {
+          const pool = document.createElement('span');
+          pool.className = 'gdh-debot-similar-token__pool';
+          pool.textContent = `🪙${poolText}`;
+          pool.title = item.poolSymbol
+            ? `主池底池资产：${item.poolSymbol}${item.poolExchange ? ` · ${item.poolExchange}` : ''}`
+            : `主池：${item.poolExchange}`;
+          stats.appendChild(pool);
+        }
+        row.append(icon, identity, stats);
+        list.appendChild(row);
+      }
+      similarTokenPanelEl.append(header, list);
+    }
+    positionSimilarTokenPanel(trackerPanel);
+  }
+
+  function similarTokenRouteFromHref(href) {
+    let url;
+    try { url = new URL(href, location.origin); } catch { return null; }
+    if (url.origin !== location.origin) return null;
+    const match = url.pathname.match(/^\/token\/([a-z0-9_-]+)\/(?:[a-zA-Z0-9-]+_)?(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/);
+    return match && FOMO_NETWORK_ID[match[1]] ? { chain: match[1], address: normalizeAddress(match[2]) } : null;
+  }
+
+  function isTokenBlocked(address, chain) {
+    return (settings.blockedTokens || []).some((item) => normalizeAddress(item.address) === normalizeAddress(address)
+      && (!item.chain || String(item.chain).toLowerCase() === chain));
+  }
+
+  function blockDebotSimilarToken(item) {
+    if (isTokenBlocked(item.address, item.chain)) return;
+    settings.blockedTokens = [...(settings.blockedTokens || []), { address: item.address, chain: item.chain, symbol: item.symbol }];
+    chrome.storage.local.set({ blockedTokens: settings.blockedTokens });
+    scheduleDebotSimilarScan();
+    scheduleFeedLayout();
+  }
+
+  function scheduleDebotSimilarScan() {
+    if (similarTokenScanRaf || document.visibilityState === 'hidden') return;
+    similarTokenScanRaf = window.requestAnimationFrame(() => { similarTokenScanRaf = 0; scanSimilarTokenPanel(); });
+  }
+
+  function scanSimilarTokenPanel() {
+    const enabled = settings.enabled && settings.enableSimilarTokenPanel === true;
+    const next = enabled ? '1' : '0';
+    if (document.documentElement.getAttribute('data-gdh-debot-similar-enabled') !== next) {
+      document.documentElement.setAttribute('data-gdh-debot-similar-enabled', next);
+      if (enabled) document.dispatchEvent(new Event('gdh-debot-similar-request'));
+    }
+    if (!enabled) {
+      similarTokenRetained.clear();
+      similarTokenTrackQuotes.clear();
+      return void clearSimilarTokenPanel();
+    }
+    const route = debotTokenRoute();
+    const trackerPanel = similarTokenTrackerPanel();
+    if (!route || !trackerPanel) return void clearSimilarTokenPanel();
+    const candidates = [];
+    const seen = new Set();
+    const quotes = new Map();
+    const nativeRows = trackerPanel.querySelectorAll('[data-index][data-known-size]');
+    for (const card of [...nativeRows].slice(0, 120)) {
+      if (card.hasAttribute('data-gdh-debot-fomo-key')) continue;
+      const token = similarTokenRouteFromHref(card.querySelector('a[href*="/token/"]')?.getAttribute('href'));
+      if (!token) continue;
+      const key = similarTokenMetaKey(token.chain, token.address);
+      let quote;
+      try { quote = JSON.parse(card.getAttribute('data-gdh-debot-similar-quote') || 'null'); } catch {}
+      if (quote && quote.chain === token.chain && quote.address === token.address && quote.marketCap > 0
+        && quote.ts > 0 && (!quotes.has(key) || quotes.get(key).ts < quote.ts)) quotes.set(key, quote);
+      if (seen.has(key) || isTokenBlocked(token.address, token.chain)) continue;
+      seen.add(key);
+      candidates.push(token);
+    }
+    for (const quote of quotes.values()) rememberSimilarTokenTrackQuote(quote.chain, quote.address, quote.marketCap, quote.ts);
+    if (candidates.length) requestSimilarTokenMeta([route, ...candidates]);
+    const current = similarTokenCachedMeta(route.chain, route.address);
+    if (!current) return void clearSimilarTokenPanel();
+    const rows = retainedSimilarTokenRows(current, candidates.map(({ chain, address }) => similarTokenCachedMeta(chain, address)).filter(Boolean));
+    if (!rows.length) return void clearSimilarTokenPanel();
+    renderSimilarTokenPanel(trackerPanel, current, rows);
+  }
+
+  function bindSimilarTokenRowActions(row, item) {
+    let timer = 0;
+    let firedAt = 0;
+    const cancel = () => { window.clearTimeout(timer); timer = 0; row.classList.remove('is-holding'); };
+    row.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      cancel();
+      row.classList.add('is-holding');
+      timer = window.setTimeout(() => {
+        cancel();
+        if (!row.isConnected) return;
+        firedAt = Date.now();
+        blockDebotSimilarToken(item);
+      }, 1000);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((type) => row.addEventListener(type, cancel));
+    row.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - firedAt < 500) return;
+      document.dispatchEvent(new CustomEvent('gdh-debot-navigate', { detail: { href: debotTokenHref(item.chain, item.address) } }));
+    });
+  }
+
   function syncRoute() {
+    scheduleDebotSimilarScan();
     syncPanel();
     scheduleDebotRwaPoolScan();
     if (isTrackShellPage()) {
@@ -2336,6 +2757,8 @@
       if (message?.type === 'gdh-pump-push') pollPump(true);
     });
     document.addEventListener('gdh-debot-track-ready', scheduleFeedLayout);
+    document.addEventListener('gdh-debot-similar-ready', scheduleDebotSimilarScan);
+    window.addEventListener('resize', scheduleDebotSimilarScan, { passive: true });
     window.addEventListener('popstate', syncRoute);
     window.addEventListener('resize', scheduleFeedLayout, { passive: true });
     window.addEventListener('resize', positionDebotRwaPopover, { passive: true });
@@ -2350,26 +2773,28 @@
     }, true);
     document.addEventListener('scroll', (event) => {
       positionDebotRwaPopover();
+      scheduleDebotSimilarScan();
       if (event.target instanceof Element && feedScrollTargets.has(event.target)) scheduleFeedLayout();
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element
-        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip, .gdh-debot-rwa-link, .gdh-debot-rwa-popover')
-          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover'));
+        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip, .gdh-debot-rwa-link, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')
+          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover')) return false;
+        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {
         syncPanel();
         scheduleFeedLayout();
         scheduleDebotRwaPoolScan();
+        scheduleDebotSimilarScan();
       }
     });
     feedObserver.observe(document.documentElement, { childList: true, subtree: true });
     feedPollTimer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') { pollFomo(); pollPump(); }
+      if (document.visibilityState !== 'hidden') { pollFomo(); pollPump(); scheduleDebotSimilarScan(); }
     }, 3000);
     window.setInterval(() => {
       document.querySelectorAll('.gdh-debot-feed__time[data-gdh-ts], .gdh-debot-sidefeed__time[data-gdh-ts]').forEach((time) => {

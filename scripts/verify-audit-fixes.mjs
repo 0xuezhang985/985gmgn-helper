@@ -936,7 +936,7 @@ await test('页面桥只把完整成交记录识别为追踪行并兼容 token_a
   });
   assert.deepEqual(JSON.parse(JSON.stringify(result)), {
     address: '0xabc', symbol: 'ABC', chain: 'bsc', maker: '0xmaker', nick: '',
-    side: 'buy', tx: '0xtx', usd: 12.5, ts: 1700000000000,
+    side: 'buy', tx: '0xtx', usd: 12.5, ts: 1700000000000, mc: 0,
   });
   const conflicting = run({
     token_address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -2979,7 +2979,7 @@ await test('相似币显示缓存有容量上限，关闭清空且空追踪列�
   const current = {chain:'base',address:'0x'+'f'.repeat(40),name:'Flybook',symbol:'FLYBOOK',marketCap:1000};
   const rows = Array.from({length:410},(_,i)=>({chain:'bsc',address:'0x'+(i+1).toString(16).padStart(40,'0'),name:'Flybook',symbol:'FLYBOOK',marketCap:i}));
   const extras = {settings:{similarTokenCacheMinutes:5},similarTokenRetained:cache,
-    similarTokenMetaCache:new Map(),SIMILAR_TOKEN_CACHE_MAX:400,isTokenBlocked:()=>false};
+    similarTokenMetaCache:new Map(),similarTokenTrackQuotes:new Map(),SIMILAR_TOKEN_CACHE_MAX:400,isTokenBlocked:()=>false};
   evaluate(funcs, `retainedSimilarTokenRows(${JSON.stringify(current)},${JSON.stringify(rows)},1000000)`, extras);
   assert.equal(cache.size,400);
   const expired = evaluate(funcs, `retainedSimilarTokenRows(${JSON.stringify(current)},[],1300000)`, extras);
@@ -2988,6 +2988,35 @@ await test('相似币显示缓存有容量上限，关闭清空且空追踪列�
   const scan = extractFunction(content,'scanSimilarTokenPanel');
   assert.ok(scan.includes('similarTokenRetained.clear()'));
   assert.ok(scan.includes('if (candidates.length) requestSimilarTokenMeta('));
+});
+
+
+await test('DeBot 相似币元数据严格验证链和合约，读取 meta 名称与 pair 市值/底池', () => {
+  const funcs = ['safeText','normalizeAddress','validImageUrl','similarTokenMetaFromApi'].map(n=>extractFunction(debotContent,n));
+  const address = '0x'+'a'.repeat(40);
+  const data = { token: { meta: { address, chain:'base',name:'The Flybook',symbol:'FLYBOOK',logo:address,total_supply:1e29 },market:{market_cap:0} },
+    pair: { chain:'base',tokenAddress:address,tokenName:'Wrong fallback',tokenSymbol:'wrong',market_cap:135604.6488,totalSupply:1e11,price:0.000001356046488,base_token_symbol:'WETH',dex:{dex_name:'uniswapv4'} } };
+  const run=(d,chain='base',ca=address)=>evaluate(funcs,`similarTokenMetaFromApi(${JSON.stringify(d)},'${chain}','${ca}')`);
+  const value=run(data);
+  assert.equal(value.name,'The Flybook'); assert.equal(value.symbol,'FLYBOOK');
+  assert.equal(value.marketCap,135604.6488); assert.equal(value.poolSymbol,'WETH'); assert.equal(value.logo,'');
+  assert.equal(run(data,'bsc'),null); assert.equal(run(data,'base','0x'+'b'.repeat(40)),null);
+  data.pair.market_cap=0;assert.ok(Math.abs(run(data).marketCap-135604.6488)<0.01);
+  assert.equal(run({pair:{tokenName:'missing identity'}}),null);
+});
+
+await test('DeBot 相似币默认关闭、复用设置、关闭时不请求且仅本地屏蔽', () => {
+  assert.match(debotContent,/enableSimilarTokenPanel: false/);
+  assert.match(debotContent,/similarTokenCacheMinutes: 5/);
+  assert.match(debotContent,/\.gdh-debot-similar-token-panel/);
+  let requests=0;
+  evaluate([extractFunction(debotContent,'requestSimilarTokenMeta')],"requestSimilarTokenMeta([{chain:'base',address:'0xabc'}])",{
+    settings:{enabled:true,enableSimilarTokenPanel:false},fetch:()=>{requests++;throw new Error('unexpected fetch');},
+  });
+  assert.equal(requests,0);
+  assert.ok(!extractFunction(debotContent,'blockDebotSimilarToken').includes('native-token-blacklist'));
+  assert.match(extractFunction(content,'scheduleSimilarTokenScan'),/requestAnimationFrame/);
+  assert.match(content,/record.attributeName === 'data-gdh-track-mc'/);
 });
 
 process.stdout.write(`1..${passed}\n`);
