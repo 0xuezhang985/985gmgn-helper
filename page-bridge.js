@@ -867,19 +867,123 @@
   // URL 经 documentElement 的 attribute 传递（CustomEvent 的 detail 过不了世界边界），
   // 并用白名单限定只能跳代币页。
   const GDH_NAV_RE = /^\/(sol|bsc|eth|base|tron|blast|monad|megaeth|hyperevm|xlayer|robinhood|arc|stable|arbitrum)\/token\/[a-zA-Z0-9]{20,64}$/;
+  let nativeBlacklistApi = null;
+
+  function findNativeBlacklistStore() {
+    const starts = [...document.querySelectorAll('[data-sentry-component], [data-testid]')].slice(0, 30);
+    for (const start of starts) {
+      const key = Object.keys(start).find((name) => name.startsWith('__reactFiber$'));
+      let fiber = key ? start[key] : null;
+      for (let depth = 0; fiber && depth < 160; depth += 1, fiber = fiber.return) {
+        const values = [fiber.memoizedProps?.value, fiber.pendingProps?.value];
+        let context = fiber.dependencies?.firstContext;
+        for (let i = 0; context && i < 30; i += 1, context = context.next) values.push(context.memoizedValue);
+        const store = values.find((value) => value && typeof value.get === 'function'
+          && typeof value.set === 'function' && typeof value.sub === 'function');
+        if (store) return store;
+      }
+    }
+    return null;
+  }
+
+  function discoverNativeBlacklistApi() {
+    if (nativeBlacklistApi) return nativeBlacklistApi;
+    const chunks = window.webpackChunk_N_E;
+    if (!Array.isArray(chunks)) return null;
+    let req = null;
+    chunks.push([[`gdh-blacklist-${Date.now()}`], {}, (runtime) => { req = runtime; }]);
+    if (!req?.m) return null;
+    const ids = Object.keys(req.m);
+    const updateId = ids.find((id) => {
+      const source = String(req.m[id]);
+      return source.includes('other_black_list_') && source.includes('itemsToAdd') && source.includes('itemsToRemove');
+    });
+    const hydrateId = ids.find((id) => {
+      const source = String(req.m[id]);
+      return source.includes('[BlacklistHydrate]') && source.includes('token_black_list') && source.includes('WeakMap');
+    });
+    const typesId = ids.find((id) => {
+      const source = String(req.m[id]);
+      return source.includes('.ca="ca"') && source.includes('.funding="funding"') && source.includes('TextEncoder');
+    });
+    if (!updateId || !hydrateId || !typesId) return null;
+    const values = Object.values(req(updateId));
+    const update = values.find((value) => typeof value?.write === 'function'
+      && String(value.write).includes('itemsToAdd') && String(value.write).includes('itemsToRemove'));
+    const snapshot = values.find((value) => typeof value === 'function'
+      && /return\{dev:/.test(String(value)) && String(value).includes('keyword:') && String(value).includes('other:'));
+    const hydrate = Object.values(req(hydrateId)).find((value) => typeof value === 'function');
+    const limit = Object.values(req(typesId)).find((value) => typeof value === 'number' && value >= 1000 && value <= 100000);
+    if (!update || !snapshot || !hydrate || !limit) return null;
+    nativeBlacklistApi = { update, snapshot, hydrate, limit };
+    return nativeBlacklistApi;
+  }
+
+  async function updateNativeTokenBlacklist(request) {
+    const { chain, address, action, expiresAt } = request || {};
+    const addressValid = chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address || '')
+      : chain === 'tron' ? /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address || '') : /^0x[a-fA-F0-9]{40}$/.test(address || '');
+    if (!GDH_NAV_RE.test(`/${chain}/token/${address}`)
+      || !addressValid || !['add', 'remove'].includes(action)) return { ok: false, reason: 'invalid-token' };
+    const api = discoverNativeBlacklistApi();
+    const store = findNativeBlacklistStore();
+    if (!api || !store) return { ok: false, reason: 'native-unavailable' };
+    await api.hydrate(store);
+    if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return { ok: false, reason: 'timeout' };
+    const token = normalizeTokenStatAddress(address);
+    const snapshot = api.snapshot(store.get, chain);
+    if (!Array.isArray(snapshot?.ca)) return { ok: false, reason: 'native-unavailable' };
+    const matches = snapshot.ca.filter((value) => normalizeTokenStatAddress(value) === token);
+    if (action === 'add' && matches.length) return { ok: true, already: true };
+    if (action === 'remove' && !matches.length) return { ok: true, already: true };
+    const count = ['dev', 'ca', 'keyword', 'other'].reduce((sum, type) => sum + (snapshot[type]?.length || 0), 0);
+    // 原生达到上限时会淘汰其它项；插件拒绝，不能替用户删除已有黑名单。
+    if (action === 'add' && count >= api.limit) return { ok: false, reason: 'full' };
+    const payload = action === 'add' ? { itemsToAdd: [{ type: 'ca', value: token }] }
+      : { itemsToRemove: matches.map((value) => ({ type: 'ca', value })) };
+    const result = await store.set(api.update, { network: chain, ...payload, limit: api.limit });
+    if (result?.rejected?.length || result?.evicted?.length) return { ok: false, reason: 'rejected' };
+    const present = api.snapshot(store.get, chain).ca.some((value) => normalizeTokenStatAddress(value) === token);
+    return present === (action === 'add') ? { ok: true } : { ok: false, reason: 'save-failed' };
+  }
+
+  document.addEventListener('gdh-native-token-blacklist', async () => {
+    const root = document.documentElement;
+    const raw = root.getAttribute('data-gdh-native-blacklist-request');
+    root.removeAttribute('data-gdh-native-blacklist-request');
+    if (!raw || raw.length > 600) return;
+    let request;
+    try { request = JSON.parse(raw); } catch { return; }
+    if (typeof request.id !== 'string' || request.id.length > 80) return;
+    let result;
+    try { result = await updateNativeTokenBlacklist(request); }
+    catch { result = { ok: false, reason: 'save-failed' }; }
+    root.setAttribute('data-gdh-native-blacklist-result', JSON.stringify({ id: request.id, ...result }));
+    document.dispatchEvent(new Event('gdh-native-token-blacklist-result'));
+  });
+
   document.addEventListener('gdh-navigate', () => {
     const url = document.documentElement.getAttribute('data-gdh-nav') || '';
+    const spaOnly = document.documentElement.getAttribute('data-gdh-nav-spa-only') === '1';
     document.documentElement.removeAttribute('data-gdh-nav');
+    document.documentElement.removeAttribute('data-gdh-nav-spa-only');
     if (!GDH_NAV_RE.test(url)) return;
+    const fallback = () => {
+      if (!spaOnly) window.location.assign(url);
+      else {
+        document.documentElement.setAttribute('data-gdh-nav-error', 'spa-router-unavailable');
+        document.dispatchEvent(new Event('gdh-navigation-error'));
+      }
+    };
     try {
       const router = window.next && window.next.router;
       if (router && typeof router.push === 'function') {
-        Promise.resolve(router.push(url)).catch(() => window.location.assign(url));
+        Promise.resolve(router.push(url)).catch(fallback);
         return;
       }
     } catch {
       // 摸不到路由就整页跳
     }
-    window.location.assign(url);
+    fallback();
   });
 })();

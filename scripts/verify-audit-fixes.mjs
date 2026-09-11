@@ -1003,7 +1003,7 @@ await test('GMGN 追踪卡片用文字、列表用红绿符号标记当前币与
   assert.match(styles, /\.gdh-token-relation\.is-table[\s\S]*?min-width:\s*10px[\s\S]*?background:\s*transparent/);
 });
 
-await test('追踪列表相似币按完整币名九成相似度匹配、去重并按实时市值排序', () => {
+await test('追踪列表相似币按币名或 ticker 九成相似度匹配，并与当前币共同排序', () => {
   const functions = [
     extractFunction(content, 'trackingFeedNormalizedAddress'),
     extractFunction(content, 'similarTokenNormalizedName'),
@@ -1022,8 +1022,13 @@ await test('追踪列表相似币按完整币名九成相似度匹配、去重�
     { chain: 'sol', address: 'other', name: 'Unrelated token', symbol: 'NO', marketCap: 999000, poolSymbol: 'SOL' },
   ];
   const result = evaluate(functions, `similarTokenRows(${JSON.stringify(current)}, ${JSON.stringify(rows)})`);
-  assert.deepEqual(JSON.parse(JSON.stringify(result.map((item) => item.address))), ['0xhigh', '0xlow']);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.map((item) => item.address))), ['0xhigh', '0xlow', '0xcurrent']);
   assert.equal(result[0].poolSymbol, 'WBNB');
+  const flybook = { chain: 'base', address: '0xbase', name: 'The Flybook', symbol: 'FLYBOOK', marketCap: 200000 };
+  const peers = [{ chain: 'robinhood', address: '0xpeer', name: 'flybook', symbol: 'FLYBOOK', marketCap: 130000 }];
+  const sameTicker = evaluate(functions, `similarTokenRows(${JSON.stringify(flybook)}, ${JSON.stringify(peers)})`);
+  assert.deepEqual(JSON.parse(JSON.stringify(sameTicker.map((item) => item.address))), ['0xbase', '0xpeer']);
+  assert.equal(evaluate(functions, `similarTokenRows(${JSON.stringify(flybook)}, [${JSON.stringify(flybook)}]).length`), 0);
 
   const meta = evaluate([
     extractFunction(content, 'trackingFeedNormalizedAddress'),
@@ -1134,7 +1139,7 @@ await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
     URL,
     Event: class Event {},
     document: {
-      documentElement: { setAttribute: (_name, value) => { nav = value; } },
+      documentElement: { setAttribute: (_name, value) => { nav = value; }, removeAttribute() {} },
       dispatchEvent: () => { location.pathname = '/'; },
     },
     window: { setTimeout: (callback) => callback() },
@@ -2837,6 +2842,120 @@ await test('Flap 成功结果定时刷新、失败保留旧值且 RPC 只用实�
   assert.ok(background.includes("'https://bsc.rpc.blxrbdn.com'"));
   assert.ok(!background.includes("'https://bsc-dataseed1.defibit.io'"));
   assert.ok(!background.includes("'https://bsc-dataseed1.ninicoin.io'"));
+});
+
+await test('战壕 Flap 税标只使用原生槽位，不额外插行或回退到整卡', () => {
+  const scan = extractFunction(content, 'scanFlapBadges');
+  const trench = scan.slice(scan.indexOf('document.querySelectorAll(CARD_SELECTOR)'), scan.indexOf('// 追踪流'));
+  assert.ok(trench.includes('flapTrenchOwnRow(card, native)'));
+  assert.ok(trench.includes('if (!flapInfoCache.get(token)?.ok)'));
+  assert.ok(trench.includes('card.dataset.gdhFlapKey !== token'));
+  assert.ok(!trench.includes('row || card'));
+  assert.ok(!trench.includes('flapOwnRow(card, native)'));
+  const mount = extractFunction(content, 'flapTrenchOwnRow');
+  assert.ok(mount.includes('row.previousElementSibling !== native'));
+  assert.ok(mount.includes('delete card.dataset.gdhFlapRoom'));
+  assert.ok(!mount.includes('getBoundingClientRect'));
+  assert.ok(styles.includes('.gdh-flap-row.gdh-flap-row--trench'));
+});
+
+await test('Flap 税标清理恢复原生元素，并避免稳定扫描反复改写文字', () => {
+  const clear = extractFunction(content, 'clearFlapCard');
+  assert.ok(clear.includes("querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative)"));
+  assert.ok(clear.includes('data-gdh-flap-slot'));
+  assert.ok(clear.includes('delete card.dataset.gdhFlapKey'));
+  const ensure = extractFunction(content, 'ensureFlapBadge');
+  assert.ok(ensure.includes('if (badge.textContent !== text)'));
+  assert.ok(ensure.includes('if (badge.title !== title)'));
+  assert.ok(!ensure.includes("setProperty('display'"));
+});
+
+await test('相似币请求有并发上限、超时释放和失败保留旧数据', async () => {
+  const requests = [];
+  const timers = new Map();
+  const cache = new Map([['bsc|0xaaa', { at: 0, data: { name: 'old quote' } }]]);
+  const ctx = vm.createContext({
+    similarTokenMetaCache: cache, similarTokenMetaPending: new Set(), similarTokenActiveRequests: 0,
+    SIMILAR_TOKEN_MAX_REQUESTS: 2, SIMILAR_TOKEN_BATCH_MAX: 50, SIMILAR_TOKEN_CACHE_MAX: 400,
+    SIMILAR_TOKEN_META_TTL: 60000, SIMILAR_TOKEN_ERROR_TTL: 15000, SIMILAR_TOKEN_REQUEST_TIMEOUT: 12000,
+    AbortController, gmgnApiQuery: () => 'device_id=offline-test', scheduleScan() {},
+    window: { setTimeout(fn) { timers.set(timers.size + 1, fn); return timers.size; }, clearTimeout(id) { timers.delete(id); } },
+    setBoundedMap: (map, key, value) => map.set(key, value),
+    fetch: (url, options) => { requests.push(JSON.parse(options.body)); return new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(new Error('aborted'))); }); },
+  });
+  vm.runInContext(['trackingFeedNormalizedAddress', 'similarTokenMetaKey', 'similarTokenMetaFromApi', 'requestSimilarTokenMeta']
+    .map((name) => extractFunction(content, name)).join('\n'), ctx);
+  vm.runInContext(`requestSimilarTokenMeta([{chain:'bsc',address:'0xaaa'},{chain:'bsc',address:'0xaaa'},{chain:'base',address:'0xbbb'},{chain:'eth',address:'0xccc'}])`, ctx);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].addresses, ['0xaaa']);
+  [...timers.values()].forEach((fn) => fn());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ctx.similarTokenActiveRequests, 0);
+  assert.equal(ctx.similarTokenMetaPending.size, 0);
+  assert.equal(cache.get('bsc|0xaaa').data.name, 'old quote');
+  assert.equal(cache.get('bsc|0xaaa').failed, true);
+});
+
+await test('浮窗无刷新导航不启用原 450ms 强制跳转兜底', () => {
+  let timers = 0;
+  const attrs = new Map();
+  const location = { origin: 'https://gmgn.ai', pathname: '/base/token/old', href: '' };
+  evaluate([extractFunction(content, 'gdhSpaNavigate')], "gdhSpaNavigate('/bsc/token/new', true)", {
+    location, URL, Event: class {}, document: { documentElement: { setAttribute: (k, v) => attrs.set(k, v), removeAttribute: (k) => attrs.delete(k) }, dispatchEvent() {} },
+    window: { setTimeout() { timers++; } },
+  });
+  assert.equal(timers, 0);
+  assert.equal(location.href, '');
+  assert.equal(attrs.get('data-gdh-nav-spa-only'), '1');
+});
+
+await test('独立扫描异常不再阻断 FOMO/Pump 等后续模块', () => {
+  const calls = [];
+  const extras = { lastFullScanAt: 0, scanCostEma: 0, trackerCardsScanCache: null, trackerCardsScanCacheActive: false,
+    CARD_SELECTOR: '.card', performance: { now: () => 1 }, document: { querySelectorAll: () => [], documentElement: { getAttribute() {}, setAttribute() {} } } };
+  for (const name of ['applyCardState','scanCalloutBlacklist','scanManifestoToasts','ensureManifestoTab','scanSpecialWallets','scanTrackerTokenRelations','scanMarkedBadges','scanTokenHeaderBadges','scanFlapBadges','scanRobinhoodSearchBadges','scanRobinhoodRwaPoolLinks','scanFrontrunLightning','scanRemindToasts','scanHoldingSurge','scanFomoPanel','scanFomoTrendingTab','scanFomoFeed','scanAllPools']) extras[name] = () => calls.push(name);
+  extras.scanSimilarTokenPanel = () => { throw new Error('simulated DOM replacement'); };
+  evaluate([extractFunction(content, 'scanVisibleCards')], 'scanVisibleCards()', extras);
+  assert.ok(calls.includes('scanFomoFeed') && calls.includes('scanAllPools'));
+});
+
+await test('原生黑名单只按链增删 ca，保留其它类别、满额拒绝且超时不写入', async () => {
+  const states = new Map(['bsc','base','sol'].map((chain) => [chain, { dev: ['keep-dev'], ca: [], keyword: [], other: [] }]));
+  let writes = 0;
+  const store = { get() {}, sub() {}, set(atom, payload) { writes++; const s = states.get(payload.network); if (payload.itemsToAdd) s.ca.push(...payload.itemsToAdd.map(x => x.value)); if (payload.itemsToRemove) s.ca = s.ca.filter(x => !payload.itemsToRemove.some(y => y.value === x)); return { rejected: [], evicted: [] }; } };
+  const api = { hydrate: async () => {}, snapshot: (get, chain) => states.get(chain), limit: 2, update: {} };
+  const extras = { discoverNativeBlacklistApi: () => api, findNativeBlacklistStore: () => store,
+    GDH_NAV_RE: vm.runInNewContext(bridge.match(/const GDH_NAV_RE = ([^;]+);/)[1]) };
+  const funcs = [extractFunction(bridge, 'normalizeTokenStatAddress'), extractFunction(bridge, 'updateNativeTokenBlacklist')];
+  const address = '0x' + 'A'.repeat(40);
+  const call = (overrides = {}) => evaluate(funcs, `updateNativeTokenBlacklist(${JSON.stringify({ chain: 'bsc', address, action: 'add', expiresAt: Date.now() + 8000, ...overrides })})`, extras);
+  assert.equal((await call()).ok, true);
+  assert.equal(states.get('bsc').ca[0], address.toLowerCase());
+  assert.equal((await call()).already, true);
+  assert.equal(writes, 1);
+  assert.equal((await call({address:'0x'+'b'.repeat(40)})).reason, 'full');
+  assert.equal((await call({action:'remove',expiresAt:0})).reason, 'timeout');
+  assert.equal(writes, 1);
+  assert.equal((await call({chain:'sol'})).reason, 'invalid-token');
+  assert.equal((await call({action:'remove'})).ok, true);
+  assert.deepEqual(states.get('bsc').dev, ['keep-dev']);
+  assert.deepEqual(states.get('base').ca, []);
+});
+
+await test('屏蔽按链隔离并保留 Solana 大小写，新设置带 NEW', () => {
+  const set = new Set(['bsc|0xabc', '|legacy', 'sol|TokenABC']);
+  const funcs = [extractFunction(content,'trackingFeedNormalizedAddress'),extractFunction(content,'isTokenBlocked')];
+  const run = (address, chain) => evaluate(funcs, `isTokenBlocked('${address}','${chain}')`, {blockedTokenSet:set});
+  assert.equal(run('0xABC','bsc'), true);
+  assert.equal(run('0xabc','base'), false);
+  assert.equal(run('TokenABC','sol'), true);
+  assert.equal(run('tokenabc','sol'), false);
+  assert.equal(run('legacy','base'), true);
+  assert.ok(popup.includes('syncGmgnTokenBlacklist: true'));
+  assert.match(popupHtml,/屏蔽同步 GMGN 黑名单[\s\S]*?NEW[\s\S]*?id="sync-gmgn-token-blacklist"/);
+  const button = extractFunction(content,'ensureTokenBlockButton');
+  assert.ok(button.includes('button.dataset.gdhTbAddr !== heldAddress'));
+  assert.ok(button.includes('button.dataset.gdhTbChain !== heldChain'));
 });
 
 process.stdout.write(`1..${passed}\n`);

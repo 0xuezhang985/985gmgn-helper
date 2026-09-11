@@ -311,6 +311,7 @@
     fomoFeedChainOnly: false,
     enableMonitorAggregate: true,
     enableSimilarTokenPanel: false,
+    syncGmgnTokenBlacklist: true,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
     highlightColor: '#f5b83d',
@@ -1218,12 +1219,55 @@
     return tokenMetaOwnRow(card, native, 'gdh-flap-row', 'gdhFlapRoom');
   }
 
-  function clearFlapBadges() {
-    if (!document.querySelector('.gdh-flap-row, [data-gdh-flap-room]')) return;
-    document.querySelectorAll('[data-gdh-flap-native]').forEach((el) => {
-      el.style.removeProperty('display');
-      el.removeAttribute('data-gdh-flap-native');
+  function restoreFlapNative(native) {
+    // 兼容旧版留下的内联隐藏；新版仅用自有属性隐藏，不覆盖原生样式。
+    if (native.style.getPropertyValue('display') === 'none'
+      && native.style.getPropertyPriority('display') === 'important') native.style.removeProperty('display');
+    native.removeAttribute('data-gdh-flap-native');
+  }
+
+  function clearFlapCard(card) {
+    card.querySelectorAll('.gdh-flap-row').forEach((el) => el.remove());
+    card.querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative);
+    card.querySelectorAll('[data-gdh-flap-slot]').forEach((el) => el.removeAttribute('data-gdh-flap-slot'));
+    delete card.dataset.gdhFlapRoom;
+    delete card.dataset.gdhFlapKey;
+  }
+
+  /** 战壕是定高虚拟列表：只替换原税标的显示位置，不增加行、不改卡片高度。 */
+  function flapTrenchOwnRow(card, native) {
+    const host = native?.parentElement;
+    if (!host || host === card || !card.contains(native) || host.closest('.gdh-flap-row')) {
+      clearFlapCard(card);
+      return null;
+    }
+    let row = card.querySelector('.gdh-flap-row');
+    // React 会替换/移动税标；缓存行存在不代表它还在正确的位置。
+    card.querySelectorAll('[data-gdh-flap-native]').forEach((el) => {
+      if (el !== native) restoreFlapNative(el);
     });
+    card.querySelectorAll('[data-gdh-flap-slot]').forEach((el) => {
+      if (el !== host) el.removeAttribute('data-gdh-flap-slot');
+    });
+    delete card.dataset.gdhFlapRoom;
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'gdh-flap-row gdh-flap-row--trench';
+    } else if (!row.classList.contains('gdh-flap-row--trench')) {
+      row.classList.add('gdh-flap-row--trench');
+    }
+    if (row.previousElementSibling !== native) native.insertAdjacentElement('afterend', row);
+    // 仅收窄税标自己的包装层，不能改币名/市值共用的原生横排。
+    if ([...host.children].every((el) => el === native || el === row)) {
+      if (!host.hasAttribute('data-gdh-flap-slot')) host.setAttribute('data-gdh-flap-slot', '1');
+    } else host.removeAttribute('data-gdh-flap-slot');
+    return row;
+  }
+
+  function clearFlapBadges() {
+    if (!document.querySelector('.gdh-flap-row, [data-gdh-flap-room], [data-gdh-flap-native], [data-gdh-flap-slot]')) return;
+    document.querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative);
+    document.querySelectorAll('[data-gdh-flap-slot]').forEach((el) => el.removeAttribute('data-gdh-flap-slot'));
     document.querySelectorAll('.gdh-flap-row').forEach((el) => el.remove());
     document.querySelectorAll('[data-gdh-flap-room]').forEach((el) => {
       delete el.dataset.gdhFlapRoom;
@@ -1244,7 +1288,7 @@
       if (info && info.ok === false) {
         badge?.remove();
         // 读不到就把原生标签还回去，别让人两头落空
-        if (native) native.style.removeProperty('display');
+        if (native?.hasAttribute('data-gdh-flap-native')) restoreFlapNative(native);
         // 用户报「徽章不显示」时，看这个属性就知道是节点没取到还是压根不是 Flap 币
         host.dataset.gdhFlapFail = info.reason || 'unknown';
       }
@@ -1252,7 +1296,7 @@
     }
     delete host.dataset.gdhFlapFail;
     // 信息比原生的全，藏掉原生税标避免重复（读不到数据时上面已还原）
-    if (native && native.isConnected) native.style.setProperty('display', 'none', 'important');
+    if (native?.isConnected && !native.hasAttribute('data-gdh-flap-native')) native.setAttribute('data-gdh-flap-native', '1');
     if (!badge) {
       badge = document.createElement('span');
       badge.className = 'gdh-flap';
@@ -1274,13 +1318,16 @@
       host.appendChild(badge);
     }
     const mode = flapMode(info.dist);
-    badge.className = `gdh-flap is-${mode.cls}`;
-    badge.dataset.gdhFlapToken = token;
-    badge.textContent = flapBadgeText(info);
-    badge.title = `${mode.name}
+    const className = `gdh-flap is-${mode.cls}`;
+    if (badge.className !== className) badge.className = className;
+    if (badge.dataset.gdhFlapToken !== token) badge.dataset.gdhFlapToken = token;
+    const text = flapBadgeText(info);
+    if (badge.textContent !== text) badge.textContent = text;
+    const title = `${mode.name}
 ${flapTooltipText(info)}
 
 点击打开 flap 税收详情页`;
+    if (badge.title !== title) badge.title = title;
   }
 
   /**
@@ -1370,28 +1417,22 @@ ${flapTooltipText(info)}
       ensureFlapBadge(host, key, native);
     };
 
-    // 战壕卡：优先接管 GMGN 原生的「Tax x%」——同一个位置、信息更全，
-    // 按文案定位（不依赖构建期标记）；找不到就退到 Dev 战绩那一行并排显示。
+    // 战壕只使用原生税标槽位。税标/数据未就绪时保留原样，禁止猜层级或塞进整卡。
     document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
-      const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
-      if (!token) return;
-      // findNativeTaxChip 要正则遍历整卡后代,几百张战壕卡每秒跑一遍是大头。
-      // 徽章行已建好(且卡片没被虚拟列表复用成别的币)就不用再找原生税标。
-      let row = card.dataset.gdhFlapKey === token ? card.querySelector(':scope .gdh-flap-row') : null;
-      let native = null;
-      if (!row) {
-        card.dataset.gdhFlapKey = token;
-        native = findNativeTaxChip(card);
-        // 找到的原生税标打个标记,后续轮次直接找回——链上 info 是异步到的,
-        // 藏原生标签发生在 info 就绪之后,那时不能丢了它的引用。
-        if (native) native.setAttribute('data-gdh-flap-native', '1');
-        // 币名那一行本来就挤（名称 + 税标 + 成交额 + 市值），塞进去会被裁掉，
-        // 所以单独在它下面起一行放徽章。
-        row = flapOwnRow(card, native);
-      } else {
-        native = card.querySelector('[data-gdh-flap-native]');
+      const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1]?.toLowerCase();
+      if (!token) return void clearFlapCard(card);
+      if (card.dataset.gdhFlapKey && card.dataset.gdhFlapKey !== token) clearFlapCard(card);
+      requestFlapInfo(token);
+      if (!flapInfoCache.get(token)?.ok) {
+        if (card.querySelector('.gdh-flap-row, [data-gdh-flap-native]')) clearFlapCard(card);
+        return;
       }
-      put(row || card, token, native);
+      // 优先语义槽位/自有标记，不在每轮遍历整卡后代。
+      const native = card.querySelector('.trenches-tax-badge, [data-gdh-flap-native]') || findNativeTaxChip(card);
+      const row = flapTrenchOwnRow(card, native);
+      if (!row) return;
+      if (card.dataset.gdhFlapKey !== token) card.dataset.gdhFlapKey = token;
+      ensureFlapBadge(row, token, native);
     });
 
     // 追踪流不放税收徽章：那里一行本来就密（钱包 + 动作 + 金额 + 币名 + 市值 + 时间），
@@ -2238,8 +2279,30 @@ ${flapTooltipText(info)}
   }
 
   // ---- 追踪里屏蔽某个币 ----
-  // 只影响追踪流的显示，不动 GMGN 自己的任何设置。
+  // 长按可同步原生合约黑名单；旧版已存条目不会自动迁移。
   let blockedTokenSet = new Set();
+  const nativeTokenBlockPending = new Set();
+
+  function requestNativeTokenBlacklist(chain, address, action) {
+    return new Promise((resolve) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const done = (result) => {
+        window.clearTimeout(timer);
+        document.removeEventListener('gdh-native-token-blacklist-result', onResult);
+        resolve(result);
+      };
+      const onResult = () => {
+        try {
+          const result = JSON.parse(document.documentElement.getAttribute('data-gdh-native-blacklist-result') || '{}');
+          if (result.id === id) done(result);
+        } catch { /* 只接收本次请求的结果 */ }
+      };
+      const timer = window.setTimeout(() => done({ ok: false, reason: 'timeout' }), 10000);
+      document.addEventListener('gdh-native-token-blacklist-result', onResult);
+      document.documentElement.setAttribute('data-gdh-native-blacklist-request', JSON.stringify({ id, chain, address, action, expiresAt: Date.now() + 8000 }));
+      document.dispatchEvent(new Event('gdh-native-token-blacklist'));
+    });
+  }
 
   function getBlockedTokens() {
     return (Array.isArray(settings.blockedTokens) ? settings.blockedTokens : [])
@@ -2247,11 +2310,13 @@ ${flapTooltipText(info)}
   }
 
   function rebuildBlockedTokenIndex() {
-    blockedTokenSet = new Set(getBlockedTokens().map((item) => item.address.toLowerCase()));
+    blockedTokenSet = new Set(getBlockedTokens().map((item) => `${item.chain || item.nativeChain || ''}|${trackingFeedNormalizedAddress(item.address)}`));
   }
 
-  function isTokenBlocked(address) {
-    return Boolean(address && blockedTokenSet.has(String(address).toLowerCase()));
+  function isTokenBlocked(address, chain = '') {
+    if (!address) return false;
+    const key = trackingFeedNormalizedAddress(address);
+    return blockedTokenSet.has(`|${key}`) || blockedTokenSet.has(`${chain}|${key}`);
   }
 
   function persistBlockedTokens(next, message) {
@@ -2266,26 +2331,48 @@ ${flapTooltipText(info)}
         settings.blockedTokens = previous;
         rebuildBlockedTokenIndex();
         scanSpecialWallets();
+        showTrackToast('插件本地屏蔽记录保存失败；如已同步 GMGN，请在原生黑名单中核对');
         return;
       }
       showTrackToast(message);
     });
   }
 
-  function toggleBlockedToken(address, symbol) {
+  async function toggleBlockedToken(address, symbol, chain = '') {
     if (!address) return;
-    const key = String(address).toLowerCase();
+    const key = trackingFeedNormalizedAddress(address);
     const list = getBlockedTokens();
-    if (blockedTokenSet.has(key)) {
+    const matches = (item) => trackingFeedNormalizedAddress(item.address) === key
+      && (!(item.chain || item.nativeChain) || (item.chain || item.nativeChain) === chain);
+    const existing = list.find(matches);
+    const removing = Boolean(existing);
+    const targetChain = existing?.nativeChain || chain;
+    const syncNative = removing ? existing?.nativeSynced : settings.syncGmgnTokenBlacklist !== false;
+    if (syncNative) {
+      if (!targetChain) return void showTrackToast('无法确认代币所属链，未修改黑名单');
+      const pendingKey = `${targetChain}|${key}`;
+      if (nativeTokenBlockPending.has(pendingKey)) return;
+      nativeTokenBlockPending.add(pendingKey);
+      let result;
+      try { result = await requestNativeTokenBlacklist(targetChain, address, removing ? 'remove' : 'add'); }
+      catch { result = { ok: false }; }
+      finally { nativeTokenBlockPending.delete(pendingKey); }
+      if (!result?.ok) return void showTrackToast(result?.reason === 'full'
+        ? 'GMGN 黑名单已满，未删除其它条目' : 'GMGN 黑名单未保存成功，请稍后重试或在原生黑名单中操作');
+    }
+    const latest = getBlockedTokens(); // 等待期间可能有其它币完成操作，不覆盖新条目。
+    if (removing) {
       persistBlockedTokens(
-        list.filter((item) => item.address.toLowerCase() !== key),
-        `已恢复 ${symbol || '该币'} 的追踪推送`,
+        latest.filter((item) => !matches(item)),
+        syncNative ? `已从 GMGN 黑名单移除 ${symbol || '该币'}` : `已恢复 ${symbol || '该币'} 的追踪推送`,
       );
       return;
     }
     persistBlockedTokens(
-      [{ address: key, symbol: String(symbol || '').slice(0, 24), at: Date.now() }, ...list].slice(0, 300),
-      `已屏蔽 ${symbol || '该币'}，可在 🚫 列表里恢复`,
+      [{ address: key, chain, symbol: String(symbol || '').slice(0, 24), at: Date.now(),
+        ...(syncNative ? { nativeSynced: true, nativeChain: targetChain } : {}) },
+      ...latest.filter((item) => !matches(item))].slice(0, 300),
+      syncNative ? `已加入 GMGN 合约黑名单：${symbol || '该币'}` : `已屏蔽 ${symbol || '该币'}，可在 🚫 列表里恢复`,
     );
   }
 
@@ -2358,14 +2445,21 @@ ${flapTooltipText(info)}
         button.classList.remove('is-holding');
       };
       button.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
-        if (isTokenBlocked(button.dataset.gdhTbAddr || '')) return;
+        if (isTokenBlocked(button.dataset.gdhTbAddr || '', button.dataset.gdhTbChain || '')) return;
+        cancelHold();
+        const heldAddress = button.dataset.gdhTbAddr;
+        const heldChain = button.dataset.gdhTbChain;
         button.classList.add('is-holding');
         holdTimer = window.setTimeout(() => {
           cancelHold();
+          if (!button.isConnected || button.dataset.gdhTbAddr !== heldAddress || button.dataset.gdhTbChain !== heldChain) return;
+          const live = (card.getAttribute('href') || '').match(/^\/(\w+)\/token\/([A-Za-z0-9]+)/);
+          if (live && (live[1] !== heldChain || trackingFeedNormalizedAddress(live[2]) !== trackingFeedNormalizedAddress(heldAddress))) return;
           button.dataset.gdhTbFiredAt = String(Date.now());
-          toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+          void toggleBlockedToken(heldAddress || '', button.dataset.gdhTbSymbol || '', heldChain || '');
         }, 1000);
       });
       ['pointerup', 'pointerleave', 'pointercancel'].forEach((type) => {
@@ -2377,8 +2471,8 @@ ${flapTooltipText(info)}
         // 长按刚触发过，紧随其后的这一下 click 是它的尾巴，不能又把它解除。
         // 用时间戳而不是一次性标志：万一那下 click 没产生，标志会残留下来吃掉下一次点击。
         if (Date.now() - Number(button.dataset.gdhTbFiredAt || 0) < 500) return;
-        if (isTokenBlocked(button.dataset.gdhTbAddr || '')) {
-          toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '');
+        if (isTokenBlocked(button.dataset.gdhTbAddr || '', button.dataset.gdhTbChain || '')) {
+          void toggleBlockedToken(button.dataset.gdhTbAddr || '', button.dataset.gdhTbSymbol || '', button.dataset.gdhTbChain || '');
         }
       });
       // 首选 GMGN 自己给币名那一行的 testid（取自其 TrackerListItem.tsx），最稳；
@@ -2395,11 +2489,14 @@ ${flapTooltipText(info)}
     }
     button.dataset.gdhTbAddr = address;
     button.dataset.gdhTbSymbol = symbol || '';
-    const blocked = isTokenBlocked(address);
+    button.dataset.gdhTbChain = (card.getAttribute('href') || '').match(/^\/(\w+)\/token\//)?.[1] || card.dataset.gdhTrackChain || '';
+    const blocked = isTokenBlocked(address, button.dataset.gdhTbChain);
     button.textContent = blocked ? '🔔' : '🚫';
     button.title = blocked
       ? `点一下恢复 ${symbol || '该币'} 在追踪里的推送`
-      : `长按一秒，不再在追踪里显示 ${symbol || '该币'} 的推送`;
+      : settings.syncGmgnTokenBlacklist !== false
+        ? `长按一秒：将 ${symbol || '该币'} 加入 GMGN 原生合约黑名单`
+        : `长按一秒：仅屏蔽插件内 ${symbol || '该币'} 的追踪推送`;
     button.classList.toggle('is-blocked', blocked);
   }
 
@@ -2620,8 +2717,11 @@ ${flapTooltipText(info)}
   const SIMILAR_TOKEN_ERROR_TTL = 15 * 1000;
   const SIMILAR_TOKEN_BATCH_MAX = 50;
   const SIMILAR_TOKEN_CACHE_MAX = 400;
+  const SIMILAR_TOKEN_REQUEST_TIMEOUT = 12000;
+  const SIMILAR_TOKEN_MAX_REQUESTS = 2;
   const similarTokenMetaCache = new Map();
   const similarTokenMetaPending = new Set();
+  let similarTokenActiveRequests = 0;
   let similarTokenPanelEl = null;
   let similarTokenPanelKey = '';
 
@@ -2655,21 +2755,28 @@ ${flapTooltipText(info)}
   }
 
   function similarTokenRows(current, rows) {
-    if (!similarTokenNormalizedName(current?.name)) return [];
+    if (!current?.chain || !current?.address) return [];
+    const currentKey = `${current.chain}|${trackingFeedNormalizedAddress(current.address)}`;
     const unique = new Map();
     for (const item of rows || []) {
-      const score = similarTokenSimilarity(current.name, item?.name);
+      // 追踪列表显示 ticker，全名不同但 ticker 相同也属于用户看到的同名币。
+      const score = Math.max(similarTokenSimilarity(current.name, item?.name),
+        similarTokenSimilarity(current.symbol, item?.symbol));
       if (score + Number.EPSILON < 0.9) continue;
       const chain = String(item?.chain || '').trim().toLowerCase();
       const address = trackingFeedNormalizedAddress(item?.address);
       if (!chain || !address) continue;
       const key = `${chain}|${address}`;
+      if (key === currentKey) continue;
       const normalized = { ...item, chain, address, similarity: score };
       const previous = unique.get(key);
       if (!previous || Number(normalized.marketCap) > Number(previous.marketCap)) {
         unique.set(key, normalized);
       }
     }
+    if (!unique.size) return [];
+    // 当前币不一定在追踪流里，出现匹配币时也必须一起比较。
+    unique.set(currentKey, { ...current, address: trackingFeedNormalizedAddress(current.address), similarity: 1 });
     return [...unique.values()].sort((a, b) => (
       (Number(b.marketCap) || 0) - (Number(a.marketCap) || 0)
       || String(a.symbol || '').localeCompare(String(b.symbol || ''))
@@ -2708,11 +2815,14 @@ ${flapTooltipText(info)}
     if (!apiQuery) return;
     const now = Date.now();
     const groups = new Map();
+    const seen = new Set();
     for (const entry of entries) {
       const chain = String(entry?.chain || '').trim().toLowerCase();
       const address = trackingFeedNormalizedAddress(entry?.address);
       if (!chain || !address) continue;
       const key = similarTokenMetaKey(chain, address);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const hit = similarTokenMetaCache.get(key);
       const ttl = hit?.failed ? SIMILAR_TOKEN_ERROR_TTL : SIMILAR_TOKEN_META_TTL;
       if ((hit && now - hit.at < ttl) || similarTokenMetaPending.has(key)) continue;
@@ -2721,14 +2831,23 @@ ${flapTooltipText(info)}
     }
 
     for (const [chain, pending] of groups) {
+      if (similarTokenActiveRequests >= SIMILAR_TOKEN_MAX_REQUESTS) break;
       const batch = pending.slice(0, SIMILAR_TOKEN_BATCH_MAX);
       if (!batch.length) continue;
       batch.forEach(({ key }) => similarTokenMetaPending.add(key));
+      similarTokenActiveRequests += 1;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), SIMILAR_TOKEN_REQUEST_TIMEOUT);
+      const rememberFailure = (key) => {
+        const previous = similarTokenMetaCache.get(key);
+        setBoundedMap(similarTokenMetaCache, key, { ...previous, at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+      };
       fetch(`https://gmgn.ai/api/v1/mutil_window_token_info?${apiQuery}`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chain, addresses: batch.map(({ address }) => address) }),
+        signal: controller.signal,
       }).then((res) => res.json().then((body) => ({ ok: res.ok, body })))
         .then(({ ok, body }) => {
           const items = ok && body?.code === 0 && Array.isArray(body?.data) ? body.data : [];
@@ -2742,16 +2861,18 @@ ${flapTooltipText(info)}
           }
           for (const { key } of batch) {
             if (!received.has(key)) {
-              setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+              rememberFailure(key);
             }
           }
         })
         .catch(() => {
           for (const { key } of batch) {
-            setBoundedMap(similarTokenMetaCache, key, { at: Date.now(), failed: true }, SIMILAR_TOKEN_CACHE_MAX);
+            rememberFailure(key);
           }
         })
         .finally(() => {
+          window.clearTimeout(timeout);
+          similarTokenActiveRequests -= 1;
           batch.forEach(({ key }) => similarTokenMetaPending.delete(key));
           scheduleScan();
         });
@@ -2759,16 +2880,26 @@ ${flapTooltipText(info)}
   }
 
   function similarTokenTrackerPanel() {
-    const body = document.querySelector('[data-sentry-component="TrackingBody"]');
-    if (!(body instanceof HTMLElement)) return null;
-    const marked = body.closest('[data-sentry-component="WalletTrack"]');
-    if (marked instanceof HTMLElement) return marked;
-    let node = body.parentElement;
-    for (let level = 0; level < 8 && node instanceof HTMLElement; level += 1) {
-      if (node.querySelector(TRACK_TAB_CELL)) return node;
-      node = node.parentElement;
+    const visible = (el) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    for (const body of document.querySelectorAll('[data-sentry-component="TrackingBody"]')) {
+      if (!visible(body)) continue;
+      const marked = body.closest('[data-sentry-component="WalletTrack"]');
+      if (visible(marked)) return marked;
     }
-    return body.parentElement;
+    // 部分构建没有 sentry 标记，沿实际追踪行找带原生追踪标签的容器。
+    for (const card of trackerCards()) {
+      if (!visible(card)) continue;
+      let node = card.parentElement;
+      for (let level = 0; level < 12 && node instanceof HTMLElement && node !== document.body; level += 1) {
+        if (node.querySelector(TRACK_TAB_CELL) && visible(node)) return node;
+        node = node.parentElement;
+      }
+    }
+    return null;
   }
 
   function clearSimilarTokenPanel() {
@@ -2801,15 +2932,17 @@ ${flapTooltipText(info)}
     else left = panelRect.right + gap;
     left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
     const top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
-    similarTokenPanelEl.style.left = `${Math.round(left)}px`;
-    similarTokenPanelEl.style.top = `${Math.round(top)}px`;
-    similarTokenPanelEl.style.maxHeight = `${Math.max(160, Math.round(window.innerHeight - top - edge))}px`;
+    const placement = { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`,
+      maxHeight: `${Math.max(160, Math.round(window.innerHeight - top - edge))}px` };
+    for (const [property, value] of Object.entries(placement)) {
+      if (similarTokenPanelEl.style[property] !== value) similarTokenPanelEl.style[property] = value;
+    }
   }
 
   function renderSimilarTokenPanel(trackerPanel, current, rows) {
     const key = `${current.chain}|${current.address}|${rows.map((item) => [
       item.chain, item.address, item.name, item.symbol, Math.round(Number(item.marketCap) || 0),
-      item.poolSymbol, item.poolExchange,
+      item.poolSymbol, item.poolExchange, item.logo,
     ].join(':')).join('|')}`;
     if (!similarTokenPanelEl?.isConnected) {
       similarTokenPanelEl = document.createElement('aside');
@@ -2827,7 +2960,7 @@ ${flapTooltipText(info)}
       const title = document.createElement('strong');
       title.textContent = '同名 / 相似币';
       const subtitle = document.createElement('span');
-      subtitle.textContent = `${rows.length} 个 · 名称相似度 ≥90%`;
+      subtitle.textContent = `${rows.length} 个 · 币名 / ticker 相似度 ≥90%`;
       heading.append(title, subtitle);
       header.appendChild(heading);
 
@@ -2837,8 +2970,11 @@ ${flapTooltipText(info)}
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'gdh-similar-token__row';
-        row.title = `${item.name} (${item.symbol}) · 点击在 GMGN 内打开`;
-        row.addEventListener('click', () => gdhSpaNavigate(`/${item.chain}/token/${item.address}`));
+        const isCurrent = item.chain === current.chain && item.address === current.address;
+        row.classList.toggle('is-current', isCurrent);
+        if (isCurrent) row.setAttribute('aria-current', 'true');
+        row.title = `${item.name} (${item.symbol}) · 点击无刷新打开，长按一秒屏蔽`;
+        bindSimilarTokenRowActions(row, item);
 
         const icon = document.createElement('span');
         icon.className = 'gdh-similar-token__icon';
@@ -2861,10 +2997,10 @@ ${flapTooltipText(info)}
         chain.className = 'gdh-similar-token__chain';
         chain.textContent = item.chain.toUpperCase();
         meta.append(ticker, chain);
-        if (item.chain === current.chain && item.address === current.address) {
+        if (isCurrent) {
           const currentBadge = document.createElement('span');
           currentBadge.className = 'gdh-similar-token__current';
-          currentBadge.textContent = '当前';
+          currentBadge.textContent = '当前币';
           meta.appendChild(currentBadge);
         }
         identity.append(name, meta);
@@ -2904,13 +3040,16 @@ ${flapTooltipText(info)}
     const seen = new Set();
     for (const card of trackerCards()) {
       if (!trackerPanel.contains(card)) continue;
-      const chain = String(card.dataset?.gdhTrackChain || '').trim().toLowerCase();
-      const address = trackingFeedNormalizedAddress(card.dataset?.gdhTrackAddr);
+      const href = (card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '')
+        .match(/^\/(\w+)\/token\/([A-Za-z0-9]+)/);
+      const chain = String(href?.[1] || card.dataset?.gdhTrackChain || '').trim().toLowerCase();
+      const address = trackingFeedNormalizedAddress(href?.[2] || card.dataset?.gdhTrackAddr);
       const key = similarTokenMetaKey(chain, address);
-      if (!chain || !address || seen.has(key)) continue;
+      if (!chain || !address || seen.has(key) || isTokenBlocked(address, chain)) continue;
       seen.add(key);
       candidates.push({ chain, address });
     }
+    if (!candidates.length) return void clearSimilarTokenPanel();
     requestSimilarTokenMeta([{ chain: route.chain, address: route.address }, ...candidates]);
     const current = similarTokenCachedMeta(route.chain, route.address);
     if (!current) return void clearSimilarTokenPanel();
@@ -2919,6 +3058,30 @@ ${flapTooltipText(info)}
       .filter(Boolean));
     if (!rows.length) return void clearSimilarTokenPanel();
     renderSimilarTokenPanel(trackerPanel, current, rows);
+  }
+
+  function bindSimilarTokenRowActions(row, item) {
+    let timer = 0;
+    let firedAt = 0;
+    const cancel = () => { window.clearTimeout(timer); timer = 0; row.classList.remove('is-holding'); };
+    row.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      cancel();
+      row.classList.add('is-holding');
+      timer = window.setTimeout(() => {
+        cancel();
+        if (!row.isConnected) return;
+        firedAt = Date.now();
+        void toggleBlockedToken(item.address, item.symbol, item.chain);
+      }, 1000);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((type) => row.addEventListener(type, cancel));
+    row.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - firedAt < 500) return;
+      gdhSpaNavigate(`/${item.chain}/token/${item.address}`, true);
+    });
   }
 
   function requestStonkfunRwaCatalog() {
@@ -3360,7 +3523,7 @@ ${flapTooltipText(info)}
       const tokenAddr = card.dataset.gdhTrackAddr || '';
       if (tokenAddr) {
         ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
-        markBlockedHosts(card, isTokenBlocked(tokenAddr));
+        markBlockedHosts(card, isTokenBlocked(tokenAddr, (card.getAttribute('href') || '').match(/^\/(\w+)\/token\//)?.[1] || card.dataset.gdhTrackChain || ''));
       }
       ensureStarButton(
         card,
@@ -3785,7 +3948,7 @@ ${flapTooltipText(info)}
     if (!box) return;
     // 没变就别重建：扫描每秒至少跑一次，无条件重建会把「恢复」按钮反复销毁重建，
     // 真实鼠标点击要求 mousedown 与 mouseup 落在同一元素上，中间一重建 click 就不会产生。
-    const key = JSON.stringify(getBlockedTokens().map((x) => `${x.address}|${x.symbol || ''}`));
+    const key = JSON.stringify(getBlockedTokens().map((x) => `${x.chain || x.nativeChain || ''}|${x.address}|${x.symbol || ''}`));
     if (box.dataset.gdhBlockedKey === key) return;
     box.dataset.gdhBlockedKey = key;
     box.replaceChildren();
@@ -3799,7 +3962,7 @@ ${flapTooltipText(info)}
     if (!list.length) {
       const empty = document.createElement('div');
       empty.className = 'gdh-sp-manage__empty';
-      empty.textContent = '还没有屏蔽任何币。在追踪推送卡上把鼠标移到币名旁点 🚫 即可。';
+      empty.textContent = '还没有屏蔽任何币。长按追踪卡的 🚫 或相似币浮窗中的代币一秒即可。';
       box.appendChild(empty);
       return;
     }
@@ -3813,17 +3976,22 @@ ${flapTooltipText(info)}
       const addr = document.createElement('span');
       addr.className = 'gdh-sp-manage__baddr';
       addr.textContent = `${item.address.slice(0, 6)}…${item.address.slice(-4)}`;
-      addr.title = item.address;
+      addr.title = `${item.chain || item.nativeChain || '旧版记录'} · ${item.address}`;
       const undo = document.createElement('button');
       undo.type = 'button';
       undo.className = 'gdh-sp-manage__undo';
       undo.textContent = '恢复';
-      undo.addEventListener('click', (event) => {
+      undo.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        toggleBlockedToken(item.address, item.symbol);
-        delete box.dataset.gdhBlockedKey;
-        renderBlockedTokenList(modal);
+        undo.disabled = true;
+        undo.textContent = '处理中…';
+        try {
+          await toggleBlockedToken(item.address, item.symbol, item.chain || item.nativeChain || '');
+        } finally {
+          delete box.dataset.gdhBlockedKey;
+          renderBlockedTokenList(modal);
+        }
       });
       row.append(name, addr, undo);
       box.appendChild(row);
@@ -7457,7 +7625,7 @@ ${flapTooltipText(info)}
     const pref = monitorFomoCfg.prefs[ev.handle];
     if (pref?.types && pref.types[ev.type] === false) return false;
     // 追踪里屏蔽的币，fomo 推送同样不出现
-    if (ev.addr && isTokenBlocked(ev.addr)) return false;
+    if (ev.addr && isTokenBlocked(ev.addr, ev.chain || '')) return false;
     const symbolKey = pumpFeedTokenKey(ev.symbol);
     const addressKey = pumpFeedTokenKey(ev.addr);
     if ((symbolKey && monitorFomoCfg.tokenFilters.has(symbolKey))
@@ -7477,7 +7645,7 @@ ${flapTooltipText(info)}
     const wallet = String(ev?.pumpWallet || '');
     if (!wallet || monitorPumpCfg.muted.has(wallet)) return false;
     if (monitorPumpCfg.prefs?.[wallet]?.types?.[ev.type] === false) return false;
-    if (ev.addr && isTokenBlocked(ev.addr)) return false;
+    if (ev.addr && isTokenBlocked(ev.addr, ev.chain || '')) return false;
     const symbolKey = pumpFeedTokenKey(ev.symbol);
     const addressKey = pumpFeedTokenKey(ev.addr);
     if ((symbolKey && monitorPumpCfg.tokenFilters.has(symbolKey))
@@ -7633,16 +7801,19 @@ ${flapTooltipText(info)}
 
   /** 站内跳转：请 MAIN world 的 page-bridge 走 Next 客户端路由（和点原生卡一致，
    *  不整页重载）；bridge 没装上/没响应时回退成普通跳转。 */
-  function gdhSpaNavigate(url) {
+  function gdhSpaNavigate(url, spaOnly = false) {
     const targetPath = new URL(url, location.origin).pathname;
     if (location.pathname === targetPath) return; // 已在目标页
     try {
+      if (spaOnly) document.documentElement.setAttribute('data-gdh-nav-spa-only', '1');
+      else document.documentElement.removeAttribute('data-gdh-nav-spa-only');
       document.documentElement.setAttribute('data-gdh-nav', url);
       document.dispatchEvent(new Event('gdh-navigate'));
     } catch {
-      location.href = url;
+      if (!spaOnly) location.href = url;
       return;
     }
+    if (spaOnly) return; // 不用短定时器把仍在加载的客户端路由变成整页刷新。
     window.setTimeout(() => {
       // router 在 GMGN 某些构建中会把未识别的 push 错误归一到主页。
       // 只要没到真正的目标代币路径，就用同源普通跳转纠正。
@@ -7897,6 +8068,8 @@ ${flapTooltipText(info)}
     applyTrackerTokenRelation(el, ev.addr, ev.symbol, ev.chain, el.classList.contains('is-table'));
     return el;
   }
+
+  document.addEventListener('gdh-navigation-error', () => showTrackToast('GMGN 站内跳转暂不可用，请点击原生代币入口；未刷新页面'));
 
   // 固定行高模式下同屏最多混排几张：位移只发生在挂载窗口内，插太多会把
   // 「scrollTop ÷ 行高 → 该挂载哪些行」的映射拉出 overscan 冗余，底部会露白
@@ -8386,7 +8559,12 @@ ${flapTooltipText(info)}
     const parts = [];
     const timed = (name, fn) => {
       const s0 = performance.now();
-      fn();
+      try { fn(); } catch {
+        // 增强模块异常不能阻断后续独立功能；只记录模块名供排查。
+        if (document.documentElement.getAttribute('data-gdh-scan-error') !== name) {
+          document.documentElement.setAttribute('data-gdh-scan-error', name);
+        }
+      }
       const ms = performance.now() - s0;
       if (ms >= 1) parts.push([name, ms]);
     };

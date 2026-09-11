@@ -29,6 +29,7 @@ const DEFAULTS = {
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
   enableSimilarTokenPanel: false,
+  syncGmgnTokenBlacklist: true,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
   addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
   markedHolders: [
@@ -74,6 +75,7 @@ const featureInputs = {
   fomoFeedChainOnly: document.querySelector('#fomo-feed-chain-only'),
   enableMonitorAggregate: document.querySelector('#enable-monitor-aggregate'),
   enableSimilarTokenPanel: document.querySelector('#enable-similar-token-panel'),
+  syncGmgnTokenBlacklist: document.querySelector('#sync-gmgn-token-blacklist'),
   hideLightningTrade: document.querySelector('#hide-lightning-trade'),
 };
 const devListInput = document.querySelector('#dev-list');

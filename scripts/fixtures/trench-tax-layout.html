@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GMGN trench tax layout regression</title>
+<!-- Simplified from the live BSC card DOM on 2026-09-11. No account data. -->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 12px; background: #111; color: #ddd; font: 12px Arial; }
+  #list { width: 360px; }
+  [data-testid="trench-token-card"] { display: flex; gap: 8px; padding: 14px; width: 100%; height: 124px; overflow: hidden; border-bottom: 1px solid #444; }
+  .avatar { width: 72px; height: 72px; flex: 0 0 72px; background: #222; }
+  .body { display: flex; flex: 1; height: 100%; overflow: hidden; }
+  .content { display: flex; flex-direction: column; justify-content: space-between; flex: 1; overflow: hidden; }
+  .grid { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px; }
+  .left { display: flex; flex-direction: column; min-width: 0; }
+  .title { display: flex; height: 20px; gap: 4px; overflow: hidden; white-space: nowrap; }
+  .description { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .trenches-token-base-stacked-row { display: flex; height: 16px; min-width: 0; gap: 12px; overflow: hidden; white-space: nowrap; }
+  .tax-wrapper { display: inline-flex; }
+  .trenches-tax-badge { display: flex; height: 16px; flex-shrink: 0; gap: 2px; white-space: nowrap; padding: 0 3px; background: #333; }
+  .social { height: 16px; margin-top: 4px; white-space: nowrap; overflow: hidden; }
+  .pool { height: 16px; }
+  .stats { width: 58px; }
+  .metrics { display: flex; height: 24px; overflow: hidden; }
+  .legacy .grid { display: flex; flex-direction: column; }
+  .legacy .title { flex: 0 0 20px; }
+  .legacy .stats { display: none; }
+</style>
+<div id="list">
+  <div data-testid="trench-token-card" href="/bsc/token/0x1111111111111111111111111111111111117777">
+    <div class="avatar">Token</div>
+    <div class="body"><div class="content">
+      <div class="grid"><div class="left">
+        <div class="title"><b>TOKEN</b><span class="description">A long token name</span></div>
+        <div class="trenches-token-base-stacked-row"><div class="tax-wrapper"><div class="trenches-tax-badge"><span>Tax 3%</span><i>◆</i></div></div></div>
+        <div class="social">6s · 12 holders</div>
+        <div class="pool">BNB</div>
+      </div><div class="stats">MC $4K<br>V $0<br>F 0.01</div></div>
+      <div class="metrics h-[24px]">Dev · 0% · 4d · 0% · 0%</div>
+    </div></div>
+  </div>
+</div>

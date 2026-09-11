@@ -2212,10 +2212,10 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   min-height: 0;
   overflow: hidden;
   flex-direction: column;
-  border: 1px solid var(--color-line-200, rgba(128, 135, 150, 0.28));
+  border: 1px solid rgb(var(--color-line-200, 128 135 150));
   border-radius: 9px;
-  color: var(--color-text-100, #f2f4f7);
-  background: color-mix(in srgb, var(--color-bg-100, #101114) 96%, transparent);
+  color: rgb(var(--color-text-100, 242 244 247));
+  background: color-mix(in srgb, rgb(var(--color-bg-100, 16 17 20)) 96%, transparent);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(8px);
   contain: layout paint;
@@ -2229,7 +2229,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   flex: 0 0 auto;
   min-height: 46px;
   padding: 7px 8px 7px 10px;
-  border-bottom: 1px solid var(--color-line-100, rgba(128, 135, 150, 0.18));
+  border-bottom: 1px solid rgb(var(--color-line-100, 128 135 150));
 }
 
 .gdh-similar-token__header > div {
@@ -2240,12 +2240,12 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-similar-token__header strong {
-  color: var(--color-text-100, #f2f4f7);
+  color: rgb(var(--color-text-100, 242 244 247));
   font-size: 12px;
 }
 
 .gdh-similar-token__header span {
-  color: var(--color-text-300, #8a93a6);
+  color: rgb(var(--color-text-300, 138 147 166));
   font-size: 10px;
 }
 
@@ -2265,7 +2265,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   margin: 0;
   padding: 7px 9px;
   border: 0;
-  border-bottom: 1px solid var(--color-line-100, rgba(128, 135, 150, 0.13));
+  border-bottom: 1px solid rgb(var(--color-line-100, 128 135 150));
   color: inherit;
   background: transparent;
   text-align: left;
@@ -2273,8 +2273,8 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 
 .gdh-similar-token__row:last-child { border-bottom: 0; }
-.gdh-similar-token__row:hover { background: var(--color-hover-100, rgba(128, 135, 150, 0.09)); }
-.gdh-similar-token__row:focus-visible { outline: 1px solid var(--color-primary, #8b6cff); outline-offset: -1px; }
+.gdh-similar-token__row:hover { background: rgb(var(--color-hover-100, 36 40 46)); }
+.gdh-similar-token__row:focus-visible { outline: 1px solid rgb(var(--color-primary, 139 108 255)); outline-offset: -1px; }
 
 .gdh-similar-token__icon {
   display: grid;
@@ -2282,10 +2282,10 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   height: 32px;
   overflow: hidden;
   place-items: center;
-  border: 1px solid var(--color-line-200, rgba(128, 135, 150, 0.25));
+  border: 1px solid rgb(var(--color-line-200, 128 135 150));
   border-radius: 50%;
-  color: var(--color-text-200, #c9cfda);
-  background: var(--color-bg-200, #191b20);
+  color: rgb(var(--color-text-200, 201 207 218));
+  background: rgb(var(--color-bg-200, 25 27 32));
   font-size: 12px;
   font-weight: 700;
 }
@@ -2295,24 +2295,32 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 .gdh-similar-token__stats { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .gdh-similar-token__identity > strong {
   overflow: hidden;
-  color: var(--color-text-100, #f2f4f7);
+  color: rgb(var(--color-text-100, 242 244 247));
   font-size: 12px;
   line-height: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.gdh-similar-token__identity > span { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--color-text-300, #8a93a6); font-size: 10px; }
+.gdh-similar-token__identity > span { display: flex; min-width: 0; align-items: center; gap: 5px; color: rgb(var(--color-text-300, 138 147 166)); font-size: 10px; }
 .gdh-similar-token__chain,
 .gdh-similar-token__current {
   padding: 0 4px;
-  border: 1px solid var(--color-line-200, rgba(128, 135, 150, 0.24));
+  border: 1px solid rgb(var(--color-line-200, 128 135 150));
   border-radius: 4px;
   font-size: 9px;
   line-height: 14px;
 }
-.gdh-similar-token__current { color: var(--color-green, #25d987); border-color: color-mix(in srgb, var(--color-green, #25d987) 42%, transparent); }
+.gdh-similar-token__current { color: rgb(var(--color-green, 37 217 135)); border-color: color-mix(in srgb, rgb(var(--color-green, 37 217 135)) 42%, transparent); }
+.gdh-similar-token__row.is-current {
+  background: rgba(37, 217, 135, 0.12);
+  box-shadow: inset 3px 0 #25d987;
+}
+.gdh-similar-token__row.is-holding { opacity: 0.6; }
+.gdh-similar-token__row.is-current .gdh-similar-token__identity > strong { color: #25d987; }
+html[data-theme="light"] .gdh-similar-token__row.is-current .gdh-similar-token__identity > strong { color: #087a49; }
+html[data-theme="light"] .gdh-similar-token__current { color: #087a49; }
 .gdh-similar-token__stats { align-items: flex-end; padding-left: 4px; }
-.gdh-similar-token__stats > strong { color: var(--color-text-100, #f2f4f7); font-size: 12px; line-height: 14px; }
+.gdh-similar-token__stats > strong { color: rgb(var(--color-text-100, 242 244 247)); font-size: 12px; line-height: 14px; }
 .gdh-similar-token__pool {
   display: inline-flex;
   max-width: 92px;
@@ -2321,7 +2329,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   padding: 1px 5px;
   border: 1px solid color-mix(in srgb, #3b9ddd 42%, transparent);
   border-radius: 999px;
-  color: color-mix(in srgb, #3b9ddd 65%, var(--color-text-100, #f2f4f7));
+  color: color-mix(in srgb, #3b9ddd 65%, rgb(var(--color-text-100, 242 244 247)));
   background: color-mix(in srgb, #3b9ddd 10%, transparent);
   font-size: 9px;
   line-height: 13px;
@@ -2576,6 +2584,31 @@ html[data-theme="light"] .gdh-token-header-fomo {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 战壕复用原生 16px 税标槽位，不能给定高虚拟列表额外加行。 */
+[data-gdh-flap-native="1"] { display: none !important; }
+[data-gdh-flap-slot="1"] {
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+.gdh-flap-row.gdh-flap-row--trench {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 220px;
+  height: 16px;
+  margin: 0;
+  overflow: hidden;
+}
+.gdh-flap-row--trench .gdh-flap {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 16px;
+  line-height: 14px;
 }
 
 /* Robinhood 搜索结果：底池资产与持币分红分成两个短徽章。 */

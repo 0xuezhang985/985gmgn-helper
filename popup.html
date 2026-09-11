@@ -22,7 +22,7 @@
       <details class="settings-guide">
         <summary>快速使用说明</summary>
         <ul class="gdh-howto">
-          <li><b>追踪流屏蔽某个币</b>：移到推送卡上，长按 🚫 一秒。</li>
+          <li><b>追踪流屏蔽某个币</b>：长按 🚫 一秒，默认同步 GMGN 原生合约黑名单。</li>
           <li><b>特别关注</b>：点推送卡或钱包行上的 ☆；追踪面板头部 ★N 可管理。</li>
           <li><b>fomo 浮窗</b>：代币页右下角点 fomo；需使用自己的 fomo 登录态。</li>
           <li><b>Brew 战壕</b>：GMGN / DeBot 的 fomo 按钮下方点 Brew，查看新创建、热门、市值与官方底池。</li>
@@ -55,7 +55,8 @@
           <label class="switch-row"><span><strong>特别关注高亮</strong><small>钱包列表和追踪行悬停显示 ⭐，颜色与置顶跨站共用</small></span><input id="enable-special-wallet" type="checkbox" /></label>
           <label class="switch-row"><span><strong>追踪人名防误触</strong><small>开启后点人物名字不再跳转钱包；币名仍正常跳币</small></span><input id="disable-tracker-person-navigation" type="checkbox" /></label>
           <label class="switch-row"><span><strong>GMGN 监控全链聚合</strong><small>汇总各链追踪代币，并沿用监控面板当前筛选条件</small></span><input id="enable-monitor-aggregate" type="checkbox" /></label>
-          <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>当前币与追踪列表币名相同或相似度 ≥90% 时，按实时市值排序显示在列表旁</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>币名或 ticker 相似度 ≥90% 时，当前币与匹配币按市值一起排序；高亮当前币，点击无刷新跳转</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>屏蔽同步 GMGN 黑名单 <em class="new-badge">NEW</em></strong><small>长按追踪卡 🚫 或相似币浮窗中的代币，加入所属链原生合约黑名单；恢复时同步移除，不迁移旧记录</small></span><input id="sync-gmgn-token-blacklist" type="checkbox" /></label>
           <div class="sub-settings compact">
             <div class="option-row"><span><strong>新关注默认行为</strong><small>以后新加的钱包采用这些默认值</small></span></div>
             <div class="check-grid two"><label><input id="special-wallet-default-highlight" type="checkbox" />高亮</label><label><input id="special-wallet-default-pin" type="checkbox" />置顶</label></div>
