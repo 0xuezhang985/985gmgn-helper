@@ -4,6 +4,7 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 
 ## 本地保存的数据
 
+- 相似币浮窗的保留结果只放在当前 GMGN 标签页内存，最多 400 项，包括代币名称、ticker、链、地址、公开市值和底池字段；不写入磁盘、不上传服务器。默认保留 5 分钟，可配置 1 / 5 / 10 / 30 分钟；关闭功能或刷新页面后清空。保留时长这一设置本身保存在 `chrome.storage.local`。
 - 重点 Dev、特别关注、备注、功能开关、颜色、黑名单、标注人物、持仓提醒清单、Brew 公开行情缓存、Fomo 限流截止时间和最近 100 条推送历史保存在浏览器本地 `chrome.storage.local`。Fomo 限流状态只包含截止时间、退避等级和最近命中时间，不包含令牌或响应内容；Brew 缓存只包含公开的代币、官方池地址、公开市场数据与官方代币头像；提醒历史只包含提醒类型、代币简称、触发值、时间和 GMGN 站内代币路径，不包含钱包地址或账号标识。
 - FOMO 页面使用 Privy 登录。扩展会把页面已有的 access token 与 refresh token 镜像到扩展本地存储；令牌只用于请求 `fomo.family` 自己的 API。续期由一个真实 FOMO 页面中的 Privy SDK 完成，扩展不把令牌发给 985monitor 或其他第三方。
 - GMGN 的钱包类接口和 App 通知配置接口需要站点自己的 Bearer。扩展只在 `gmgn.ai` 页面内读取 `localStorage.tgInfo`，只把该令牌发回 `gmgn.ai`；通知配置只读取 `holding_signal` 的逐链开关，令牌和账号标识均不写入扩展存储。

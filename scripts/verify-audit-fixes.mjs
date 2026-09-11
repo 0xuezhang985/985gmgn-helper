@@ -2958,4 +2958,36 @@ await test('屏蔽按链隔离并保留 Solana 大小写，新设置带 NEW', ()
   assert.ok(button.includes('button.dataset.gdhTbChain !== heldChain'));
 });
 
+await test('相似币保留时长只接受 1/5/10/30 分钟，非法值回退 5 分钟', () => {
+  for (const [value, expected] of [[1,1],[5,5],[10,10],[30,30],['10',10],[0,5],[-1,5],[Infinity,5],[null,5]]) {
+    const result = evaluate([extractFunction(content, 'similarTokenRetentionMs')], 'similarTokenRetentionMs()',
+      { settings: { similarTokenCacheMinutes: value } });
+    assert.equal(result, expected * 60000);
+  }
+  assert.match(popupHtml, /相似币缓存保留[\s\S]*?NEW[\s\S]*?id="similar-token-cache-minutes"/);
+  assert.ok(popup.includes('similarTokenCacheInput.value = String('));
+  assert.ok(popup.includes('similarTokenCacheMinutes: [1, 5, 10, 30].includes('));
+  assert.match(content, /similarTokenCacheMinutes:\s*5/);
+  assert.match(popup, /similarTokenCacheMinutes:\s*5/);
+});
+
+await test('相似币显示缓存有容量上限，关闭清空且空追踪列表不增加行情请求', () => {
+  const cache = new Map();
+  const funcs = ['trackingFeedNormalizedAddress','similarTokenNormalizedName','similarTokenSimilarity',
+    'similarTokenRows','similarTokenMetaKey','similarTokenCachedMeta','similarTokenRetentionMs',
+    'retainedSimilarTokenRows','setBoundedMap'].map((name) => extractFunction(content, name));
+  const current = {chain:'base',address:'0x'+'f'.repeat(40),name:'Flybook',symbol:'FLYBOOK',marketCap:1000};
+  const rows = Array.from({length:410},(_,i)=>({chain:'bsc',address:'0x'+(i+1).toString(16).padStart(40,'0'),name:'Flybook',symbol:'FLYBOOK',marketCap:i}));
+  const extras = {settings:{similarTokenCacheMinutes:5},similarTokenRetained:cache,
+    similarTokenMetaCache:new Map(),SIMILAR_TOKEN_CACHE_MAX:400,isTokenBlocked:()=>false};
+  evaluate(funcs, `retainedSimilarTokenRows(${JSON.stringify(current)},${JSON.stringify(rows)},1000000)`, extras);
+  assert.equal(cache.size,400);
+  const expired = evaluate(funcs, `retainedSimilarTokenRows(${JSON.stringify(current)},[],1300000)`, extras);
+  assert.equal(cache.size,0);
+  assert.equal(expired.length,0);
+  const scan = extractFunction(content,'scanSimilarTokenPanel');
+  assert.ok(scan.includes('similarTokenRetained.clear()'));
+  assert.ok(scan.includes('if (candidates.length) requestSimilarTokenMeta('));
+});
+
 process.stdout.write(`1..${passed}\n`);

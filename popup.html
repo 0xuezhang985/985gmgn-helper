@@ -56,6 +56,7 @@
           <label class="switch-row"><span><strong>追踪人名防误触</strong><small>开启后点人物名字不再跳转钱包；币名仍正常跳币</small></span><input id="disable-tracker-person-navigation" type="checkbox" /></label>
           <label class="switch-row"><span><strong>GMGN 监控全链聚合</strong><small>汇总各链追踪代币，并沿用监控面板当前筛选条件</small></span><input id="enable-monitor-aggregate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>币名或 ticker 相似度 ≥90% 时，当前币与匹配币按市值一起排序；高亮当前币，点击无刷新跳转</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>
+          <label class="option-row" for="similar-token-cache-minutes"><span><strong>相似币缓存保留 <em class="new-badge">NEW</em></strong><small>追踪记录移出列表后继续保留，标注「缓存」；刷新页面后清空</small></span><select id="similar-token-cache-minutes"><option value="1">1 分钟</option><option value="5">5 分钟</option><option value="10">10 分钟</option><option value="30">30 分钟</option></select></label>
           <label class="switch-row"><span><strong>屏蔽同步 GMGN 黑名单 <em class="new-badge">NEW</em></strong><small>长按追踪卡 🚫 或相似币浮窗中的代币，加入所属链原生合约黑名单；恢复时同步移除，不迁移旧记录</small></span><input id="sync-gmgn-token-blacklist" type="checkbox" /></label>
           <div class="sub-settings compact">
             <div class="option-row"><span><strong>新关注默认行为</strong><small>以后新加的钱包采用这些默认值</small></span></div>

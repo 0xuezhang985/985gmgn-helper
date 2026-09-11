@@ -30,6 +30,7 @@ try {
     const gmgnApiQuery=()=>''; const scheduleScan=()=>{};
     window.isTokenBlocked=()=>false;
     ${take('trackingFeedNormalizedAddress')}
+    ${take('setBoundedMap')}
     ${take('gdhSpaNavigate')}
     ${content.slice(content.indexOf('  const SIMILAR_TOKEN_META_TTL'), content.indexOf('  function requestStonkfunRwaCatalog'))}
     const put=(chain,address,name,symbol,marketCap,poolSymbol)=>similarTokenMetaCache.set(similarTokenMetaKey(chain,address),{at:Date.now(),data:{chain,address,name,symbol,marketCap,poolSymbol}});

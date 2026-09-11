@@ -311,6 +311,7 @@
     fomoFeedChainOnly: false,
     enableMonitorAggregate: true,
     enableSimilarTokenPanel: false,
+    similarTokenCacheMinutes: 5,
     syncGmgnTokenBlacklist: true,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
@@ -2721,9 +2722,11 @@ ${flapTooltipText(info)}
   const SIMILAR_TOKEN_MAX_REQUESTS = 2;
   const similarTokenMetaCache = new Map();
   const similarTokenMetaPending = new Set();
+  const similarTokenRetained = new Map();
   let similarTokenActiveRequests = 0;
   let similarTokenPanelEl = null;
   let similarTokenPanelKey = '';
+  let similarTokenTrackerAnchor = null;
 
   function similarTokenNormalizedName(value) {
     return String(value || '')
@@ -2808,6 +2811,31 @@ ${flapTooltipText(info)}
 
   function similarTokenCachedMeta(chain, address) {
     return similarTokenMetaCache.get(similarTokenMetaKey(chain, address))?.data || null;
+  }
+
+  function similarTokenRetentionMs() {
+    const minutes = Number(settings.similarTokenCacheMinutes);
+    return ([1, 5, 10, 30].includes(minutes) ? minutes : 5) * 60000;
+  }
+
+  function retainedSimilarTokenRows(current, visibleRows, now = Date.now()) {
+    const ttl = similarTokenRetentionMs();
+    for (const [key, entry] of similarTokenRetained) {
+      if (now - entry.seenAt >= ttl || isTokenBlocked(entry.data.address, entry.data.chain)) {
+        similarTokenRetained.delete(key);
+      }
+    }
+    // 仅真实追踪行重新出现时续期，不能由缓存显示或行情刷新给自己续命。
+    for (const item of similarTokenRows(current, visibleRows)) {
+      setBoundedMap(similarTokenRetained, similarTokenMetaKey(item.chain, item.address),
+        { seenAt: now, data: item }, SIMILAR_TOKEN_CACHE_MAX);
+    }
+    const visibleKeys = new Set(visibleRows.map((item) => similarTokenMetaKey(item.chain, item.address)));
+    const currentKey = similarTokenMetaKey(current.chain, current.address);
+    const rows = similarTokenRows(current, [...similarTokenRetained.values()].map(({ data }) =>
+      similarTokenCachedMeta(data.chain, data.address) || data));
+    return rows.map((item) => ({ ...item, isCached: similarTokenMetaKey(item.chain, item.address) !== currentKey
+      && !visibleKeys.has(similarTokenMetaKey(item.chain, item.address)) }));
   }
 
   function requestSimilarTokenMeta(entries) {
@@ -2899,6 +2927,9 @@ ${flapTooltipText(info)}
         node = node.parentElement;
       }
     }
+    // 空列表/虚拟行卸载时沿用上次确认的容器，不再因没有行可向上查找而消失。
+    if (similarTokenTrackerAnchor?.isConnected && visible(similarTokenTrackerAnchor)
+      && similarTokenTrackerAnchor.querySelector(TRACK_TAB_CELL)) return similarTokenTrackerAnchor;
     return null;
   }
 
@@ -2942,7 +2973,7 @@ ${flapTooltipText(info)}
   function renderSimilarTokenPanel(trackerPanel, current, rows) {
     const key = `${current.chain}|${current.address}|${rows.map((item) => [
       item.chain, item.address, item.name, item.symbol, Math.round(Number(item.marketCap) || 0),
-      item.poolSymbol, item.poolExchange, item.logo,
+      item.poolSymbol, item.poolExchange, item.logo, item.isCached,
     ].join(':')).join('|')}`;
     if (!similarTokenPanelEl?.isConnected) {
       similarTokenPanelEl = document.createElement('aside');
@@ -3002,6 +3033,12 @@ ${flapTooltipText(info)}
           currentBadge.className = 'gdh-similar-token__current';
           currentBadge.textContent = '当前币';
           meta.appendChild(currentBadge);
+        } else if (item.isCached) {
+          const cachedBadge = document.createElement('span');
+          cachedBadge.className = 'gdh-similar-token__cached';
+          cachedBadge.textContent = '缓存';
+          cachedBadge.title = '追踪记录已移出列表，暂时保留缓存结果；市值可能滞后';
+          meta.appendChild(cachedBadge);
         }
         identity.append(name, meta);
 
@@ -3009,7 +3046,7 @@ ${flapTooltipText(info)}
         stats.className = 'gdh-similar-token__stats';
         const marketCap = document.createElement('strong');
         marketCap.textContent = similarTokenMoney(item.marketCap);
-        marketCap.title = '当前市值';
+        marketCap.title = item.isCached ? '缓存市值，可能滞后' : '最近读取市值';
         stats.appendChild(marketCap);
         const poolText = item.poolSymbol || item.poolExchange;
         if (poolText) {
@@ -3031,11 +3068,14 @@ ${flapTooltipText(info)}
 
   function scanSimilarTokenPanel() {
     if (location.hostname !== 'gmgn.ai' || settings.enableSimilarTokenPanel !== true) {
+      similarTokenRetained.clear();
+      similarTokenTrackerAnchor = null;
       return void clearSimilarTokenPanel();
     }
     const route = currentTokenRoute();
     const trackerPanel = similarTokenTrackerPanel();
     if (!route || !trackerPanel) return void clearSimilarTokenPanel();
+    similarTokenTrackerAnchor = trackerPanel;
     const candidates = [];
     const seen = new Set();
     for (const card of trackerCards()) {
@@ -3049,11 +3089,12 @@ ${flapTooltipText(info)}
       seen.add(key);
       candidates.push({ chain, address });
     }
-    if (!candidates.length) return void clearSimilarTokenPanel();
-    requestSimilarTokenMeta([{ chain: route.chain, address: route.address }, ...candidates]);
-    const current = similarTokenCachedMeta(route.chain, route.address);
+    // 保留历史结果不额外刷新行情；仍在追踪列表中的代币继续沿用原有请求节奏。
+    if (candidates.length) requestSimilarTokenMeta([{ chain: route.chain, address: route.address }, ...candidates]);
+    const current = similarTokenCachedMeta(route.chain, route.address)
+      || similarTokenRetained.get(similarTokenMetaKey(route.chain, route.address))?.data;
     if (!current) return void clearSimilarTokenPanel();
-    const rows = similarTokenRows(current, candidates
+    const rows = retainedSimilarTokenRows(current, candidates
       .map(({ chain, address }) => similarTokenCachedMeta(chain, address))
       .filter(Boolean));
     if (!rows.length) return void clearSimilarTokenPanel();

@@ -2303,6 +2303,7 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
 }
 .gdh-similar-token__identity > span { display: flex; min-width: 0; align-items: center; gap: 5px; color: rgb(var(--color-text-300, 138 147 166)); font-size: 10px; }
 .gdh-similar-token__chain,
+.gdh-similar-token__cached,
 .gdh-similar-token__current {
   padding: 0 4px;
   border: 1px solid rgb(var(--color-line-200, 128 135 150));

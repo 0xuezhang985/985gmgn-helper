@@ -29,6 +29,7 @@ const DEFAULTS = {
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
   enableSimilarTokenPanel: false,
+  similarTokenCacheMinutes: 5,
   syncGmgnTokenBlacklist: true,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
   addWalletStarPref: { on: false, color: '#f5b83d', pin: false },
@@ -87,6 +88,7 @@ const badgeColorInputs = {
 };
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
+const similarTokenCacheInput = document.querySelector('#similar-token-cache-minutes');
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
 const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
 const flapRpcInput = document.querySelector('#flap-rpc');
@@ -223,6 +225,8 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   }
   surgeThresholdInput.value = String(stored.holdingSurgeThreshold || DEFAULTS.holdingSurgeThreshold);
   surgeCooldownInput.value = String(stored.holdingSurgeCooldown || DEFAULTS.holdingSurgeCooldown);
+  similarTokenCacheInput.value = String([1, 5, 10, 30].includes(Number(stored.similarTokenCacheMinutes))
+    ? Number(stored.similarTokenCacheMinutes) : DEFAULTS.similarTokenCacheMinutes);
   flapRpcInput.value = String(stored.flapRpc || '');
   const starPref = stored.addWalletStarPref && typeof stored.addWalletStarPref === 'object'
     ? stored.addWalletStarPref : DEFAULTS.addWalletStarPref;
@@ -289,6 +293,8 @@ saveButton.addEventListener('click', async () => {
     ),
     holdingSurgeThreshold: Number(surgeThresholdInput.value) || DEFAULTS.holdingSurgeThreshold,
     holdingSurgeCooldown: Number(surgeCooldownInput.value) || DEFAULTS.holdingSurgeCooldown,
+    similarTokenCacheMinutes: [1, 5, 10, 30].includes(Number(similarTokenCacheInput.value))
+      ? Number(similarTokenCacheInput.value) : DEFAULTS.similarTokenCacheMinutes,
     flapRpc: flapRpcInput.value.trim(),
     addWalletStarPref: {
       on: specialWalletDefaultHighlightInput.checked,
