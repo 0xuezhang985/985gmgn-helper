@@ -3461,13 +3461,42 @@ ${flapTooltipText(info)}
   }, true);
   document.addEventListener('scroll', () => closeColorPalette(), true);
 
-  /** 追踪卡里"建仓/加仓/减仓/清仓"文案所在的 flex 容器（0.12.1 起 ⭐ 挂这里）。 */
+  /** 追踪卡里"建仓/加仓/减仓/清仓"文案所在的 flex 容器。 */
   function findCardActionContainer(card) {
     const span = [...card.querySelectorAll('span')].find((el) => (
       el.children.length <= 1
       && /^(建仓|加仓|减仓|清仓)/.test((el.textContent || '').trim())
     ));
     return span?.parentElement instanceof HTMLElement ? span.parentElement : null;
+  }
+
+  function trackerStarPlacement(card) {
+    const maker = card.querySelector(TRACKER_MAKER_CELL);
+    const scope = maker || card;
+    const link = scope.querySelector('a[href*="/address/"]');
+    if (link) return { anchor: link, mode: 'after' };
+    const nick = trackerPersonNameText(card.dataset?.gdhTrackNick || extractRowWalletLabel(card));
+    if (!nick) return null;
+    const name = [...scope.querySelectorAll('span, div, p, button')].find((node) => (
+      !node.closest(TRACKER_PERSON_CONTROL_SELECTOR) && node.childElementCount === 0
+      && trackerPersonNameText(node.textContent) === nick
+    ));
+    if (name) {
+      let anchor = name;
+      // 越过只包名字的截断层，把按钮留在外面，避免长名字把星星一起裁掉。
+      while (anchor.parentElement && anchor.parentElement !== scope
+        && anchor.parentElement.childElementCount === 1
+        && trackerPersonNameText(anchor.parentElement.textContent) === nick) anchor = anchor.parentElement;
+      const control = anchor.closest('button, a[href*="/address/"]');
+      if (control && control !== card && scope.contains(control)) anchor = control;
+      return { anchor, mode: 'after' };
+    }
+    // 有些表格直接把名字写在 maker 单元格的文本节点里。
+    if (maker && trackerPersonNameText([...maker.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join('')) === nick) {
+      return { anchor: maker, mode: 'append' };
+    }
+    return null;
   }
 
   function ensureStarButton(host, address, label, anchor, insertMode) {
@@ -3485,19 +3514,15 @@ ${flapTooltipText(info)}
           button.dataset.gdhStarLabel || '',
         );
       });
-      if (anchor instanceof HTMLElement && insertMode === 'after') {
-        // 钱包列表行：贴在名字链接后面（占位恒定，悬停才显形）。
-        button.classList.add('gdh-star-button--inline');
-        anchor.insertAdjacentElement('afterend', button);
-      } else if (anchor instanceof HTMLElement && insertMode === 'append') {
-        // 追踪事件卡：跟在 加仓/减仓 等动作文案末尾。
-        button.classList.add('gdh-star-button--inline');
-        anchor.appendChild(button);
-      } else {
-        // 兜底：绝对定位在卡片右侧（找不到动作容器时）。
-        host.appendChild(button);
-      }
     }
+    // 不只在创建时定位：原生名字节点会异步出现、替换或随虚拟行复用。
+    const inline = anchor instanceof HTMLElement && (insertMode === 'after' || insertMode === 'append');
+    button.classList.toggle('gdh-star-button--inline', inline);
+    if (inline && insertMode === 'after') {
+      if (anchor.nextElementSibling !== button) anchor.insertAdjacentElement('afterend', button);
+    } else if (inline) {
+      if (button.parentElement !== anchor) anchor.appendChild(button);
+    } else if (button.parentElement !== host) host.appendChild(button);
     button.dataset.gdhStarAddr = address;
     button.dataset.gdhStarLabel = label;
     const starred = isSpecialWallet(address);
@@ -3525,8 +3550,8 @@ ${flapTooltipText(info)}
             swatch.getBoundingClientRect(),
           );
         });
-        button.insertAdjacentElement('afterend', swatch);
       }
+      if (button.nextElementSibling !== swatch) button.insertAdjacentElement('afterend', swatch);
       swatch.dataset.gdhStarAddr = address;
       applySwatchColor(swatch, specialWalletColor(address));
       swatch.title = '选择高亮颜色 / 置顶';
@@ -3608,12 +3633,18 @@ ${flapTooltipText(info)}
         ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
         markBlockedHosts(card, isTokenBlocked(tokenAddr, (card.getAttribute('href') || '').match(/^\/(\w+)\/token\//)?.[1] || card.dataset.gdhTrackChain || ''));
       }
+      const placement = trackerStarPlacement(card);
+      if (!placement) {
+        card.querySelector('.gdh-star-button')?.remove();
+        card.querySelector('.gdh-color-button')?.remove();
+        return;
+      }
       ensureStarButton(
         card,
         address,
         extractRowWalletLabel(card),
-        findCardActionContainer(card),
-        'append',
+        placement.anchor,
+        placement.mode,
       );
     });
 

@@ -269,7 +269,7 @@ html[data-theme="light"] {
   color: #f5b83d;
 }
 
-a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
+a[data-sentry-component="TrackerListItem"] > .gdh-star-button:not(.gdh-star-button--inline),
 [data-gdh-star-host="1"] > .gdh-star-button:not(.gdh-star-button--inline) {
   position: absolute;
   right: 4px;
