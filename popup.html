@@ -111,7 +111,18 @@
         </div>
       </section>
 
-      <section class="update-card"><span><strong>版本更新</strong><small id="update-status">正在读取更新状态…</small><a id="release-link" href="#" hidden>查看最新版 GitHub 页面</a></span><button id="check-update" type="button">检查更新</button></section>
+      <section class="update-card">
+        <div class="update-heading"><strong>版本管理 <span class="update-new">NEW</span></strong><small id="update-status" role="status">正在读取更新状态…</small></div>
+        <p id="update-summary" class="update-summary">检查更新后显示本版简介。</p>
+        <div class="update-actions"><button id="check-update" type="button">检查更新</button><button id="skip-update" type="button" hidden>跳过本次更新</button><a id="release-link" href="#" hidden>完整说明</a></div>
+        <details id="update-history"><summary>一键回退历史版本 <span class="update-new">NEW</span></summary>
+          <p class="update-hint">仅提供官方正式版；安装前校验并备份。保留设置，回退后跳过刚撤回的版本。</p>
+          <p id="history-status" class="update-hint" role="status"></p>
+          <a id="updater-setup" href="https://985monitor.xyz/bgm/" target="_blank" rel="noopener noreferrer" hidden>下载新版安装器，运行一次“安装 / 修复”</a>
+          <label for="rollback-version">选择版本</label><div class="update-actions"><select id="rollback-version"><option value="">展开后加载历史版本</option></select><button id="rollback-update" type="button" disabled>回退此版本</button></div>
+          <p id="rollback-summary" class="update-summary" hidden></p>
+        </details>
+      </section>
       <div class="save-bar"><div id="status" aria-live="polite"></div><button id="save" type="button">保存全部设置</button></div>
       <footer>数据直接读取当前 GMGN / DeBot 页面，不使用 API Key。</footer>
     </main>

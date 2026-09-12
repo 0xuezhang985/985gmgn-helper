@@ -139,6 +139,17 @@ const updateStatus = document.querySelector('#update-status');
 const checkUpdateButton = document.querySelector('#check-update');
 const updateCard = document.querySelector('.update-card');
 const releaseLink = document.querySelector('#release-link');
+const updateSummary = document.querySelector('#update-summary');
+const skipUpdateButton = document.querySelector('#skip-update');
+const updateHistory = document.querySelector('#update-history');
+const historyStatus = document.querySelector('#history-status');
+const rollbackVersion = document.querySelector('#rollback-version');
+const rollbackButton = document.querySelector('#rollback-update');
+const rollbackSummary = document.querySelector('#rollback-summary');
+const updaterSetup = document.querySelector('#updater-setup');
+let historyVersions = [];
+let historyLoading = false;
+let updateBusy = false;
 const DEFAULT_RELEASE_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
 
 let currentUpdateState = null;
@@ -332,8 +343,12 @@ function sendRuntimeMessage(message) {
 function renderUpdateState(state) {
   currentUpdateState = state;
   updateCard.classList.toggle('has-update', Boolean(state?.updateAvailable));
-  releaseLink.hidden = !state?.updateAvailable;
+  releaseLink.hidden = !state?.latestVersion;
   releaseLink.dataset.url = state?.releaseUrl || DEFAULT_RELEASE_URL;
+  updateSummary.textContent = state?.summary || (state?.latestVersion ? '暂未取得本版简介，可查看完整说明。' : '检查更新后显示本版简介。');
+  skipUpdateButton.hidden = !state?.updateAvailable && !state?.skipped;
+  skipUpdateButton.textContent = state?.skipped ? '恢复本次更新提醒' : '跳过本次更新';
+  setUpdateBusy(updateBusy);
 
   if (!state) {
     updateStatus.textContent = '尚未检查更新';
@@ -344,6 +359,18 @@ function renderUpdateState(state) {
   if (state.updateAvailable) {
     updateStatus.textContent = `发现 v${state.latestVersion}，当前 v${state.currentVersion}`;
     checkUpdateButton.textContent = state.updaterInstalled ? '一键升级' : '打开 GitHub';
+    return;
+  }
+
+  if (state.skipped) {
+    updateStatus.textContent = `已跳过 v${state.latestVersion}，当前保留 v${state.currentVersion}；以后有新版仍会提醒`;
+    checkUpdateButton.textContent = '检查其它更新';
+    return;
+  }
+
+  if (state.status === 'error') {
+    updateStatus.textContent = `检查失败：${state.error || '请稍后重试'}`;
+    checkUpdateButton.textContent = '重新检查';
     return;
   }
 
@@ -359,8 +386,74 @@ function renderUpdateState(state) {
 
 function openReleasePage() {
   const url = currentUpdateState?.releaseUrl || DEFAULT_RELEASE_URL;
-  chrome.tabs.create({ url });
+  chrome.tabs.create({ url: /^https:\/\/github\.com\/0xuezhang985\/985gmgn-helper\/releases(?:\/|$)/.test(url) ? url : DEFAULT_RELEASE_URL });
 }
+
+function setUpdateBusy(busy) {
+  updateBusy = busy;
+  checkUpdateButton.disabled = busy;
+  skipUpdateButton.disabled = busy;
+  rollbackVersion.disabled = busy;
+  rollbackButton.disabled = busy || !rollbackVersion.value || Number(currentUpdateState?.protocolVersion) < 2;
+}
+
+function selectRollbackVersion() {
+  const release = historyVersions.find((item) => item.version === rollbackVersion.value);
+  rollbackSummary.hidden = !release;
+  rollbackSummary.textContent = release?.summary || '';
+  setUpdateBusy(updateBusy);
+}
+
+updateHistory.addEventListener('toggle', async () => {
+  if (!updateHistory.open || historyLoading || historyVersions.length) return;
+  if (!currentUpdateState || currentUpdateState.status === 'error') {
+    historyStatus.textContent = '请先完成上方版本检查，再重新展开历史列表。';
+    return;
+  }
+  if (Number(currentUpdateState?.protocolVersion) < 2) {
+    historyStatus.textContent = '历史回退需要新版本地更新器。首次运行新版安装器“安装 / 修复”后即可使用，设置不会清空。';
+    updaterSetup.hidden = false;
+    return;
+  }
+  historyLoading = true;
+  historyStatus.textContent = '正在读取官方历史版本…';
+  try {
+    const result = await sendRuntimeMessage({ type: 'update-history' });
+    if (!result?.ok) throw new Error(result?.error || '读取失败');
+    historyVersions = Array.isArray(result.versions) ? result.versions : [];
+    rollbackVersion.replaceChildren(new Option('请选择要回退的版本', ''));
+    historyVersions.forEach((item) => rollbackVersion.add(new Option(`v${item.version}`, item.version)));
+    historyStatus.textContent = historyVersions.length ? '最近 10 个可用旧版；已撤回的版本不提供回退。' : '暂无可回退的正式版本。';
+    updaterSetup.hidden = true;
+  } catch (error) {
+    historyStatus.textContent = `读取失败：${error.message}。收起后重新展开可重试。`;
+  } finally { historyLoading = false; }
+});
+rollbackVersion.addEventListener('change', selectRollbackVersion);
+
+rollbackButton.addEventListener('click', async () => {
+  if (updateBusy || !historyVersions.some((item) => item.version === rollbackVersion.value)) return;
+  setUpdateBusy(true);
+  try {
+    updateStatus.textContent = `正在校验并回退到 v${rollbackVersion.value}，保留个人设置…`;
+    const result = await sendRuntimeMessage({ type: 'rollback-update', version: rollbackVersion.value });
+    if (!result?.ok) throw new Error(result?.error || '回退失败');
+    updateStatus.textContent = `已回退到 v${result.updatedVersion}，正在重载扩展…`;
+    setTimeout(() => chrome.runtime.reload(), 350);
+  } catch (error) { updateStatus.textContent = `回退未完成：${error.message}`; }
+  finally { setUpdateBusy(false); }
+});
+
+skipUpdateButton.addEventListener('click', async () => {
+  if (updateBusy) return;
+  setUpdateBusy(true);
+  try {
+    const result = await sendRuntimeMessage({ type: 'skip-update', version: currentUpdateState?.skipped ? '' : currentUpdateState?.latestVersion });
+    if (result?.ok === false) throw new Error(result.error || '保存失败');
+    renderUpdateState(result);
+  } catch (error) { updateStatus.textContent = `设置失败：${error.message}`; }
+  finally { setUpdateBusy(false); }
+});
 
 async function refreshUpdateState() {
   updateStatus.textContent = '正在检查 GitHub 最新版本…';
@@ -374,16 +467,17 @@ releaseLink.addEventListener('click', (event) => {
 });
 
 checkUpdateButton.addEventListener('click', async () => {
+  if (updateBusy) return;
   if (currentUpdateState?.status === 'updater_missing') {
     openReleasePage();
     return;
   }
 
-  checkUpdateButton.disabled = true;
+  setUpdateBusy(true);
   try {
     if (currentUpdateState?.updateAvailable) {
       updateStatus.textContent = '正在下载并安装新版…';
-      const result = await sendRuntimeMessage({ type: 'install-update' });
+      const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion });
       if (!result?.ok) throw new Error(result?.error || '升级失败');
       updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载扩展并刷新 GMGN 页面…`;
       setTimeout(() => chrome.runtime.reload(), 350);
@@ -393,7 +487,7 @@ checkUpdateButton.addEventListener('click', async () => {
   } catch (error) {
     updateStatus.textContent = `升级检查失败：${error.message || '未知错误'}`;
   } finally {
-    checkUpdateButton.disabled = false;
+    setUpdateBusy(false);
   }
 });
 

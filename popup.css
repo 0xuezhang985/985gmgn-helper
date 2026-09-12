@@ -235,6 +235,20 @@ button:hover { filter: brightness(1.06); }
 #check-update { width: auto; flex: 0 0 auto; padding: 7px 10px; border: 1px solid #3a424e; background: #242a33; color: #e5e8ed; font-size: 12px; }
 #check-update:hover { border-color: var(--accent); }
 #check-update:disabled { cursor: wait; opacity: .65; }
+.update-card { display: block; }
+.update-heading { display: grid; gap: 5px; }
+#update-status { max-width: none; overflow-wrap: anywhere; }
+.update-summary { margin: 10px 0; font-size: 12px; line-height: 1.6; color: #c8ced8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.update-actions button { width: auto; padding: 7px 10px; border: 1px solid #3a424e; border-radius: 6px; background: #242a33; color: #e5e8ed; font-size: 12px; }
+.update-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.update-actions select { flex: 1; min-width: 130px; }
+.update-new { display: inline-block; padding: 1px 4px; border-radius: 3px; color: #65daa4; background: #163d2b; font-size: 9px; vertical-align: middle; }
+#update-history { margin-top: 12px; padding-top: 10px; border-top: 1px solid #303640; font-size: 12px; }
+#update-history summary { cursor: pointer; }
+.update-hint { color: #99a4b4; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+#update-history label { display: block; margin: 8px 0 5px; }
+.update-card [hidden] { display: none !important; }
 
 .save-bar {
   position: sticky;

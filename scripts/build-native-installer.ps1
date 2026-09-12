@@ -95,5 +95,8 @@ try {
   Remove-Item -LiteralPath $assemblyInfo -Force -ErrorAction SilentlyContinue
 }
 
+$selfTest = Start-Process -FilePath $output -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+if ($selfTest.ExitCode -ne 0) { throw "安装器安全自检失败：$($selfTest.ExitCode)" }
+Write-Output "native_self_test=passed"
 Write-Output "installer=$output"
 Write-Output "extension_id=$extensionId"

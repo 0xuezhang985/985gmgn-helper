@@ -9,6 +9,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -125,9 +126,29 @@ namespace Gmgn985Updater
                 {
                     response = UpdateService.Check(Json.StringValue(request, "currentVersion"));
                 }
-                else if (string.Equals(action, "update", StringComparison.OrdinalIgnoreCase))
+                else if (action == "history")
                 {
-                    response = UpdateService.Update();
+                    response = UpdateService.History(Json.StringValue(request, "currentVersion"));
+                }
+                else if (action == "capabilities")
+                {
+                    response = Json.Object("ok", true, "protocolVersion", 2, "extensionPath", ProductInfo.ExtensionPath);
+                }
+                else if (action == "skip")
+                {
+                    UpdateService.SetSkippedVersion(Json.StringValue(request, "version"));
+                    response = Json.Object("ok", true);
+                }
+                else if (action == "update" || action == "rollback")
+                {
+                    using (Mutex gate = new Mutex(false, @"Local\985gmgn-helper-update"))
+                    {
+                        bool locked;
+                        try { locked = gate.WaitOne(0); } catch (AbandonedMutexException) { locked = true; }
+                        if (!locked) throw new InvalidOperationException("另一项安装正在进行，请稍后重试");
+                        try { response = UpdateService.Update(Json.StringValue(request, "version"), action == "rollback"); }
+                        finally { gate.ReleaseMutex(); }
+                    }
                 }
                 else
                 {
@@ -194,6 +215,7 @@ namespace Gmgn985Updater
         internal string ZipUrl;
         internal string ZipDigest;
         internal string ChecksumUrl;
+        internal string Summary;
     }
 
     internal static class UpdateService
@@ -203,23 +225,32 @@ namespace Gmgn985Updater
             if (!VersionTools.IsValid(currentVersion)) throw new InvalidDataException("当前插件版本号无效");
             ReleaseInfo release = GetLatestRelease();
             bool available = VersionTools.Compare(release.Version, currentVersion) > 0;
+            bool skipped = available && release.Version == GetSkippedVersion();
             return Json.Object(
                 "ok", true,
-                "updateAvailable", available,
+                "protocolVersion", 2,
+                "updateAvailable", available && !skipped,
+                "skipped", skipped,
                 "currentVersion", currentVersion,
                 "latestVersion", release.Version,
-                "releaseUrl", release.ReleaseUrl
+                "releaseUrl", release.ReleaseUrl,
+                "summary", release.Summary
             );
         }
 
-        internal static Dictionary<string, object> Update()
+        internal static Dictionary<string, object> Update(string targetVersion, bool rollback)
         {
             EnsureInstalled();
             // 装坏了就读不出版本号，此时当作 0.0.0：任何线上版本都算更新，从而顺带把目录修好，
             // 而不是卡在「插件缺少 manifest.json」上连升级也走不了。
             string installedVersion = ExtensionPackage.TryReadManifestVersion(ProductInfo.ExtensionPath) ?? "0.0.0";
-            ReleaseInfo release = GetLatestRelease();
-            if (VersionTools.Compare(release.Version, installedVersion) <= 0)
+            if (rollback && !VersionTools.IsValid(targetVersion)) throw new InvalidDataException("请选择有效历史版本");
+            ReleaseInfo release = string.IsNullOrEmpty(targetVersion) ? GetLatestRelease() : GetVersionRelease(targetVersion);
+            if (rollback && VersionTools.Compare(release.Version, installedVersion) >= 0)
+                throw new InvalidOperationException("只能回退到低于当前安装版本的正式版本");
+            if (!rollback && release.Version == GetSkippedVersion())
+                throw new InvalidOperationException("已跳过这个版本，请先恢复更新提醒");
+            if (!rollback && VersionTools.Compare(release.Version, installedVersion) <= 0)
             {
                 return Json.Object(
                     "ok", true,
@@ -242,6 +273,8 @@ namespace Gmgn985Updater
                 string stagedPath = Path.Combine(tempRoot, "Extension");
                 ExtensionPackage.ExtractValidated(zipPath, stagedPath, release.Version);
                 ExtensionPackage.ReplaceInstalled(stagedPath, installedVersion);
+                // 旧版扩展也使用同一个 Native Host 检查更新，回退后不会马上提示升回。
+                if (rollback) SetSkippedVersion(installedVersion);
                 WriteInstallConfig(release.Version);
                 CleanupOldBackups();
 
@@ -249,6 +282,8 @@ namespace Gmgn985Updater
                     "ok", true,
                     "updated", true,
                     "updatedVersion", release.Version,
+                    "rolledBack", rollback,
+                    "extensionPath", ProductInfo.ExtensionPath,
                     "releaseUrl", release.ReleaseUrl,
                     "sha256", actualHash
                 );
@@ -304,7 +339,24 @@ namespace Gmgn985Updater
         private static ReleaseInfo GetLatestRelease()
         {
             Dictionary<string, object> release = Json.Serializer.Deserialize<Dictionary<string, object>>(DownloadString(ProductInfo.LatestReleaseApi));
+            return ParseRelease(release);
+        }
+
+        private static ReleaseInfo GetVersionRelease(string version)
+        {
+            if (!VersionTools.IsValid(version)) throw new InvalidDataException("目标版本号无效");
+            ReleaseInfo release = ParseRelease(Json.Serializer.Deserialize<Dictionary<string, object>>(
+                DownloadString("https://api.github.com/repos/" + ProductInfo.Repository + "/releases/tags/v" + Uri.EscapeDataString(version))));
+            if (release.Version != version) throw new InvalidDataException("目标版本与官方返回不一致");
+            return release;
+        }
+
+        internal static ReleaseInfo ParseRelease(Dictionary<string, object> release)
+        {
             if (release == null) throw new InvalidDataException("GitHub Release 返回格式无效");
+            if (string.Equals(Json.StringValue(release, "draft"), "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Json.StringValue(release, "prerelease"), "true", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("不安装草稿、测试版或已撤回的版本");
 
             string version = Json.StringValue(release, "tag_name").TrimStart('v', 'V');
             if (!VersionTools.IsValid(version)) throw new InvalidDataException("GitHub Release 版本号无效");
@@ -315,7 +367,8 @@ namespace Gmgn985Updater
             {
                 Version = version,
                 ReleaseUrl = SafeReleaseUrl(Json.StringValue(release, "html_url")),
-                ZipName = expectedZipName
+                ZipName = expectedZipName,
+                Summary = ReleaseSummary(Json.StringValue(release, "body"))
             };
 
             object rawAssets;
@@ -347,7 +400,67 @@ namespace Gmgn985Updater
             return result;
         }
 
-        private static void VerifyReleaseHash(ReleaseInfo release, string actualHash)
+        internal static string ReleaseSummary(string body)
+        {
+            string text = (body ?? string.Empty).Replace("\r\n", "\n");
+            int start = text.IndexOf("## 本版重点", StringComparison.Ordinal);
+            if (start >= 0)
+            {
+                text = text.Substring(start + "## 本版重点".Length).Trim();
+                int end = text.IndexOf("\n## ", StringComparison.Ordinal);
+                if (end >= 0) text = text.Substring(0, end);
+            }
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"[#*`>]+", "");
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+            if (string.IsNullOrEmpty(text)) return "本版未提供简介，可点击查看完整更新说明。";
+            return text.Length > 260 ? text.Substring(0, 260) + "…" : text;
+        }
+
+        internal static Dictionary<string, object> History(string currentVersion)
+        {
+            if (!VersionTools.IsValid(currentVersion)) throw new InvalidDataException("当前版本号无效");
+            object[] releases = Json.Serializer.DeserializeObject(DownloadString(
+                "https://api.github.com/repos/" + ProductInfo.Repository + "/releases?per_page=30")) as object[];
+            if (releases == null) throw new InvalidDataException("历史版本列表格式无效");
+            List<ReleaseInfo> valid = new List<ReleaseInfo>();
+            foreach (object item in releases)
+            {
+                try
+                {
+                    ReleaseInfo release = ParseRelease(item as Dictionary<string, object>);
+                    if (VersionTools.Compare(release.Version, currentVersion) < 0) valid.Add(release);
+                }
+                catch (InvalidDataException) { /* 无完整安装包或已撤回的版本不列出 */ }
+            }
+            valid.Sort((a, b) => VersionTools.Compare(b.Version, a.Version));
+            List<object> items = new List<object>();
+            foreach (ReleaseInfo release in valid)
+            {
+                if (items.Count >= 10) break;
+                items.Add(Json.Object("version", release.Version, "summary", release.Summary, "releaseUrl", release.ReleaseUrl));
+            }
+            return Json.Object("ok", true, "protocolVersion", 2, "versions", items);
+        }
+
+        internal static string GetSkippedVersion()
+        {
+            string path = Path.Combine(ProductInfo.InstallRoot, "skipped-version.txt");
+            if (!File.Exists(path)) return string.Empty;
+            string version = File.ReadAllText(path, Encoding.UTF8).Trim();
+            return VersionTools.IsValid(version) ? version : string.Empty;
+        }
+
+        internal static void SetSkippedVersion(string version)
+        {
+            if (!string.IsNullOrEmpty(version) && !VersionTools.IsValid(version)) throw new InvalidDataException("跳过版本号无效");
+            Directory.CreateDirectory(ProductInfo.InstallRoot);
+            string path = Path.Combine(ProductInfo.InstallRoot, "skipped-version.txt");
+            string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temp, version, new UTF8Encoding(false));
+            if (File.Exists(path)) File.Replace(temp, path, null); else File.Move(temp, path);
+        }
+
+        internal static void VerifyReleaseHash(ReleaseInfo release, string actualHash)
         {
             if (!string.IsNullOrEmpty(release.ZipDigest))
             {
@@ -568,7 +681,7 @@ namespace Gmgn985Updater
             if (Directory.Exists(ProductInfo.ExtensionPath))
             {
                 string safeVersion = string.IsNullOrEmpty(previousVersion) ? "unknown" : previousVersion;
-                backupPath = Path.Combine(ProductInfo.BackupsPath, safeVersion + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture));
+                backupPath = Path.Combine(ProductInfo.BackupsPath, safeVersion + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.Move(ProductInfo.ExtensionPath, backupPath);
             }
 
@@ -893,6 +1006,26 @@ namespace Gmgn985Updater
             {
                 if (!VersionTools.IsValid("0.8.0") || VersionTools.Compare("0.8.1", "0.8.0") <= 0) return 1;
                 if (!HashTools.IsSha256(new string('a', 64)) || HashTools.IsSha256("bad")) return 2;
+                if (UpdateService.ReleaseSummary("## 本版重点\n\n**修复布局**\n\n## 安装方法\n不要带入").Contains("不要带入")) return 11;
+                if (UpdateService.ReleaseSummary(new string('字', 1000)).Length > 261) return 12;
+                Dictionary<string, object> releaseFixture = Json.Object(
+                    "tag_name", "v0.46.67", "draft", false, "prerelease", false,
+                    "html_url", "https://github.com/0xuezhang985/985gmgn-helper/releases/tag/v0.46.67",
+                    "body", "## 本版重点\n修复布局",
+                    "assets", new object[] { Json.Object("name", "985gmgn-helper-v0.46.67.zip",
+                        "browser_download_url", "https://github.com/0xuezhang985/985gmgn-helper/releases/download/v0.46.67/985gmgn-helper-v0.46.67.zip",
+                        "digest", "sha256:" + new string('a', 64)) });
+                ReleaseInfo validRelease = UpdateService.ParseRelease(releaseFixture);
+                UpdateService.VerifyReleaseHash(validRelease, new string('a', 64));
+                bool rejectedHash = false;
+                try { UpdateService.VerifyReleaseHash(validRelease, new string('b', 64)); }
+                catch (InvalidDataException) { rejectedHash = true; }
+                if (!rejectedHash) return 13;
+                releaseFixture["prerelease"] = true;
+                bool rejectedPreview = false;
+                try { UpdateService.ParseRelease(releaseFixture); }
+                catch (InvalidDataException) { rejectedPreview = true; }
+                if (!rejectedPreview) return 14;
                 byte[] publicKey = Convert.FromBase64String(ProductInfo.ManifestKey);
                 using (SHA256 sha = SHA256.Create())
                 {

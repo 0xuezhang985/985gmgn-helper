@@ -698,22 +698,60 @@ async function saveUpdateState(state) {
   await chrome.action.setTitle({ title: 'better gmgn' });
 }
 
-async function checkForUpdate() {
+function updateVersionValid(version) {
+  return typeof version === 'string' && /^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version);
+}
+
+async function updateReleaseSummary(version) {
+  if (!updateVersionValid(version)) return '';
+  const { updateReleaseInfoV1 } = await chrome.storage.local.get('updateReleaseInfoV1');
+  if (updateReleaseInfoV1?.version === version) return updateReleaseInfoV1.summary;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let release;
+    try {
+      const response = await fetch(`https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/tags/v${version}`, { signal: controller.signal, credentials: 'omit' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      release = await response.json();
+    } finally { clearTimeout(timer); }
+    const body = String(release.body || '').replace(/\r\n/g, '\n');
+    const focus = body.split('## 本版重点')[1]?.split(/\n## /)[0] || body;
+    const summary = focus.replace(/[#*`>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 260);
+    if (summary) await chrome.storage.local.set({ updateReleaseInfoV1: { version, summary } });
+    return summary;
+  } catch { return ''; }
+}
+
+let updateCheckPending = null;
+function checkForUpdate() {
+  if (!updateCheckPending) updateCheckPending = checkForUpdateOnce().finally(() => { updateCheckPending = null; });
+  return updateCheckPending;
+}
+
+async function checkForUpdateOnce() {
   const currentVersion = chrome.runtime.getManifest().version;
+  let connected = false;
   try {
     const response = await sendNativeMessage({
       action: 'check',
       currentVersion,
     });
+    connected = true;
     if (!response?.ok) {
       throw new Error(response?.error || '更新器未返回有效结果');
     }
 
+    const { updateSkippedVersion } = await chrome.storage.local.get('updateSkippedVersion');
+    const skipped = Boolean(response.skipped || (response.updateAvailable && response.latestVersion === updateSkippedVersion));
     const state = {
-      status: response.updateAvailable ? 'available' : 'latest',
+      status: skipped ? 'skipped' : response.updateAvailable ? 'available' : 'latest',
       currentVersion,
       latestVersion: response.latestVersion || currentVersion,
-      updateAvailable: Boolean(response.updateAvailable),
+      updateAvailable: Boolean(response.updateAvailable) && !skipped,
+      skipped,
+      protocolVersion: Number(response.protocolVersion) || 1,
+      summary: response.summary || await updateReleaseSummary(response.latestVersion),
       updaterInstalled: true,
       releaseUrl: response.releaseUrl || RELEASES_URL,
       checkedAt: Date.now(),
@@ -722,10 +760,10 @@ async function checkForUpdate() {
     return state;
   } catch (error) {
     const state = {
-      status: 'updater_missing',
+      status: connected ? 'error' : 'updater_missing',
       currentVersion,
       updateAvailable: false,
-      updaterInstalled: false,
+      updaterInstalled: connected,
       releaseUrl: RELEASES_URL,
       error: error.message || '本地更新器不可用',
       checkedAt: Date.now(),
@@ -735,16 +773,47 @@ async function checkForUpdate() {
   }
 }
 
-async function installUpdate() {
-  const currentVersion = chrome.runtime.getManifest().version;
-  const response = await sendNativeMessage({
-    action: 'update',
-    currentVersion,
-  });
-  if (!response?.ok) {
-    throw new Error(response?.error || '升级失败');
+let versionInstallBusy = false;
+async function installUpdate(version, rollback = false) {
+  if (versionInstallBusy) throw new Error('另一项版本安装正在进行');
+  if (!updateVersionValid(version)) throw new Error('请选择有效的目标版本');
+  versionInstallBusy = true;
+  try {
+    const currentVersion = chrome.runtime.getManifest().version;
+    const response = await sendNativeMessage({
+      action: rollback ? 'rollback' : 'update',
+      version,
+      currentVersion,
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || '升级失败');
+    }
+    if (rollback) {
+      await chrome.storage.local.set({ updateSkippedVersion: currentVersion });
+      await chrome.action.setBadgeText({ text: '' });
+    }
+    // 扩展可能从源码 / 手动解压目录加载，而更新器只更新固定安装目录。
+    const activePackage = await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json();
+    if (activePackage.version !== response.updatedVersion) {
+      return { ok: false, needsPathReload: true, installedVersion: response.updatedVersion,
+        error: `安装器目录已更新到 v${response.updatedVersion}，但浏览器加载的是另一目录。请到扩展管理页加载 ${response.extensionPath || '%LOCALAPPDATA%\\985gmgn-helper\\Extension'}；当前页面尚未切换版本。` };
+    }
+    return response;
+  } finally { versionInstallBusy = false; }
+}
+
+async function skipUpdateVersion(version) {
+  if (versionInstallBusy) throw new Error('版本安装期间不能更改跳过设置');
+  if (version && !updateVersionValid(version)) throw new Error('跳过版本号无效');
+  const { updateState } = await chrome.storage.local.get('updateState');
+  if (version && version !== updateState?.latestVersion) throw new Error('更新版本已变化，请重新检查');
+  if (Number(updateState?.protocolVersion) >= 2) {
+    const result = await sendNativeMessage({ action: 'skip', version });
+    if (!result?.ok) throw new Error(result?.error || '保存跳过设置失败');
   }
-  return response;
+  await chrome.storage.local.set({ updateSkippedVersion: version });
+  if (updateCheckPending) await updateCheckPending;
+  return checkForUpdate();
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -2832,9 +2901,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'install-update') {
-    installUpdate()
-      .then((response) => sendResponse({ ...response, shouldReload: true }))
+    if (sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) return false;
+    installUpdate(message.version)
+      .then((response) => sendResponse({ ...response, shouldReload: response.ok === true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || '升级失败' }));
+    return true;
+  }
+
+  if (message?.type === 'rollback-update' || message?.type === 'skip-update' || message?.type === 'update-history') {
+    if (sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) return false;
+    const operation = message.type === 'rollback-update' ? installUpdate(message.version, true)
+      : message.type === 'skip-update' ? skipUpdateVersion(message.version || '')
+        : sendNativeMessage({ action: 'history', currentVersion: chrome.runtime.getManifest().version });
+    operation.then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message || '版本操作失败' }));
     return true;
   }
 

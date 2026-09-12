@@ -24,9 +24,12 @@ better gmgn 只在用户访问 `gmgn.ai`、`debot.ai`、`fomo.family` 与 `985mo
 - `https://985monitor.xyz/*`：在用户已登录时签发 FOMO/Pump 专用只读会话，并读取服务端按该账号关注、屏蔽、事件类型、金额和代币过滤后的配置与事件流。账号会话失效时插件停止读取，不回退到公共全量 FOMO/Pump 源。默认标注人物持仓产物仍按公开静态文件读取；用户自己添加的标注人物不会自动上报服务器，而是在浏览器内直查 GMGN。Brew 战壕不使用 985monitor 接口或服务器资源。
 - 用户填写自定义 BSC RPC 时，扩展会在确认后申请该 HTTPS 域名权限，并只发送公开链上只读调用。
 - `https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/latest`：读取最新版本。
+- `https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases` 与 `/releases/tags/v<版本>`：读取官方历史版本、目标包与简短更新介绍，不发送钱包、关注名单或登录令牌。
 - `https://github.com/0xuezhang985/985gmgn-helper/releases/download/`：下载安装包和 SHA256 文件。
 
 本地更新器不常驻后台，只在插件检查或安装更新时启动；下载的 ZIP 必须通过 SHA256、文件白名单、manifest 名称、版本和固定扩展 ID 校验。
+
+跳过的版本号保存在浏览器本地配置及支持协议 v2 的 Native Host 安装目录 `skipped-version.txt`；后者由本机使用同一更新器的浏览器共享，使回退到旧扩展后也不会立即提示升回。回退只替换扩展运行文件，不删除浏览器设置；更新器拒绝非官方包、已撤回版本与无效回退目标。
 
 ## 联系方式
 
