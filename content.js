@@ -2730,6 +2730,46 @@ ${flapTooltipText(info)}
   let similarTokenPanelKey = '';
   let similarTokenTrackerAnchor = null;
   let similarTokenScanRaf = 0;
+  let similarTokenPositionRaf = 0;
+  let similarTokenXWatches = [];
+  let similarTokenXResize = null;
+  let similarTokenXMutation = null;
+
+  function scheduleSimilarTokenPosition() {
+    if (similarTokenPositionRaf || !similarTokenPanelEl?.isConnected) return;
+    similarTokenPositionRaf = requestAnimationFrame(() => {
+      similarTokenPositionRaf = 0;
+      positionSimilarTokenPanel(similarTokenTrackerAnchor);
+    });
+  }
+
+  window.addEventListener('resize', scheduleSimilarTokenPosition, { passive: true });
+
+  function similarTokenXPreviewRects() {
+    // Observed GMGN X account/post previews: TweetContent inside pi-tooltip.
+    const previews = [...document.querySelectorAll('[role="tooltip"], .pi-tooltip-container')]
+      .filter((node) => node.querySelector('[data-sentry-component="TweetContent"], [data-sentry-component="XAccountLink"]'));
+    const watches = [...new Set(previews.flatMap((node) => [node, node.parentElement]).filter(Boolean))];
+    if (watches.length !== similarTokenXWatches.length || watches.some((node, i) => node !== similarTokenXWatches[i])) {
+      similarTokenXResize?.disconnect();
+      similarTokenXMutation?.disconnect();
+      similarTokenXWatches = watches;
+      if (watches.length) {
+        similarTokenXResize ||= new ResizeObserver(scheduleSimilarTokenPosition);
+        similarTokenXMutation ||= new MutationObserver(scheduleSimilarTokenPosition);
+        for (const node of watches) {
+          similarTokenXResize.observe(node);
+          similarTokenXMutation.observe(node, { attributes: true, attributeFilter: ['style', 'class', 'hidden', 'data-state'] });
+        }
+      }
+    }
+    return previews.filter((node) => {
+      const style = getComputedStyle(node);
+      return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0
+        && !node.closest('[hidden], [data-state="closed"]');
+    }).map((node) => node.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+  }
+
 
   function scheduleSimilarTokenScan() {
     if (similarTokenScanRaf || settings.enabled === false || settings.enableSimilarTokenPanel !== true
@@ -2963,6 +3003,11 @@ ${flapTooltipText(info)}
   }
 
   function clearSimilarTokenPanel() {
+    if (similarTokenPositionRaf) cancelAnimationFrame(similarTokenPositionRaf);
+    similarTokenPositionRaf = 0;
+    similarTokenXResize?.disconnect();
+    similarTokenXMutation?.disconnect();
+    similarTokenXWatches = [];
     similarTokenPanelEl?.remove();
     similarTokenPanelEl = null;
     similarTokenPanelKey = '';
@@ -2991,9 +3036,18 @@ ${flapTooltipText(info)}
     if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
     else left = panelRect.right + gap;
     left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
-    const top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    let top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    let avoidingX = false;
+    for (const preview of similarTokenXPreviewRects()) {
+      if (preview.right <= left || preview.left >= left + width || preview.bottom <= 0 || preview.top >= window.innerHeight) continue;
+      top = Math.max(top, Math.ceil(preview.bottom) + gap);
+      avoidingX = true;
+    }
+    const available = Math.max(0, Math.floor(window.innerHeight - top - edge));
     const placement = { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`,
-      maxHeight: `${Math.max(160, Math.round(window.innerHeight - top - edge))}px` };
+      maxHeight: `${avoidingX ? available : Math.max(160, available)}px`,
+      visibility: avoidingX && available < 100 ? 'hidden' : '' };
+
     for (const [property, value] of Object.entries(placement)) {
       if (similarTokenPanelEl.style[property] !== value) similarTokenPanelEl.style[property] = value;
     }
@@ -8913,6 +8967,12 @@ ${flapTooltipText(info)}
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
       const changed = [...record.addedNodes, ...record.removedNodes];
+      if (similarTokenPanelEl?.isConnected) {
+        const xPreviewSelector = '[data-sentry-component="TweetContent"], [data-sentry-component="XAccountLink"]';
+        const tooltip = target?.closest('[role="tooltip"], .pi-tooltip-container');
+        if (tooltip?.querySelector(xPreviewSelector) || changed.some((node) => node instanceof Element
+          && (node.matches(xPreviewSelector) || node.querySelector(xPreviewSelector)))) scheduleSimilarTokenPosition();
+      }
       if (changed.length && changed.every((node) => node instanceof Element && node.matches('.gdh-priority-push'))) continue;
       if (record.type === 'attributes' && record.attributeName === 'data-gdh-track-mc') {
         scheduleSimilarTokenScan();
@@ -9003,7 +9063,8 @@ ${flapTooltipText(info)}
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
-    changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')));
+    changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')
+      && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution'));
     if (!Object.keys(changes).length) return;
     let fomoTokenArrived = false;
     let monitorAggregateChanged = false;

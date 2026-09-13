@@ -2449,6 +2449,103 @@ function pumpSseIngest(raw) {
   if (!duplicate) pumpSseNotifyTabs();
 }
 
+// Opt-in public leaderboard contribution. No FOMO credential leaves FOMO's origin.
+const FOMO_COLLECT_BOARDS = [
+  ['all', '/v2/leaderboard?limit=100', 'totalPnL'],
+  ['30d', '/v2/leaderboard/30d?limit=100', 'pnl30d'],
+  ['7d', '/v2/leaderboard/7d?limit=100', 'pnl7d'],
+  ['24h', '/v2/leaderboard/24h?limit=100', 'pnl24h'],
+];
+let fomoRankCollectorAdvertised = false;
+let fomoRankCollectorActive = null;
+let fomoRankCollectorReadyTimer = null;
+function scheduleFomoRankCollectorReadiness() {
+  clearTimeout(fomoRankCollectorReadyTimer);
+  fomoRankCollectorReadyTimer = setTimeout(() => {
+    fomoRankCollectorEligible().then((ready) => { if (ready !== fomoRankCollectorAdvertised) restartFomoSse(); }).catch(() => {});
+  }, 300);
+}
+const isFomoRankCollectorPage = (url) => /^https:\/\/(gmgn\.ai|debot\.ai)\//.test(url || '');
+chrome.tabs.onCreated.addListener((tab) => { if (isFomoRankCollectorPage(tab.url || tab.pendingUrl)) scheduleFomoRankCollectorReadiness(); });
+chrome.tabs.onRemoved.addListener(() => { if (fomoRankCollectorAdvertised) scheduleFomoRankCollectorReadiness(); });
+chrome.tabs.onUpdated.addListener((_id, change) => {
+  if (change.url && (fomoRankCollectorAdvertised || isFomoRankCollectorPage(change.url))) scheduleFomoRankCollectorReadiness();
+});
+async function fomoRankCollectorEligible() {
+  const stored = await chrome.storage.local.get({ enabled: true, enableFomoRankContribution: false, fomoToken: null });
+  if (stored.enabled === false || stored.enableFomoRankContribution !== true || !stored.fomoToken?.token
+    || !(Number(stored.fomoToken.exp) > Date.now() + 30000)) return false;
+  const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
+  return tabs.length > 0;
+}
+function fomoCollectRows(payload, pnlKey) {
+  const raw = payload?.responseObject;
+  const rows = Array.isArray(raw) ? raw : raw?.leaderboard;
+  if (payload?.success === false || !Array.isArray(rows) || rows.length < 30 || rows.length > 100) throw Object.assign(new Error('invalid-board'), { status: 502 });
+  const str = (v, n) => String(v || '').slice(0, n);
+  if (rows.some(r => r[pnlKey] == null || !Number.isFinite(Number(r[pnlKey])))) throw Object.assign(new Error('invalid-pnl'), { status: 502 });
+  return rows.map((r, i) => ({ rank: i + 1, uid: str(r.id, 100), handle: str(r.userHandle, 40),
+    name: str(r.displayName, 120), twitter: str(r.twitter, 120), avatar: str(r.profilePictureLink, 1000),
+    followers: Number(r.followers) || 0, numTrades: Number(r.numTrades) || 0,
+    volume: Math.round(Number(r.totalVolume) || 0), pnl: Math.round(Number(r[pnlKey])) }));
+}
+async function collectFomoRankTask(task) {
+  const at = Date.now();
+  if (task?.version !== 1 || !/^[a-f0-9-]{36}$/.test(String(task.id || ''))
+    || !(task.expiresAt > at && task.expiresAt <= at + 180000) || fomoRankCollectorActive) return;
+  const prior = await chrome.storage.local.get('fomoRankCollectorLastLeaseV1');
+  if (prior.fomoRankCollectorLastLeaseV1 === task.id) return;
+  const session = await monitor985Session();
+  if (!session || fomoRankCollectorActive) return;
+  const controller = new AbortController();
+  fomoRankCollectorActive = controller;
+  const timer = setTimeout(() => controller.abort(), task.expiresAt - Date.now());
+  let report = { id: task.id, ok: false, status: 0, retryAfterMs: 0 };
+  let status = 'failed';
+  try {
+    await chrome.storage.local.set({ fomoRankCollectorLastLeaseV1: task.id });
+    if (!await fomoRankCollectorEligible()) throw new Error('not-ready');
+    await chrome.storage.local.set({ fomoRankCollectorStatusV1: { status: 'collecting', at } });
+    const boards = {};
+    for (const [key, apiPath, pnlKey] of FOMO_COLLECT_BOARDS) {
+      if (controller.signal.aborted || !await fomoRankCollectorEligible()) throw new Error('cancelled');
+      const response = await fomoQueuedFetch(async () => {
+        if (controller.signal.aborted || !await fomoRankCollectorEligible()) throw new Error('cancelled');
+        const { fomoToken } = await chrome.storage.local.get('fomoToken');
+        return fetch(`${FOMO_API}${apiPath}`, { method: 'GET', cache: 'no-store', credentials: 'include', signal: controller.signal,
+          headers: { Accept: 'application/json', 'X-Supported-Chains': FOMO_CHAINS, Authorization: `Bearer ${fomoToken.token}` } });
+      });
+      if (!response.ok) {
+        const raw = response.headers.get('Retry-After') || '';
+        const retryAfterMs = /^\d+$/.test(raw) ? Number(raw) * 1000 : Math.max(0, Date.parse(raw) - Date.now()) || 0;
+        throw Object.assign(new Error('upstream-error'), { status: response.status, retryAfterMs });
+      }
+      const payload = await response.json();
+      if (payload?.success === false || (payload?.statusCode && Number(payload.statusCode) !== 200)) {
+        throw Object.assign(new Error('upstream-error'), { status: Number(payload.statusCode) || 502 });
+      }
+      boards[key] = fomoCollectRows(payload, pnlKey);
+    }
+    if (controller.signal.aborted || !await fomoRankCollectorEligible()) throw new Error('cancelled');
+    report = { id: task.id, ok: true, boards };
+  } catch (error) {
+    report.status = Number(error?.status) || (['not-ready', 'cancelled'].includes(error?.message) || controller.signal.aborted ? 0 : 503);
+    report.retryAfterMs = Number(error?.retryAfterMs) || 0;
+  }
+  try {
+    // Only normalized public rows or an error code; no raw response, cookies, or FOMO token.
+    const response = await fetch(`${MONITOR985_ORIGIN}/api/extension/fomo-rank-result`, { method: 'POST',
+      headers: monitor985AuthHeaders(session, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(report), signal: AbortSignal.timeout(15000), cache: 'no-store' });
+    const result = await response.json();
+    if (response.ok && result.ok && result.accepted) status = 'uploaded';
+  } catch { /* Keep the server's durable hourly reservation; do not retry elsewhere. */ }
+  finally {
+    clearTimeout(timer); fomoRankCollectorActive = null;
+    await chrome.storage.local.set({ fomoRankCollectorStatusV1: { status, at: Date.now(), upstreamStatus: report.status || 0 } }).catch(() => {});
+  }
+}
+
 async function connectFomoSse() {
   if (fomoSseAbort) return;
   const session = await monitor985Session();
@@ -2460,6 +2557,8 @@ async function connectFomoSse() {
   fomoSseAbort = controller;
   try {
     const sseUrl = new URL(FOMO_SSE_URL);
+    fomoRankCollectorAdvertised = await fomoRankCollectorEligible();
+    if (fomoRankCollectorAdvertised) sseUrl.searchParams.set('fomoRankCollector', '1');
     if (fomoRankSnapshot.updatedAt) sseUrl.searchParams.set('fomoRankUpdatedAt', String(fomoRankSnapshot.updatedAt));
     const response = await fetch(sseUrl.href, {
       headers: monitor985AuthHeaders(session, {
@@ -2490,9 +2589,10 @@ async function connectFomoSse() {
         const line = buffer.slice(0, idx).replace(/\r$/, '');
         buffer = buffer.slice(idx + 1);
         if (line === '') {
-          if ((eventType === 'fomo' || eventType === 'pump-trade' || eventType === 'fomo-ranks') && dataLines.length) {
+          if ((eventType === 'fomo' || eventType === 'pump-trade' || eventType === 'fomo-ranks' || eventType === 'fomo-rank-collect') && dataLines.length) {
             try {
               const payload = JSON.parse(dataLines.join('\n'));
+              if (eventType === 'fomo-rank-collect') void collectFomoRankTask(payload).catch(() => {});
               if (payload?.event && eventType === 'fomo') fomoSseIngest(payload.event);
               if (payload?.event && eventType === 'pump-trade') pumpSseIngest(payload.event);
               if (payload?.event && eventType === 'fomo-ranks') fomoSseIngestRanks(payload.event);
@@ -2527,7 +2627,14 @@ async function connectFomoSse() {
 }
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'local' || !changes.monitor985SessionV1) return;
+  if (areaName !== 'local') return;
+  if (changes.enabled || changes.enableFomoRankContribution || changes.fomoToken) {
+    if (changes.enabled?.newValue === false || changes.enableFomoRankContribution?.newValue === false
+      || (changes.fomoToken && !changes.fomoToken.newValue?.token)) fomoRankCollectorActive?.abort();
+    scheduleFomoRankCollectorReadiness();
+  }
+  if (!changes.monitor985SessionV1) return;
+  fomoRankCollectorActive?.abort();
   resetMonitor985EventCaches();
   monitor985LastEventId = '';
   fomoSseBackoff = 5000;

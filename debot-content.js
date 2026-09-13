@@ -2766,7 +2766,8 @@
     });
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
-      changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')));
+      changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')
+        && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution'));
       if (!Object.keys(changes).length) return;
       for (const [key, change] of Object.entries(changes)) {
         if (key === 'monitorFomoConfig') loadMonitorFomo(change.newValue);

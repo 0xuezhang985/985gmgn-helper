@@ -4,6 +4,8 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
+v0.46.71：同名币浮窗自动避让 GMGN 原生 X 预览，显示在预览下方；新增默认关闭、带 NEW 的「参与 FOMO 榜单更新」。开启后，服务器正常每小时从已同意、已登录且打开 GMGN / DeBot 的在线账号中随机选择一人，使用本地 FOMO 登录态读取总榜 / 30 天 / 7 天 / 24 小时四个收益榜，只上传公开榜单字段。复用现有 SSE，不增加所有用户的榜单轮询；失败停止本轮并退避，不上传 FOMO 令牌。插件排名徽章仍按原有每日推送节奏更新。
+
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>
 

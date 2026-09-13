@@ -26,6 +26,7 @@ const DEFAULTS = {
   enableBrewPanel: true,
   flapRpc: '',
   enableFomoFeed: true,
+  enableFomoRankContribution: false,
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
@@ -73,6 +74,7 @@ const featureInputs = {
   enableAllPools: document.querySelector('#enable-all-pools'),
   enableBrewPanel: document.querySelector('#enable-brew-panel'),
   enableFomoFeed: document.querySelector('#enable-fomo-feed'),
+  enableFomoRankContribution: document.querySelector('#enable-fomo-rank-contribution'),
   enablePumpFeed: document.querySelector('#enable-pump-feed'),
   fomoFeedChainOnly: document.querySelector('#fomo-feed-chain-only'),
   enableMonitorAggregate: document.querySelector('#enable-monitor-aggregate'),
@@ -536,4 +538,14 @@ function renderPriorityWallets(list) {
 chrome.storage.local.get({ specialWallets: [] }, (stored) => renderPriorityWallets(stored.specialWallets));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.specialWallets) renderPriorityWallets(changes.specialWallets.newValue);
+});
+
+function renderFomoRankCollectorStatus(value) {
+  const el = document.querySelector('#fomo-rank-collector-status');
+  const labels = { collecting: '本轮被选中，正在采集', uploaded: '榜单已上传', failed: '本轮未完成，服务器会保留旧榜单并退避' };
+  el.textContent = value?.status ? (labels[value.status] || '等待任务') + (value.at ? ` · ${new Date(value.at).toLocaleString('zh-CN')}` : '') : '需连接 985monitor，并在本地登录 FOMO；未被选中不采集';
+}
+chrome.storage.local.get('fomoRankCollectorStatusV1', (s) => renderFomoRankCollectorStatus(s.fomoRankCollectorStatusV1));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.fomoRankCollectorStatusV1) renderFomoRankCollectorStatus(changes.fomoRankCollectorStatusV1.newValue);
 });

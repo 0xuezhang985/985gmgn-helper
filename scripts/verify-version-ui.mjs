@@ -21,6 +21,8 @@ try {
     }},storage:{local:{get:(defaults,cb)=>cb(typeof defaults==='object'?defaults:{}),set:(_s,cb)=>cb?.()},onChanged:{addListener:()=>{}}},tabs:{create:()=>{}}};
   `});
   await page.addScriptTag({content:read('popup.js')});
+  assert.equal(await page.locator('#enable-fomo-rank-contribution').isChecked(),false);
+  assert.match(await page.locator('label').filter({has:page.locator('#enable-fomo-rank-contribution')}).innerText(),/NEW.*自愿参与/s);
   await page.waitForFunction(()=>document.querySelector('#update-status').textContent.includes('0.46.70'));
   assert.match(await page.locator('#update-summary').innerText(),/修复布局/);
   await page.locator('#skip-update').click();assert.match(await page.locator('#update-status').innerText(),/已跳过/);
