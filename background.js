@@ -834,14 +834,10 @@ chrome.runtime.onStartup.addListener(() => {
   refreshMonitor985Config(true).then(() => restartFomoSse());
 });
 
-// fomo 登录态保活：privy access 令牌约 1 小时过期。原来只在用到 fomo 接口时
-// 被动续期——几天不开 fomo 面板，refresh 链会闲置到过期，又得回去重新登录。
-// 这里改成主动：每 10 分钟查一次，只在快过期（剩余 <12 分钟）时才续——
-// 每次续期都会轮换 refresh（旧的作废），续得越勤、和网页 localStorage 失同步的
-// 分叉窗口越多，所以把轮换压到每小时恰好一次。写回照旧 + fomo-early.js 在页面
-// 加载最早时刻抢先同步，双保险。
+// Privy 会话只由 FOMO 页面自己的 SDK 续期。心跳只能证明脚本存活，不能证明 SDK 已加载。
 const FOMO_KEEPALIVE_ALARM = '985gmgn-fomo-keepalive';
-// 用 create 的幂等性：同名闹钟已存在时不会重置计时。
+const FOMO_EXPIRY_ALARM = '985gmgn-fomo-expiry';
+// 先 get 再 create；同名闹钟若直接重建，会重置计时。
 // 之前直接在模块顶层 create——service worker 每次休眠/唤醒都重跑一遍模块，
 // 闹钟被反复重建、计时永远归零，10 分钟的周期实际从来没走到过。
 chrome.alarms.get(FOMO_KEEPALIVE_ALARM).then((existing) => {
@@ -855,8 +851,19 @@ chrome.alarms.get(MONITOR985_SYNC_ALARM).then((existing) => {
 // 挂起期间不跑任何代码，所以剩 20 分钟就确保页面 owner 已存在且不可丢弃；
 // 真正的轮换时机仍由页面 Privy SDK 自己决定。
 const FOMO_REFRESH_AHEAD_MS = 20 * 60000;
-const FOMO_KEEPER_URL = 'https://fomo.family/?gdh_keeper=1';
+const FOMO_KEEPER_URL = 'https://fomo.family/token?gdh_keeper=1';
+const FOMO_REFRESH_RETRY_MS = 5 * 60000;
 let fomoKeepAliveAt = 0;
+
+async function fomoScheduleExpiry() {
+  const { fomoToken } = await chrome.storage.local.get('fomoToken');
+  const exp = Number(fomoToken?.exp) || 0;
+  if (!fomoToken?.token || exp <= Date.now()) { await chrome.alarms.clear(FOMO_EXPIRY_ALARM); return; }
+  const when = Math.max(Date.now() + 30000, exp - 30000);
+  const prior = await chrome.alarms.get(FOMO_EXPIRY_ALARM);
+  if (!prior || Math.abs(prior.scheduledTime - when) > 2000) await chrome.alarms.create(FOMO_EXPIRY_ALARM, { when });
+}
+fomoScheduleExpiry().catch(() => {});
 
 /** 开着的 fomo.family 标签页 */
 async function fomoOpenTabs() {
@@ -867,53 +874,74 @@ async function fomoOpenTabs() {
   }
 }
 
-/**
- * fomo 页面还活着吗——活着它就是 privy 轮换链的主人。
- * 靠 content script 的 15 秒心跳判断，不靠 tabs.query：标签页在不在是一回事，
- * 里面的 JS 还跑不跑是另一回事（Chrome 会冻结长期后台标签页，冻住的页面不会续期）。
- */
-async function fomoPageAlive() {
-  try {
-    const { fomoPage } = await chrome.storage.local.get('fomoPage');
-    return !!(fomoPage?.at && Date.now() - fomoPage.at < 45000);
-  } catch {
-    return false;
+/** 在页面 MAIN world 调用已经加载的官方 SDK；不加载远程代码、不读取钱包或签名。 */
+async function fomoPageSdkAccess(renew = false) {
+  if (location.hostname !== 'fomo.family') return { status: 'wrong-origin' };
+  const nodes = [document.body, ...document.querySelectorAll('body > *, #root > *, #app > *, header, main')].slice(0, 24);
+  const seen = new Set();
+  for (const node of nodes) {
+    let fiber = Object.entries(node || {}).find(([key]) => key.startsWith('__reactFiber$'))?.[1];
+    for (let i = 0; fiber && i < 120; i += 1, fiber = fiber.return) {
+      if (seen.has(fiber)) break;
+      seen.add(fiber);
+      const sdk = fiber.memoizedProps?.value;
+      if (!sdk || typeof sdk.getAccessToken !== 'function' || typeof sdk.login !== 'function'
+        || typeof sdk.logout !== 'function' || typeof sdk.ready !== 'boolean') continue;
+      if (!sdk.ready) return { status: 'not-ready' };
+      if (!sdk.authenticated) return { status: 'signed-out' };
+      if (!renew) return { status: 'ready' };
+      try {
+        const token = await sdk.getAccessToken();
+        const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const exp = Number(payload.exp) * 1000;
+        // 只返回状态与有效期，不把令牌放到 DOM、postMessage 或诊断信息中。
+        return { status: exp > Date.now() ? 'renewed' : 'expired', exp };
+      } catch { return { status: 'sdk-error' }; }
+    }
   }
+  return { status: 'sdk-missing' };
 }
 
-/**
- * Privy 的 refresh 不是一个可脱离页面裸调的公开契约。实测页面 SDK 会额外带
- * Authorization / privy-ca-id / privy-client-id 等会话上下文，后台只交 refresh_token
- * 会稳定返回 403。这里确保恰好有一个真实页面承担续期，并阻止 Chrome 丢弃它。
- */
-async function fomoEnsureSdkOwner(requireDedicated = false) {
+async function fomoSdkAccess(tabId, renew = false) {
+  let timer;
+  try {
+    const result = await Promise.race([
+      chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: fomoPageSdkAccess, args: [renew] }),
+      new Promise(resolve => { timer = setTimeout(() => resolve([{ result: { status: 'sdk-timeout' } }]), 15000); }),
+    ]);
+    return result?.[0]?.result || { status: 'sdk-missing' };
+  } catch { return { status: 'page-unavailable' }; }
+  finally { clearTimeout(timer); }
+}
+
+/** 首页现为营销页，不包含 Privy Provider。只用 SDK 存在的应用页，否则创建 /token 守护页。 */
+async function fomoEnsureSdkOwner() {
   try {
     const tabs = await fomoOpenTabs();
     const keepers = tabs.filter((tab) => String(tab.url || '').includes('gdh_keeper='));
-    let owner = keepers.find((tab) => !tab.discarded) || keepers[0];
-    let created = false;
-    if (!owner && !requireDedicated) owner = tabs.find((tab) => !tab.discarded && tab.status === 'complete');
-    if (!owner && !requireDedicated) owner = tabs.find((tab) => !tab.discarded);
+    const candidates = tabs.filter((tab) => !tab.discarded && !keepers.includes(tab)
+      && /^https:\/\/fomo\.family\/(token|profile)(?:[/?#]|$)/.test(tab.url || ''))
+      .sort((a, b) => Number(b.active) - Number(a.active)).slice(0, 3);
+    let owner;
+    for (const tab of candidates) {
+      if ((await fomoSdkAccess(tab.id)).status === 'ready') { owner = tab; break; }
+    }
+    if (!owner) owner = keepers.find((tab) => !tab.discarded) || keepers[0];
     if (!owner) {
       owner = await chrome.tabs.create({ url: FOMO_KEEPER_URL, active: false, pinned: true });
-      created = true;
       await fomoAuthNote('keeper-created');
     }
     const dedicated = String(owner.url || '').includes('gdh_keeper=');
-    const wasDiscarded = !!owner.discarded;
-    owner = await chrome.tabs.update(owner.id, {
-      autoDiscardable: false,
-      ...(dedicated ? { pinned: true } : {}),
-    });
-    if (wasDiscarded || (requireDedicated && dedicated && !created)) {
-      await chrome.tabs.reload(owner.id);
-      await fomoAuthNote(wasDiscarded ? 'keeper-reloaded' : 'keeper-woken');
-    }
+    const discarded = !!owner.discarded;
+    const migrate = dedicated && new URL(owner.url).pathname !== '/token';
+    owner = await chrome.tabs.update(owner.id, { autoDiscardable: false,
+      ...(dedicated ? { pinned: true } : {}), ...(migrate ? { url: FOMO_KEEPER_URL } : {}) });
+    if (discarded && !migrate) await chrome.tabs.reload(owner.id);
+    // 只有确认为可用的应用页接管后才关闭扩展自己的守护页；普通首页的心跳不能接管。
+    const extra = keepers.filter(tab => tab.id !== owner.id).map(tab => tab.id);
+    if (extra.length) await chrome.tabs.remove(extra);
     return owner;
-  } catch (error) {
-    await fomoAuthNote('keeper-failed', { message: String(error?.message || '').slice(0, 80) });
-    return null;
-  }
+  } catch { await fomoAuthNote('keeper-failed'); return null; }
 }
 
 /** 等页面把它续出来的新令牌镜像过来（content.js 每 5 秒同步一次）。 */
@@ -929,36 +957,18 @@ async function fomoWaitMirror(prevToken, timeoutMs = 35000) {
 
 async function fomoKeepAlive(force) {
   try {
-    // 同一分钟内被多个入口触发时只做一次
     if (!force && Date.now() - fomoKeepAliveAt < 60000) return;
     fomoKeepAliveAt = Date.now();
     const { fomoToken } = await chrome.storage.local.get('fomoToken');
-    if (!fomoToken?.refresh) return; // 从未登录/会话已被 privy 作废，无从保活
-    const exp = Number(fomoToken.exp) || 0;
-    const left = exp ? exp - Date.now() : 0;
-    if (exp && left > FOMO_REFRESH_AHEAD_MS) return; // 还很新鲜，不动
-
-    // 页面 SDK 是唯一 refresh owner。没有活页时创建一个后台守护页；已有普通 fomo 页
-    // 就只设为不可丢弃，不擅自把用户正在看的页钉住或刷新。
-    const owner = await fomoEnsureSdkOwner();
-    if (!owner) return;
-    if (await fomoPageAlive()) {
-      await fomoAuthNote('defer-to-page', { leftMin: Math.round(left / 60000) });
-      if (force) await fomoRefreshSession();
-      return;
-    }
-    // 普通标签页可能只是“未丢弃”但 JS 已冻结。心跳断了就确保专用 keeper 存在；
-    // 专用页可以安全重载，不会打断用户正在看的 FOMO 页面。
-    await fomoEnsureSdkOwner(true);
-    if (force) await fomoRefreshSession();
-  } catch {
-    // 网络抖动等，下一轮再试
-  }
+    if (!fomoToken?.token) return;
+    if (Number(fomoToken.exp) - Date.now() > FOMO_REFRESH_AHEAD_MS) return;
+    await fomoRefreshSession();
+  } catch { /* 下一次闹钟或用户请求再检查；不另建续期 owner。 */ }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) checkForUpdate();
-  if (alarm.name === FOMO_KEEPALIVE_ALARM) fomoKeepAlive();
+  if (alarm.name === FOMO_KEEPALIVE_ALARM || alarm.name === FOMO_EXPIRY_ALARM) fomoKeepAlive(true);
   if (alarm.name === MONITOR985_SYNC_ALARM) {
     refreshMonitor985Config(true).then(() => restartFomoSse());
   }
@@ -1229,26 +1239,42 @@ function jwtExpMs(token) {
 async function fomoRefreshSession() {
   if (fomoRefreshInFlight) return fomoRefreshInFlight;
   fomoRefreshInFlight = (async () => {
-    const { fomoToken } = await chrome.storage.local.get('fomoToken');
-    if (!fomoToken?.refresh) return null;
-    const owner = await fomoEnsureSdkOwner(!(await fomoPageAlive()));
-    if (!owner) return null;
-    const adopted = await fomoWaitMirror(fomoToken.token);
-    if (adopted) {
-      await fomoAuthNote('adopt-from-page', { expMin: Math.round((adopted.exp - Date.now()) / 60000) });
-      return adopted;
+    const { fomoToken, fomoSessionRecoveryV1: prior } = await chrome.storage.local.get(['fomoToken', 'fomoSessionRecoveryV1']);
+    if (!fomoToken?.token) return null;
+    const usable = value => value?.token && Number(value.exp) > Date.now() ? value : null;
+    if (prior?.tokenExp === fomoToken.exp && prior.retryAt > Date.now()) return usable(fomoToken);
+    // 先落盘预约，SW 重启/多个面板同时失败也不会形成开页循环。
+    const attemptAt = Date.now();
+    const state = { tokenExp: fomoToken.exp, attemptAt, retryAt: attemptAt + FOMO_REFRESH_RETRY_MS, status: 'waiting-sdk' };
+    await chrome.storage.local.set({ fomoSessionRecoveryV1: state });
+    const owner = await fomoEnsureSdkOwner();
+    let result = { status: 'page-unavailable' };
+    if (owner) {
+      // 等待新应用页水合，但每次恢复只调用一次 SDK getAccessToken。
+      for (let i = 0; i < 12; i += 1) {
+        result = await fomoSdkAccess(owner.id);
+        if (result.status === 'ready') { result = await fomoSdkAccess(owner.id, true); break; }
+        if (result.status === 'signed-out') break;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      if (result.status === 'renewed') {
+        // 更新扩展后旧 FOMO 页的 content script 已失效；只重注入登录镜像，不刷新用户页。
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: owner.id }, files: ['fomo-early.js'] });
+          await chrome.tabs.sendMessage(owner.id, { type: 'fomo-sync-now' });
+        } catch { /* 页面关闭时使用已镜像状态。 */ }
+      }
     }
-    // 页面刚加载而旧 JWT 尚未到 exp 时，SDK 合法地选择不轮换；保留可用旧令牌。
-    const latest = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
-    if (latest?.token && Number(latest.exp) > Date.now()) return latest;
-    await fomoAuthNote('page-refresh-timeout');
-    return null;
+    let latest = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
+    if (result.status === 'renewed' && (!usable(latest) || Number(latest.exp) < result.exp)) {
+      latest = await fomoWaitMirror(fomoToken.token, 7000) || latest;
+    }
+    const ok = usable(latest);
+    await chrome.storage.local.set({ fomoSessionRecoveryV1: { ...state, retryAt: ok ? Math.min(state.retryAt, Number(ok.exp) - 60000) : state.retryAt, status: ok ? 'ready' : result.status } });
+    await fomoAuthNote(ok ? 'sdk-session-ready' : 'sdk-session-unavailable', { status: result.status });
+    return ok;
   })().catch(() => null);
-  try {
-    return await fomoRefreshInFlight;
-  } finally {
-    fomoRefreshInFlight = null;
-  }
+  try { return await fomoRefreshInFlight; } finally { fomoRefreshInFlight = null; }
 }
 
 function fomoBodyUnauthed(body) {
@@ -1267,7 +1293,7 @@ async function fomoResponseUnauthed(response) {
 async function fomoAuthedFetch(path, init = {}) {
   let stored = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
   // 剩不到 10 秒才等待页面续期；更早等待只会让一次正常请求白卡 35 秒。
-  if (stored?.refresh && stored.exp && stored.exp - Date.now() < 10000) {
+  if (stored?.token && stored.exp && stored.exp - Date.now() < 10000) {
     // 续期失败要区分两种：privy 把会话作废了（存储已被清空，应引导重新登录）
     // 还是只是这次没成（旧令牌还留着，照旧拿它试一把）
     stored = (await fomoRefreshSession())
@@ -1287,10 +1313,12 @@ async function fomoAuthedFetch(path, init = {}) {
       credentials: 'include',
     }));
   };
-  let res = await send(stored?.token);
+  let res = stored?.token && stored.exp && stored.exp <= Date.now()
+    ? new Response(JSON.stringify({ statusCode: 401, success: false }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+    : await send(stored?.token);
   let renewed = false;
   let unauthed = await fomoResponseUnauthed(res);
-  if (unauthed && stored?.refresh) {
+  if (unauthed && stored?.token) {
     const next = await fomoRefreshSession();
     if (next?.token && next.token !== stored?.token) {
       renewed = true;
@@ -2449,6 +2477,23 @@ function pumpSseIngest(raw) {
   if (!duplicate) pumpSseNotifyTabs();
 }
 
+// 参与授权来自明确的更新说明确认；旧版已经主动开启的用户保留原授权。
+function fomoRankContributionAllowed(stored) {
+  return stored?.fomoRankCollectorConsentV1?.version === 1 && stored.fomoRankCollectorConsentV1.acceptedAt > 0
+    || stored?.enableFomoRankContribution === true;
+}
+async function acceptFomoRankUpdateNotice() {
+  await chrome.storage.local.set({ fomoRankCollectorConsentV1: { version: 1, acceptedAt: Date.now() } });
+  scheduleFomoRankCollectorReadiness();
+}
+async function showFomoRankUpdateNotice() {
+  const stored = await chrome.storage.local.get(['fomoRankCollectorConsentV1', 'enableFomoRankContribution', 'fomoRankCollectorNoticeShownV1']);
+  if (fomoRankContributionAllowed(stored) || stored.fomoRankCollectorNoticeShownV1 === 1) return;
+  // 老版更新器 / 手动 ZIP 未记录新条款确认：只展示一次，未确认之前不采集。
+  await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html#update-notice'), active: false });
+  await chrome.storage.local.set({ fomoRankCollectorNoticeShownV1: 1 });
+}
+
 // Opt-in public leaderboard contribution. No FOMO credential leaves FOMO's origin.
 const FOMO_COLLECT_BOARDS = [
   ['all', '/v2/leaderboard?limit=100', 'totalPnL'],
@@ -2472,8 +2517,8 @@ chrome.tabs.onUpdated.addListener((_id, change) => {
   if (change.url && (fomoRankCollectorAdvertised || isFomoRankCollectorPage(change.url))) scheduleFomoRankCollectorReadiness();
 });
 async function fomoRankCollectorEligible() {
-  const stored = await chrome.storage.local.get({ enabled: true, enableFomoRankContribution: false, fomoToken: null });
-  if (stored.enabled === false || stored.enableFomoRankContribution !== true || !stored.fomoToken?.token
+  const stored = await chrome.storage.local.get({ enabled: true, enableFomoRankContribution: false, fomoRankCollectorConsentV1: null, fomoToken: null });
+  if (stored.enabled === false || !fomoRankContributionAllowed(stored) || !stored.fomoToken?.token
     || !(Number(stored.fomoToken.exp) > Date.now() + 30000)) return false;
   const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
   return tabs.length > 0;
@@ -2628,8 +2673,10 @@ async function connectFomoSse() {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  if (changes.enabled || changes.enableFomoRankContribution || changes.fomoToken) {
+  if (changes.fomoToken) fomoScheduleExpiry().catch(() => {});
+  if (changes.enabled || changes.enableFomoRankContribution || changes.fomoRankCollectorConsentV1 || changes.fomoToken) {
     if (changes.enabled?.newValue === false || changes.enableFomoRankContribution?.newValue === false
+      || (changes.fomoRankCollectorConsentV1 && !changes.fomoRankCollectorConsentV1.newValue)
       || (changes.fomoToken && !changes.fomoToken.newValue?.token)) fomoRankCollectorActive?.abort();
     scheduleFomoRankCollectorReadiness();
   }
@@ -2842,19 +2889,7 @@ async function recordFomoPageHeartbeat(message, sender) {
     await chrome.storage.local.set({
       fomoPage: { at: Date.now(), visible: message?.visible === true, tabId, keeper },
     });
-    // 用户打开真实 FOMO 页时，它接管 SDK 会话；关闭扩展专用 keeper，避免两个页面
-    // 同时在 exp 附近轮换同一个 refresh_token。只关带 gdh_keeper 标记的扩展页。
-    if (!keeper) {
-      const tabs = await fomoOpenTabs();
-      const extraIds = tabs
-        .filter((tab) => tab.id !== tabId && String(tab.url || '').includes('gdh_keeper='))
-        .map((tab) => tab.id)
-        .filter(Number.isInteger);
-      if (extraIds.length) {
-        await chrome.tabs.remove(extraIds);
-        await fomoAuthNote('keeper-closed-for-page', { tabs: extraIds.length });
-      }
-    }
+    // 心跳不代表 Privy SDK 可用，也不能作为关闭 keeper 的依据。
   } catch {
     // 标签页在异步查询期间关闭，下一次心跳/闹钟会收敛
   }
@@ -3009,10 +3044,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'accept-fomo-update-notice') {
+    if (sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) return false;
+    acceptFomoRankUpdateNotice().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message?.type === 'install-update') {
     if (sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) return false;
     installUpdate(message.version)
-      .then((response) => sendResponse({ ...response, shouldReload: response.ok === true }))
+      .then(async (response) => {
+        if (response.ok && message.acceptFomoNotice === 1) await acceptFomoRankUpdateNotice();
+        sendResponse({ ...response, shouldReload: response.ok === true });
+      })
       .catch((error) => sendResponse({ ok: false, error: error.message || '升级失败' }));
     return true;
   }
@@ -3035,3 +3079,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
+
+showFomoRankUpdateNotice().catch(() => {});

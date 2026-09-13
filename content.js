@@ -8,102 +8,7 @@
   // 供 GMGN 代币页的 fomo 浮窗读取该代币的观点/交易（fomo 接口必须带 Bearer）。
   // 令牌只存在浏览器本地，只会发给 fomo 自己的 API，不外传；之后不跑任何 GMGN 逻辑。
   if (location.hostname === 'fomo.family' || location.hostname.endsWith('.fomo.family')) {
-    const unwrap = (raw) => {
-      if (!raw) return '';
-      let value = raw;
-      try {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed === 'string') value = parsed;
-      } catch {
-        // 非 JSON 就按原样用
-      }
-      value = String(value || '').trim();
-      return value.length > 20 ? value : '';
-    };
-    const jwtExpMs = (token) => {
-      try {
-        const payload = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-        return Number(payload.exp) > 0 ? Number(payload.exp) * 1000 : 0;
-      } catch {
-        return 0;
-      }
-    };
-    // 多账号登录时 Privy 会写 privy:<userId>:token。token 与 refresh_token 必须按
-    // 相同前缀成对读取；旧代码各取第一个，枚举顺序不同时会拼出一条不存在的会话链。
-    const readPrivy = () => {
-      const pairs = [];
-      try {
-        for (const tokenKey of Object.keys(window.localStorage).filter((key) => /^privy:(.+:)?token$/.test(key))) {
-          const prefix = tokenKey.slice(0, -'token'.length);
-          const token = unwrap(window.localStorage.getItem(tokenKey));
-          if (!token) continue;
-          pairs.push({
-            token,
-            refresh: unwrap(window.localStorage.getItem(`${prefix}refresh_token`)),
-            exp: jwtExpMs(token),
-          });
-        }
-      } catch {
-        // localStorage 不可用
-      }
-      pairs.sort((a, b) => (b.exp || 0) - (a.exp || 0));
-      return pairs[0] || { token: '', refresh: '', exp: 0 };
-    };
-    let lastSent = '';
-    const syncFomoToken = () => {
-      const { token, refresh } = readPrivy();
-      // 读不到就什么都不做：未登录、privy 还没水合、切页面的空档都会短暂读空，
-      // 以前这里会写 null，把一个还能用的令牌直接擦掉。
-      if (!token) return;
-      const stamp = `${token}|${refresh}`;
-      if (stamp === lastSent) return;
-      const pageExp = jwtExpMs(token);
-      try {
-        chrome.storage.local.get('fomoToken', (stored) => {
-          const cur = stored?.fomoToken;
-          // 和插件存的完全一致（fomo-early 抢跑写回后的常态）就不用再写一遍
-          if (cur?.token === token && (cur.refresh || '') === (refresh || '')) {
-            lastSent = stamp;
-            return;
-          }
-          // 抢跑迁移或另一个页面可能已经镜像了更晚过期的新令牌；较旧页面不准盖回去。
-          if (cur?.token && cur.token !== token && cur.exp && pageExp && cur.exp >= pageExp) return;
-          lastSent = stamp;
-          try {
-            chrome.storage.local.set({ fomoToken: { token, refresh, at: Date.now(), exp: pageExp } });
-          } catch {
-            // 扩展上下文失效
-          }
-        });
-      } catch {
-        // 扩展上下文失效
-      }
-    };
-    syncFomoToken();
-    // 页面开着时它才是 privy 轮换链的主人，插件只镜像。同一个 document 里的
-    // localStorage 写入不触发 storage 事件，监听不到，只能轮询——间隔要短，
-    // 页面续期后插件手里的 refresh 立刻就是废的，镜像慢一秒就多一秒踩空的窗口。
-    window.setInterval(syncFomoToken, 5000);
-    window.addEventListener('focus', syncFomoToken);
-    window.addEventListener('visibilitychange', syncFomoToken);
-
-    // 心跳：告诉后台"这页还活着、现在可见不可见"。后台据此决定要不要让位——
-    // 可见的页面 SDK 会自己续，插件插手就会分叉；藏起来的页面定时器被节流，
-    // 续不动，得由插件接管。tabs.query 只能看出标签页在不在，看不出被没被节流。
-    const beat = () => {
-      try {
-        chrome.runtime.sendMessage({
-          type: 'fomo-page-heartbeat',
-          visible: document.visibilityState === 'visible',
-          keeper: new URLSearchParams(location.search).has('gdh_keeper'),
-        }, () => void chrome.runtime.lastError);
-      } catch {
-        // 扩展上下文失效
-      }
-    };
-    beat();
-    window.setInterval(beat, 15000);
-    document.addEventListener('visibilitychange', beat);
+    // 独立的 fomo-early.js 只读镜像页面 SDK 会话，不再把旧 refresh 写回网页。
     return;
   }
 
@@ -5915,8 +5820,8 @@ ${flapTooltipText(info)}
     } else if (reason === 'expired') {
       title.textContent = 'fomo 登录态过期了';
       why.textContent = stored?.refresh
-        ? '已尝试自动续期但没成功（通常是 fomo 那边把会话作废了）。照下面走一遍就能重新拿到，之后仍会自动续。'
-        : '这份令牌是在支持自动续期之前存下的，缺少续期凭证。照下面走一遍，新的令牌以后就能自动续了。';
+        ? '尚未取得页面 SDK 的新令牌；不代表账号被退出。请先打开 FOMO 应用页确认登录，插件会自动重新同步。'
+        : '请打开 FOMO 应用页确认登录状态，插件只读取页面 SDK 续出的令牌，不需要手动复制。';
     } else if (reason === 'rate-limited') {
       const minutes = Math.max(1, Math.ceil(Number(res?.retryAfterMs || 0) / 60000));
       title.textContent = 'fomo 暂时限流，插件已停止请求';
@@ -9064,7 +8969,7 @@ ${flapTooltipText(info)}
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
     changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')
-      && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution'));
+      && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution' && key !== 'fomoSessionRecoveryV1'));
     if (!Object.keys(changes).length) return;
     let fomoTokenArrived = false;
     let monitorAggregateChanged = false;

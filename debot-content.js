@@ -2077,7 +2077,7 @@
     note.textContent = reason === 'no-token'
       ? '持仓者、观点和交易数据需要登录后读取；插件尚未拿到浏览器里的 fomo 登录态。'
       : reason === 'expired'
-        ? '已保存的登录态失效，自动续期没有成功。重新进入 fomo 登录一次即可恢复。'
+        ? '尚未取得页面 SDK 的新令牌；请打开 FOMO 应用页确认登录，插件会自动重新同步。'
         : reason === 'rate-limited'
           ? `约 ${Math.max(1, Math.ceil(Number(response?.retryAfterMs || 0) / 60000))} 分钟后自动恢复；冷却期间不会继续访问 fomo。`
           : safeText(response?.message || '请稍后重试', 120);
@@ -2767,7 +2767,7 @@
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
       changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')
-        && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution'));
+        && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution' && key !== 'fomoSessionRecoveryV1'));
       if (!Object.keys(changes).length) return;
       for (const [key, change] of Object.entries(changes)) {
         if (key === 'monitorFomoConfig') loadMonitorFomo(change.newValue);

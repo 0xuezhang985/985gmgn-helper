@@ -42,9 +42,9 @@ try {
   assert.throws(()=>normalizeBoards({...boards(),all:[...rows()].reverse()}));pass('拒绝乱序排名和非有限数值');
 
   const source=fs.readFileSync(new URL('../background.js',import.meta.url),'utf8');
-  const code=source.slice(source.indexOf('const FOMO_COLLECT_BOARDS'),source.indexOf('async function connectFomoSse'));
+  const code=source.slice(source.indexOf('function fomoRankContributionAllowed'),source.indexOf('async function connectFomoSse'));
   async function exercise(mode){
-    const store={enabled:mode!=='master-disabled',enableFomoRankContribution:mode!=='disabled',fomoToken:{token:'private-fomo-fixture-token',exp:Date.now()+3600000}};
+    const store={enabled:mode!=='master-disabled',enableFomoRankContribution:mode==='legacy',fomoRankCollectorConsentV1:mode==='disabled'?null:{version:1,acceptedAt:Date.now()},fomoToken:{token:'private-fomo-fixture-token',exp:Date.now()+3600000}};
     const calls=[];let upstream=0;
     const context={AbortController,AbortSignal,URL,Response,setTimeout,clearTimeout,
       chrome:{storage:{local:{get:async keys=>typeof keys==='string'?{[keys]:store[keys]}:{...keys,...Object.fromEntries(Object.keys(keys).filter(k=>k in store).map(k=>[k,store[k]]))},set:async values=>Object.assign(store,values)}},tabs:{query:async()=>[{}],onCreated:{addListener(){}},onRemoved:{addListener(){}},onUpdated:{addListener(){}}}},
@@ -52,7 +52,7 @@ try {
       MONITOR985_ORIGIN:'https://www.985monitor.xyz',FOMO_API:'https://prod-api.fomo.family',FOMO_CHAINS:'1,56',fomoQueuedFetch:fn=>fn(),
       fetch:async(url,init)=>{calls.push({url,init});if(url.startsWith('https://prod-api.fomo.family')){upstream++;
         if(mode==='403'&&upstream===2)return new Response('{}',{status:403});
-        if(mode==='cancel'&&upstream===1)store.enableFomoRankContribution=false;
+        if(mode==='cancel'&&upstream===1)store.fomoRankCollectorConsentV1=null;
         const data=rows().map(r=>({id:r.uid,userHandle:r.handle,displayName:r.name,totalPnL:r.pnl,pnl30d:r.pnl,pnl7d:r.pnl,pnl24h:r.pnl}));
         if(mode==='bad-pnl')delete data[0].totalPnL;
         return Response.json({success:true,statusCode:200,responseObject:data});
@@ -66,7 +66,7 @@ try {
   }
   const ok=await exercise('success');assert.equal(ok.upstream,4);assert.equal(ok.body.ok,true);assert.equal(ok.status.status,'uploaded');pass('插件只读四个固定官方接口；上传仅有白名单字段，不泄露 FOMO 令牌');
   const denied=await exercise('403');assert.equal(denied.upstream,2);assert.equal(denied.body.ok,false);assert.equal(denied.body.status,403);assert.equal(denied.body.boards,undefined);pass('第二个榜拒绝后不再请求其余榜，不上传部分结果');
-  const disabled=await exercise('disabled');assert.equal(disabled.upstream,0);const masterDisabled=await exercise('master-disabled');assert.equal(masterDisabled.upstream,0);const cancelled=await exercise('cancel');assert.equal(cancelled.upstream,1);assert.equal(cancelled.body.boards,undefined);pass('默认关闭、总开关禁用与采集中退出均不继续访问 FOMO');
+  const legacy=await exercise('legacy');assert.equal(legacy.upstream,4);const disabled=await exercise('disabled');assert.equal(disabled.upstream,0);const masterDisabled=await exercise('master-disabled');assert.equal(masterDisabled.upstream,0);const cancelled=await exercise('cancel');assert.equal(cancelled.upstream,1);assert.equal(cancelled.body.boards,undefined);pass('未确认更新、总开关禁用与采集中撤回授权均不继续访问 FOMO');
   const malformed=await exercise('bad-pnl');assert.equal(malformed.upstream,1);assert.equal(malformed.body.ok,false);pass('缺失盈亏字段不被错误转换为 0 后上传');
   now=collector.status().nextAttemptAt;collector.tick();const beforeTimeout=sent.length;
   const expiredJob=JSON.parse(sent.at(-1).s.match(/data: (.+)/)[1]);

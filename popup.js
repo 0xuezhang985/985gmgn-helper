@@ -26,7 +26,6 @@ const DEFAULTS = {
   enableBrewPanel: true,
   flapRpc: '',
   enableFomoFeed: true,
-  enableFomoRankContribution: false,
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
@@ -74,7 +73,6 @@ const featureInputs = {
   enableAllPools: document.querySelector('#enable-all-pools'),
   enableBrewPanel: document.querySelector('#enable-brew-panel'),
   enableFomoFeed: document.querySelector('#enable-fomo-feed'),
-  enableFomoRankContribution: document.querySelector('#enable-fomo-rank-contribution'),
   enablePumpFeed: document.querySelector('#enable-pump-feed'),
   fomoFeedChainOnly: document.querySelector('#fomo-feed-chain-only'),
   enableMonitorAggregate: document.querySelector('#enable-monitor-aggregate'),
@@ -479,8 +477,9 @@ checkUpdateButton.addEventListener('click', async () => {
   setUpdateBusy(true);
   try {
     if (currentUpdateState?.updateAvailable) {
+      if (!window.confirm('更新说明：新版会默认参与 FOMO 公开榜单更新。正常每小时全站随机选一名已登录的在线用户，以本地登录态读取四个公开收益榜并上传 985monitor；不上传 FOMO 令牌、Cookie 或私人交易。详情见 GitHub 完整说明。点击确定表示同意并安装，取消则保留当前版本。')) return;
       updateStatus.textContent = '正在下载并安装新版…';
-      const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion });
+      const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion, acceptFomoNotice: 1 });
       if (!result?.ok) throw new Error(result?.error || '升级失败');
       updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载扩展并刷新 GMGN 页面…`;
       setTimeout(() => chrome.runtime.reload(), 350);
@@ -538,6 +537,18 @@ function renderPriorityWallets(list) {
 chrome.storage.local.get({ specialWallets: [] }, (stored) => renderPriorityWallets(stored.specialWallets));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.specialWallets) renderPriorityWallets(changes.specialWallets.newValue);
+});
+
+const fomoUpdateNotice = document.querySelector('#fomo-update-notice');
+chrome.storage.local.get(['fomoRankCollectorConsentV1', 'enableFomoRankContribution'], (s) => {
+  fomoUpdateNotice.hidden = s.enableFomoRankContribution === true || (s.fomoRankCollectorConsentV1?.version === 1 && s.fomoRankCollectorConsentV1.acceptedAt > 0);
+});
+document.querySelector('#accept-fomo-update-notice').addEventListener('click', async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    const result = await sendRuntimeMessage({ type: 'accept-fomo-update-notice' });
+    if (result?.ok) fomoUpdateNotice.hidden = true;
+  } finally { event.currentTarget.disabled = false; }
 });
 
 function renderFomoRankCollectorStatus(value) {

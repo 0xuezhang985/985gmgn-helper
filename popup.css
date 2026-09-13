@@ -278,3 +278,9 @@ footer { margin-top: 9px; text-align: center; font-size: 11px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+#fomo-update-notice[hidden] { display: none; }
+#fomo-update-notice { padding: 12px; border: 1px solid var(--accent, #f5b83d); }
+#fomo-update-notice p { margin: 8px 0; font-size: 12px; line-height: 1.6; }
+#fomo-update-notice a { color: #70b7ff; }
+#accept-fomo-update-notice { width: 100%; padding: 9px; }

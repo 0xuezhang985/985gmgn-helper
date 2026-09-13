@@ -11,18 +11,24 @@ try {
   await page.setContent(read('popup.html').replace(/<script[^>]*src="popup.js"[^>]*><\/script>/,''));
   await page.addStyleTag({content:read('popup.css')});
   await page.addScriptTag({content:`
-    window.msgs=[];window.reloads=0;window.failInstall=true;
+    window.confirm=()=>true;window.msgs=[];window.reloads=0;window.failInstall=true;
     window.state={status:'available',currentVersion:'0.46.69',latestVersion:'0.46.70',updateAvailable:true,updaterInstalled:true,protocolVersion:2,summary:'修复布局和隐藏按钮，保留个人配置。'};
     window.chrome={runtime:{getManifest:()=>({version:'0.46.69'}),reload:()=>reloads++,sendMessage:(m,cb)=>{
       msgs.push(m);if(m.type==='skip-update'){state={...state,skipped:!!m.version,updateAvailable:!m.version,status:m.version?'skipped':'available'};cb(state);}
+      else if(m.type==='accept-fomo-update-notice')cb({ok:true});
       else if(m.type==='update-history')cb({ok:true,versions:[{version:'0.46.67',summary:'稳定旧版，保留配置。'},{version:'0.46.66',summary:'旧版简介 <img src=x onerror=alert(1)>'}]});
       else if(m.type==='rollback-update'||m.type==='install-update')cb(failInstall?{ok:false,error:'浏览器加载的是另一目录'}:{ok:true,updatedVersion:m.version});
       else cb(state);
     }},storage:{local:{get:(defaults,cb)=>cb(typeof defaults==='object'?defaults:{}),set:(_s,cb)=>cb?.()},onChanged:{addListener:()=>{}}},tabs:{create:()=>{}}};
   `});
   await page.addScriptTag({content:read('popup.js')});
-  assert.equal(await page.locator('#enable-fomo-rank-contribution').isChecked(),false);
-  assert.match(await page.locator('label').filter({has:page.locator('#enable-fomo-rank-contribution')}).innerText(),/NEW.*自愿参与/s);
+  assert.equal(await page.locator('#enable-fomo-rank-contribution').count(),0);
+  assert.equal(await page.locator('#fomo-update-notice').isVisible(),true);
+  assert.match(await page.locator('#fomo-update-notice').innerText(),/每小时全站随机选一名.*不上传 FOMO 令牌/s);
+  await page.screenshot({path:new URL('../dist/v72-update-notice.png',import.meta.url).pathname.replace(/^\/(?:([A-Z]):)/,'$1:')});
+  await page.locator('#accept-fomo-update-notice').click();
+  assert.equal(await page.locator('#fomo-update-notice').isVisible(),false);
+  console.log(`PASS ${++checks}: 无独立参与开关，一次更新说明确认明确展示采集范围`);
   await page.waitForFunction(()=>document.querySelector('#update-status').textContent.includes('0.46.70'));
   assert.match(await page.locator('#update-summary').innerText(),/修复布局/);
   await page.locator('#skip-update').click();assert.match(await page.locator('#update-status').innerText(),/已跳过/);
