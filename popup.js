@@ -151,6 +151,8 @@ const updaterSetup = document.querySelector('#updater-setup');
 let historyVersions = [];
 let historyLoading = false;
 let updateBusy = false;
+let fomoUpdateConsentLoaded = false;
+let fomoUpdateConsentAccepted = false;
 const DEFAULT_RELEASE_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
 
 let currentUpdateState = null;
@@ -343,6 +345,10 @@ function sendRuntimeMessage(message) {
 
 function renderUpdateState(state) {
   currentUpdateState = state;
+  const label = (value) => {
+    checkUpdateButton.textContent = fomoUpdateConsentLoaded && !fomoUpdateConsentAccepted && !state?.updateAvailable
+      ? '同意并使用当前版' : value;
+  };
   updateCard.classList.toggle('has-update', Boolean(state?.updateAvailable));
   releaseLink.hidden = !state?.latestVersion;
   releaseLink.dataset.url = state?.releaseUrl || DEFAULT_RELEASE_URL;
@@ -353,36 +359,36 @@ function renderUpdateState(state) {
 
   if (!state) {
     updateStatus.textContent = '尚未检查更新';
-    checkUpdateButton.textContent = '检查更新';
+    label('检查更新');
     return;
   }
 
   if (state.updateAvailable) {
     updateStatus.textContent = `发现 v${state.latestVersion}，当前 v${state.currentVersion}`;
-    checkUpdateButton.textContent = state.updaterInstalled ? '一键升级' : '打开 GitHub';
+    label(state.updaterInstalled ? '一键升级' : '打开 GitHub');
     return;
   }
 
   if (state.skipped) {
     updateStatus.textContent = `已跳过 v${state.latestVersion}，当前保留 v${state.currentVersion}；以后有新版仍会提醒`;
-    checkUpdateButton.textContent = '检查其它更新';
+    label('检查其它更新');
     return;
   }
 
   if (state.status === 'error') {
     updateStatus.textContent = `检查失败：${state.error || '请稍后重试'}`;
-    checkUpdateButton.textContent = '重新检查';
+    label('重新检查');
     return;
   }
 
   if (state.status === 'updater_missing') {
     updateStatus.textContent = '本地更新器未安装，可前往 GitHub';
-    checkUpdateButton.textContent = '打开 GitHub';
+    label('打开 GitHub');
     return;
   }
 
   updateStatus.textContent = `当前 v${state.currentVersion} 已是最新版`;
-  checkUpdateButton.textContent = '重新检查';
+  label('重新检查');
 }
 
 function openReleasePage() {
@@ -468,16 +474,19 @@ releaseLink.addEventListener('click', (event) => {
 });
 
 checkUpdateButton.addEventListener('click', async () => {
-  if (updateBusy) return;
-  if (currentUpdateState?.status === 'updater_missing') {
-    openReleasePage();
-    return;
-  }
-
+  if (updateBusy || !fomoUpdateConsentLoaded) return;
   setUpdateBusy(true);
   try {
+    // 沿用同一个版本按钮，不另设开关或弹窗；说明始终紧邻按钮且可读。
+    if (!fomoUpdateConsentAccepted && !currentUpdateState?.updateAvailable) {
+      const result = await sendRuntimeMessage({ type: 'accept-fomo-update-notice' });
+      if (!result?.ok) throw new Error('说明确认未保存，请重试');
+      fomoUpdateConsentAccepted = true;
+      renderUpdateState(currentUpdateState);
+      return;
+    }
+    if (currentUpdateState?.status === 'updater_missing') { openReleasePage(); return; }
     if (currentUpdateState?.updateAvailable) {
-      if (!window.confirm('更新说明：新版会默认参与 FOMO 公开榜单更新。正常每小时全站随机选一名已登录的在线用户，以本地登录态读取四个公开收益榜并上传 985monitor；不上传 FOMO 令牌、Cookie 或私人交易。详情见 GitHub 完整说明。点击确定表示同意并安装，取消则保留当前版本。')) return;
       updateStatus.textContent = '正在下载并安装新版…';
       const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion, acceptFomoNotice: 1 });
       if (!result?.ok) throw new Error(result?.error || '升级失败');
@@ -488,9 +497,7 @@ checkUpdateButton.addEventListener('click', async () => {
     await refreshUpdateState();
   } catch (error) {
     updateStatus.textContent = `升级检查失败：${error.message || '未知错误'}`;
-  } finally {
-    setUpdateBusy(false);
-  }
+  } finally { setUpdateBusy(false); }
 });
 
 sendRuntimeMessage({ type: 'get-update-state' })
@@ -539,16 +546,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.specialWallets) renderPriorityWallets(changes.specialWallets.newValue);
 });
 
-const fomoUpdateNotice = document.querySelector('#fomo-update-notice');
 chrome.storage.local.get(['fomoRankCollectorConsentV1', 'enableFomoRankContribution'], (s) => {
-  fomoUpdateNotice.hidden = s.enableFomoRankContribution === true || (s.fomoRankCollectorConsentV1?.version === 1 && s.fomoRankCollectorConsentV1.acceptedAt > 0);
-});
-document.querySelector('#accept-fomo-update-notice').addEventListener('click', async (event) => {
-  event.currentTarget.disabled = true;
-  try {
-    const result = await sendRuntimeMessage({ type: 'accept-fomo-update-notice' });
-    if (result?.ok) fomoUpdateNotice.hidden = true;
-  } finally { event.currentTarget.disabled = false; }
+  fomoUpdateConsentAccepted = s.enableFomoRankContribution === true
+    || (s.fomoRankCollectorConsentV1?.version === 1 && s.fomoRankCollectorConsentV1.acceptedAt > 0);
+  fomoUpdateConsentLoaded = true;
+  renderUpdateState(currentUpdateState);
 });
 
 function renderFomoRankCollectorStatus(value) {

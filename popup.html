@@ -8,14 +8,6 @@
   </head>
   <body>
     <main>
-      <section id="fomo-update-notice" class="settings-section" hidden>
-        <div class="section-heading"><h2>更新说明确认 <em class="new-badge">NEW</em></h2></div>
-        <p>同意后默认参与 FOMO 公开榜单更新：正常每小时全站随机选一名已登录的在线用户，用本地登录态读取四个收益榜并上传 985monitor；不上传 FOMO 令牌、Cookie、私人持仓或交易。</p>
-        <p>不再单独设置参与开关。未确认前不采集，其他功能照常使用；关闭插件总开关可停止参与。</p>
-        <p><a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">GitHub 完整说明</a></p>
-        <button id="accept-fomo-update-notice" type="button">同意更新说明并继续</button>
-      </section>
-
       <header>
         <div class="brand">
           <img class="brand-icon" src="icons/icon48.png" alt="" />
@@ -128,7 +120,8 @@
         <div class="update-heading"><strong>版本管理 <span class="update-new">NEW</span></strong><small id="update-status" role="status">正在读取更新状态…</small></div>
         <small id="fomo-rank-collector-status" class="sync-status"></small>
           <p id="update-summary" class="update-summary">检查更新后显示本版简介。</p>
-        <div class="update-actions"><button id="check-update" type="button">检查更新</button><button id="skip-update" type="button" hidden>跳过本次更新</button><a id="release-link" href="#" hidden>完整说明</a></div>
+        <div class="update-actions"><button id="check-update" type="button" aria-describedby="fomo-update-notice">检查更新</button><button id="skip-update" type="button" hidden>跳过本次更新</button><a id="release-link" href="#" hidden>完整说明</a></div>
+        <p id="fomo-update-notice" class="update-consent-note">更新 / 确认即同意：本地读取 FOMO 公开榜单并上传 985monitor（不上传凭据）。<a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">说明</a></p>
         <details id="update-history"><summary>一键回退历史版本 <span class="update-new">NEW</span></summary>
           <p class="update-hint">仅提供官方正式版；安装前校验并备份。保留设置，回退后跳过刚撤回的版本。</p>
           <p id="history-status" class="update-hint" role="status"></p>

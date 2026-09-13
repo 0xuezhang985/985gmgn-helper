@@ -2486,14 +2486,6 @@ async function acceptFomoRankUpdateNotice() {
   await chrome.storage.local.set({ fomoRankCollectorConsentV1: { version: 1, acceptedAt: Date.now() } });
   scheduleFomoRankCollectorReadiness();
 }
-async function showFomoRankUpdateNotice() {
-  const stored = await chrome.storage.local.get(['fomoRankCollectorConsentV1', 'enableFomoRankContribution', 'fomoRankCollectorNoticeShownV1']);
-  if (fomoRankContributionAllowed(stored) || stored.fomoRankCollectorNoticeShownV1 === 1) return;
-  // 老版更新器 / 手动 ZIP 未记录新条款确认：只展示一次，未确认之前不采集。
-  await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html#update-notice'), active: false });
-  await chrome.storage.local.set({ fomoRankCollectorNoticeShownV1: 1 });
-}
-
 // Opt-in public leaderboard contribution. No FOMO credential leaves FOMO's origin.
 const FOMO_COLLECT_BOARDS = [
   ['all', '/v2/leaderboard?limit=100', 'totalPnL'],
@@ -3079,5 +3071,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
-
-showFomoRankUpdateNotice().catch(() => {});
