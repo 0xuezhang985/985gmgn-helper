@@ -24,7 +24,7 @@ if args.ssh_proxy_port:
     proxy_socket.settimeout(30)
     proxy_socket.connect((setting('HOST'), 22))
 ssh.connect(setting('HOST'), username=setting('USER'), password=setting('PW'), timeout=60,
-            banner_timeout=45, auth_timeout=30, look_for_keys=False, allow_agent=False, sock=proxy_socket)
+            banner_timeout=45, auth_timeout=30, look_for_keys=False, allow_agent=False, sock=proxy_socket, compress=True)
 sftp = ssh.open_sftp()
 sftp.get_channel().settimeout(60)
 def run(cmd):
@@ -106,7 +106,7 @@ function ensureFomoLeaderboardDailyPush() {'''),
     if not args.apply:
         raise SystemExit(0)
     # Optimistic concurrency check immediately before writing; no stale local main file upload.
-    if sha(read(target)) != sha(original):
+    if run('sha256sum ' + shlex.quote(target)).split()[0] != sha(original):
         raise RuntimeError('production changed during preparation')
     backup = '/opt/x-monitor-widget/backup-browser-ranks-' + stamp
     run('mkdir -m 700 ' + shlex.quote(backup))
@@ -132,7 +132,8 @@ function ensureFomoLeaderboardDailyPush() {'''),
     fomo_after = run('systemctl list-units --all --type=service --plain --no-legend "*fomo*" | awk \'{print $1}\' | xargs -r systemctl show -p Id -p MainPID -p ActiveState')
     unauth = run('curl -sS --max-time 15 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data "{}" http://127.0.0.1:3030/api/extension/fomo-rank-result')
     if unauth != '401': raise RuntimeError('unauthenticated contribution was not rejected with 401')
-    report = {'backup': backup, 'mainSha': sha(read(target)), 'moduleSha': sha(read(base + '/fomo-rank-collector.cjs')),
+    report = {'backup': backup, 'mainSha': run('sha256sum ' + shlex.quote(target)).split()[0],
+              'moduleSha': run('sha256sum ' + shlex.quote(base + '/fomo-rank-collector.cjs')).split()[0],
               'protectedFilesUnchanged': after == baseline, 'fomoServiceStateUnchanged': fomo_before == fomo_after,
               'contributionUnauthStatus': unauth, 'service': 'active'}
     (stage / 'deployment.json').write_text(json.dumps(report, indent=2), encoding='utf8')
