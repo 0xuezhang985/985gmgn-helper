@@ -53,6 +53,11 @@
         <div class="section-heading"><div><h2>追踪流与特别关注</h2><small>GMGN / DeBot 共用</small></div></div>
         <div class="feature-list">
           <label class="switch-row"><span><strong>特别关注高亮</strong><small>钱包列表和追踪行悬停显示 ⭐，颜色与置顶跨站共用</small></span><input id="enable-special-wallet" type="checkbox" /></label>
+          <details class="sub-settings compact">
+            <summary><strong>重点提醒 · 持续置顶 <em class="new-badge">NEW</em></strong></summary>
+            <small>开启特别关注高亮并选择钱包后，其新推送持续置顶，点 × 才关闭；点击代币不清除。仅本地保存，刷新可恢复。选择后立即生效，不新增追踪面板入口按钮。</small>
+            <div id="priority-wallet-list"></div>
+          </details>
           <label class="switch-row"><span><strong>追踪人名防误触</strong><small>开启后点人物名字不再跳转钱包；币名仍正常跳币</small></span><input id="disable-tracker-person-navigation" type="checkbox" /></label>
           <label class="switch-row"><span><strong>GMGN 监控全链聚合</strong><small>汇总各链追踪代币，并沿用监控面板当前筛选条件</small></span><input id="enable-monitor-aggregate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>GMGN / DeBot：当前币与 ≥90% 相似币一起排序；市值跟随追踪缓存更新，高亮当前币，点击无刷新跳转</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>

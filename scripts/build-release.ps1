@@ -17,6 +17,7 @@ if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
 $files = @(
   'manifest.json',
   'background.js',
+  'priority-push.js',
   'page-bridge.js',
   'monitor-aggregate.js',
   'content.js',

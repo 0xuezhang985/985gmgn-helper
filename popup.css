@@ -266,3 +266,15 @@ button:hover { filter: brightness(1.06); }
 #status.success { color: var(--ok); }
 #save { width: 100%; padding: 9px 12px; }
 footer { margin-top: 9px; text-align: center; font-size: 11px; }
+#priority-wallet-list {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#priority-wallet-list .control-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

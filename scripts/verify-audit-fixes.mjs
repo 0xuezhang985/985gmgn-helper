@@ -1155,7 +1155,7 @@ await test('DeBot 只注入追踪、FOMO 与独立 Brew 浮窗模块', () => {
   const main = debotScripts.find((entry) => entry.world === 'MAIN');
   const isolated = debotScripts.find((entry) => entry.world !== 'MAIN');
   assert.deepEqual(main.js, ['debot-bridge.js']);
-  assert.deepEqual(isolated.js, ['debot-content.js', 'brew-content.js']);
+  assert.deepEqual(isolated.js, ['priority-push.js', 'debot-content.js', 'brew-content.js']);
   assert.deepEqual(isolated.css, ['debot-styles.css', 'brew-styles.css']);
   assert.ok(!isolated.js.includes('content.js'));
   for (const file of ['debot-bridge.js', 'debot-content.js', 'debot-styles.css']) {

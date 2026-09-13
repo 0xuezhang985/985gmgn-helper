@@ -82,6 +82,10 @@
   let specialManageOpen = false;
   let specialPalette = null;
   let specialPinStrip = null;
+  const priorityPush = globalThis.GdhPriorityPush?.create((href) => {
+    const link = document.createElement('a'); link.href = href;
+    bindDebotNavigation(link); link.click();
+  });
   let specialPinBaselineDone = false;
   const specialPinSeen = new Set();
 
@@ -1199,6 +1203,7 @@
           label: safeText(item?.label, 32),
           color: normalizeSpecialColor(item?.color),
           pin: item?.pin === true,
+          persistentPin: item?.persistentPin === true,
         }] : null;
       }).filter(Boolean));
   }
@@ -1284,6 +1289,13 @@
     input.addEventListener('change', () => updateSpecialWallet(address, { pin: input.checked }));
     pin.append(input, document.createTextNode('📌 新推送置顶 10 秒'));
     palette.appendChild(pin);
+    const priority = document.createElement('label');
+    priority.className = 'gdh-debot-special-palette__pin';
+    const priorityInput = document.createElement('input'); priorityInput.type = 'checkbox';
+    priorityInput.checked = meta.persistentPin === true;
+    priorityInput.addEventListener('change', () => updateSpecialWallet(address, { persistentPin: priorityInput.checked }));
+    priority.append(priorityInput, document.createTextNode('重点提醒 · 手动关闭前持续置顶 NEW'));
+    palette.appendChild(priority);
     document.body.appendChild(palette);
     const width = palette.offsetWidth || 230;
     const height = palette.offsetHeight || 70;
@@ -1538,9 +1550,12 @@
         row.style.removeProperty('--gdh-debot-special-color');
       });
       specialPinStrip?.remove(); specialPinStrip = null;
+      priorityPush?.setContext(null, 0, specialWalletMap);
       return;
     }
     ensureSpecialManageUI(root);
+    const top = layout.list.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    priorityPush?.setContext(root, Math.max(42, top), specialWalletMap);
     const rows = sidebarTrackRows(layout.list);
     const current = [];
     for (const row of rows) {
@@ -1557,7 +1572,15 @@
     for (const item of current) {
       if (specialPinSeen.has(item.signature)) continue;
       rememberSpecialPin(item.signature);
-      if (item.wallet.meta?.pin) pinSidebarRow(item.row);
+      if (item.wallet.meta?.persistentPin) {
+        const row = item.row;
+        // Only bridge absolute timestamps/transactions identify persistent events.
+        if (!row.dataset.gdhDebotTrackTx && !(Number(row.dataset.gdhDebotTrackTs) > 0)) continue;
+        const href = row.matches('a[href*="/token/"]') ? row.getAttribute('href')
+          : row.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
+        priorityPush?.capture(`${new URL(href, location.origin).pathname.split('/').slice(0, 3).join('/')}|${item.signature}`, { wallet: item.wallet.address, href,
+          name: item.wallet.meta.label || item.wallet.label, detail: globalThis.GdhPriorityPush.snapshot(row) });
+      } else if (item.wallet.meta?.pin) pinSidebarRow(item.row);
     }
   }
 
@@ -2743,6 +2766,8 @@
     });
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
+      changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')));
+      if (!Object.keys(changes).length) return;
       for (const [key, change] of Object.entries(changes)) {
         if (key === 'monitorFomoConfig') loadMonitorFomo(change.newValue);
         else if (key === 'monitorPumpConfig') loadMonitorPump(change.newValue);
@@ -2778,11 +2803,11 @@
     }, true);
     feedObserver = new MutationObserver((records) => {
       const isOwnedNode = (node) => node instanceof Element
-        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-pin-strip, .gdh-debot-rwa-link, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')
-          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel'));
+        && (node.matches('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-fomo-launcher, .gdh-debot-special-manage-button, .gdh-debot-special-manage, .gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-link, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')
+          || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')) return false;
+        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {

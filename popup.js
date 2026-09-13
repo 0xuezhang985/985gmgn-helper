@@ -10,6 +10,7 @@ const DEFAULTS = {
   enableManifestoToast: true,
   enableManifestoTab: true,
   enableSpecialWallet: true,
+  specialWallets: [],
   disableTrackerPersonNavigation: false,
   enableRemindAlert: true,
   enableFomoPanel: true,
@@ -506,3 +507,33 @@ sendRuntimeMessage({ type: 'get-update-state' })
       error: error.message,
     });
   });
+
+// Per-wallet opt-in; never overwrite the latest color/pin preferences on save.
+function renderPriorityWallets(list) {
+  const host = document.querySelector('#priority-wallet-list');
+  host.replaceChildren();
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) { host.textContent = '暂无特别关注钱包，请先用已有 ☆ / 特别关注管理添加。'; return; }
+  for (const wallet of rows) {
+    const label = document.createElement('label'); label.className = 'control-row';
+    const text = document.createElement('span');
+    text.textContent = wallet.label || `${String(wallet.address).slice(0, 6)}…${String(wallet.address).slice(-4)}`;
+    text.title = String(wallet.address || '');
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = wallet.persistentPin === true;
+    input.setAttribute('aria-label', `${text.textContent} 重点提醒`);
+    input.addEventListener('change', async () => {
+      input.disabled = true;
+      try {
+        const stored = await chrome.storage.local.get({ specialWallets: [] });
+        await chrome.storage.local.set({ specialWallets: stored.specialWallets.map((item) => item.address === wallet.address
+          ? { ...item, persistentPin: input.checked } : item) });
+      } catch { input.checked = !input.checked; text.textContent = '保存失败，请重试'; }
+      finally { input.disabled = false; }
+    });
+    label.append(text, input); host.appendChild(label);
+  }
+}
+chrome.storage.local.get({ specialWallets: [] }, (stored) => renderPriorityWallets(stored.specialWallets));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.specialWallets) renderPriorityWallets(changes.specialWallets.newValue);
+});

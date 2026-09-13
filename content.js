@@ -532,6 +532,7 @@
             label: String(item?.label || ''),
             color: normalizeSpecialColor(item?.color),
             pin: item?.pin === true,
+            persistentPin: item?.persistentPin === true,
           }];
         })
         .filter(Boolean),
@@ -3355,6 +3356,13 @@ ${flapTooltipText(info)}
     persistSpecialWallets(next);
   }
 
+  function setSpecialWalletPriority(address, enabled) {
+    if (!address || !specialWalletMap.has(address)) return;
+    persistSpecialWallets((Array.isArray(settings.specialWallets) ? settings.specialWallets : [])
+      .map((item) => normalizeWalletAddress(item?.address) === address
+        ? { ...item, persistentPin: enabled === true } : item));
+  }
+
   function addSpecialWallet(address, label, color, pin) {
     const normalized = normalizeWalletAddress(address);
     if (!normalized || specialWalletMap.has(normalized)) return false;
@@ -3442,6 +3450,14 @@ ${flapTooltipText(info)}
     pinText.textContent = '📌 新推送置顶 10 秒';
     pinRow.append(pinBox, pinText);
     palette.appendChild(pinRow);
+    const priorityRow = document.createElement('label');
+    priorityRow.className = 'gdh-color-palette__pin';
+    const priorityBox = document.createElement('input');
+    priorityBox.type = 'checkbox';
+    priorityBox.checked = specialWalletMap.get(address)?.persistentPin === true;
+    priorityBox.addEventListener('change', () => setSpecialWalletPriority(address, priorityBox.checked));
+    priorityRow.append(priorityBox, document.createTextNode('重点提醒 · 手动关闭前持续置顶 NEW'));
+    palette.appendChild(priorityRow);
 
     document.body.appendChild(palette);
     const width = palette.offsetWidth || 220;
@@ -3580,6 +3596,7 @@ ${flapTooltipText(info)}
 
   function scanSpecialWallets() {
     if (settings.enableSpecialWallet === false) {
+      priorityPush?.setContext(null, 0, specialWalletMap);
       closeColorPalette();
       specialManageOpen = false;
       document
@@ -4153,6 +4170,7 @@ ${flapTooltipText(info)}
   const specialPinSeen = new Set();
   let specialPinBaselineDone = false;
   let specialPinStrip = null;
+  const priorityPush = globalThis.GdhPriorityPush?.create((href) => gdhSpaNavigate(href));
 
   function hasPinnedWallets() {
     for (const meta of specialWalletMap.values()) if (meta.pin) return true;
@@ -4241,8 +4259,11 @@ ${flapTooltipText(info)}
 
   function scanPinnedPush() {
     const panel = document.querySelector('[data-sentry-component="WalletTrack"]');
+    const body = panel?.querySelector('[data-sentry-component="TrackingBody"]');
+    if (panel && [...specialWalletMap.values()].some((meta) => meta.persistentPin)) panel.classList.add('gdh-callout-panel-host');
+    priorityPush?.setContext(panel, panel ? (body || panel).getBoundingClientRect().top - panel.getBoundingClientRect().top : 0, specialWalletMap);
     if (!(panel instanceof HTMLElement)) return;
-    const cards = [...panel.querySelectorAll(TRACKER_ITEM_SELECTOR)];
+    const cards = trackerCards().filter((card) => panel.contains(card) && !card.closest('.gdh-pin-strip, .gdh-priority-push'));
     if (!cards.length) return;
 
     if (!specialPinBaselineDone) {
@@ -4263,7 +4284,13 @@ ${flapTooltipText(info)}
       if (!sig) return;
       if (specialPinSeen.has(sig)) return;
       rememberPinSeen(sig);
-      if (pinnedActive && specialWalletMap.get(address)?.pin === true) {
+      const meta = specialWalletMap.get(address);
+      if (meta?.persistentPin === true) {
+        const href = card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
+        const chain = String(card.dataset.gdhTrackChain || href.split('/')[1] || '');
+        priorityPush?.capture(`${chain}|${sig}`, { wallet: address, href,
+          name: meta.label || extractRowWalletLabel(card), detail: globalThis.GdhPriorityPush.snapshot(card) });
+      } else if (pinnedActive && meta?.pin === true) {
         pinTrackerCard(card, panel);
       }
     });
@@ -8880,11 +8907,13 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '[data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '.gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
+      const changed = [...record.addedNodes, ...record.removedNodes];
+      if (changed.length && changed.every((node) => node instanceof Element && node.matches('.gdh-priority-push'))) continue;
       if (record.type === 'attributes' && record.attributeName === 'data-gdh-track-mc') {
         scheduleSimilarTokenScan();
         continue;
@@ -8974,6 +9003,8 @@ ${flapTooltipText(info)}
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
+    changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')));
+    if (!Object.keys(changes).length) return;
     let fomoTokenArrived = false;
     let monitorAggregateChanged = false;
     let fomoTrendingBlocksChanged = false;
