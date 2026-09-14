@@ -68,7 +68,7 @@ try {
   pass('稳定定位零 DOM 改写，不引起自身重复扫描');
   await page.evaluate(() => document.querySelector('.MuiTooltip-tooltip').style.height = '700px');
   await at(843, true);
-  assert.equal(await page.locator(panel + ' button').count(), 2);
+  assert.equal(await page.locator(panel + ' .gdh-debot-similar-token__row').count(), 2);
   pass('大推文占满视口时临时隐藏相似窗，保留数据和行');
   for (const [property, value] of [['display', 'none'], ['visibility', 'hidden'], ['opacity', '0']]) {
     await page.evaluate(([property, value]) => document.querySelector('.MuiTooltip-tooltip').style[property] = value, [property, value]);

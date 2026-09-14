@@ -2347,6 +2347,44 @@
   let similarTokenXWatches = [];
   let similarTokenXResize = null;
   let similarTokenXMutation = null;
+  let similarTokenUserPosition = null;
+  let similarTokenDrag = null;
+  let similarTokenDismissedRoute = '';
+
+  function bindSimilarTokenPanelControls(header, close) {
+    close.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const route = debotTokenRoute();
+      if (route) similarTokenDismissedRoute = similarTokenMetaKey(route.chain, route.address);
+      clearSimilarTokenPanel();
+    });
+    header.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.isPrimary === false || event.target.closest('button, a')) return;
+      const rect = similarTokenPanelEl.getBoundingClientRect();
+      similarTokenDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      header.setPointerCapture(event.pointerId);
+      header.classList.add('is-dragging');
+      event.preventDefault();
+    });
+    header.addEventListener('pointermove', (event) => {
+      const drag = similarTokenDrag;
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      drag.moved = true;
+      similarTokenUserPosition = { left: drag.left + dx, top: drag.top + dy };
+      scheduleSimilarTokenPosition();
+    });
+    const stop = (event) => {
+      if (!similarTokenDrag || similarTokenDrag.id !== event.pointerId) return;
+      similarTokenDrag = null;
+      header.classList.remove('is-dragging');
+      if (header.hasPointerCapture(event.pointerId)) header.releasePointerCapture(event.pointerId);
+    };
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => header.addEventListener(type, stop));
+  }
 
   function scheduleSimilarTokenPosition() {
     if (similarTokenPositionRaf || !similarTokenPanelEl?.isConnected || document.visibilityState === 'hidden') return;
@@ -2558,6 +2596,7 @@
   }
 
   function clearSimilarTokenPanel() {
+    similarTokenDrag = null;
     if (similarTokenPositionRaf) cancelAnimationFrame(similarTokenPositionRaf);
     similarTokenPositionRaf = 0;
     similarTokenXResize?.disconnect();
@@ -2592,8 +2631,9 @@
     let left;
     if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
     else left = panelRect.right + gap;
+    if (similarTokenUserPosition) left = similarTokenUserPosition.left;
     left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
-    let top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    let top = Math.max(edge, Math.min(similarTokenUserPosition?.top ?? bodyRect.top, window.innerHeight - 168));
     let avoidingX = false;
     for (const preview of similarTokenXPreviewRects()) {
       if (preview.right <= left || preview.left >= left + width || preview.bottom <= 0 || preview.top >= window.innerHeight) continue;
@@ -2618,21 +2658,31 @@
       similarTokenPanelEl = document.createElement('aside');
       similarTokenPanelEl.className = 'gdh-debot-similar-token-panel';
       similarTokenPanelEl.setAttribute('aria-label', '追踪列表同名与相似币');
-      document.body.appendChild(similarTokenPanelEl);
-      similarTokenPanelKey = '';
-    }
-    if (similarTokenPanelKey !== key) {
-      similarTokenPanelKey = key;
-      similarTokenPanelEl.replaceChildren();
       const header = document.createElement('div');
       header.className = 'gdh-debot-similar-token__header';
       const heading = document.createElement('div');
       const title = document.createElement('strong');
       title.textContent = '同名 / 相似币';
       const subtitle = document.createElement('span');
-      subtitle.textContent = `${rows.length} 个 · 币名 / ticker 相似度 ≥90%`;
       heading.append(title, subtitle);
-      header.appendChild(heading);
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'gdh-debot-similar-token__close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', '关闭同名币浮窗');
+      close.title = '关闭当前币浮窗；切换代币或重新开启功能后恢复';
+      header.title = '拖动标题栏移动浮窗';
+      header.append(heading, close);
+      bindSimilarTokenPanelControls(header, close);
+      similarTokenPanelEl.appendChild(header);
+      document.body.appendChild(similarTokenPanelEl);
+      similarTokenPanelKey = '';
+    }
+    if (similarTokenPanelKey !== key) {
+      similarTokenPanelKey = key;
+      const subtitle = similarTokenPanelEl.querySelector('.gdh-debot-similar-token__header span');
+      const subtitleText = `${rows.length} 个 · 币名 / ticker 相似度 ≥90%`;
+      if (subtitle.textContent !== subtitleText) subtitle.textContent = subtitleText;
 
       const list = document.createElement('div');
       list.className = 'gdh-debot-similar-token__list';
@@ -2702,7 +2752,9 @@
         row.append(icon, identity, stats);
         list.appendChild(row);
       }
-      similarTokenPanelEl.append(header, list);
+      const previousList = similarTokenPanelEl.querySelector('.gdh-debot-similar-token__list');
+      if (previousList) previousList.replaceWith(list);
+      else similarTokenPanelEl.appendChild(list);
     }
     positionSimilarTokenPanel(trackerPanel);
   }
@@ -2741,11 +2793,15 @@
       if (enabled) document.dispatchEvent(new Event('gdh-debot-similar-request'));
     }
     if (!enabled) {
+      similarTokenDismissedRoute = '';
       similarTokenRetained.clear();
       similarTokenTrackQuotes.clear();
       return void clearSimilarTokenPanel();
     }
     const route = debotTokenRoute();
+    const routeKey = route ? similarTokenMetaKey(route.chain, route.address) : '';
+    if (routeKey && routeKey === similarTokenDismissedRoute) return void clearSimilarTokenPanel();
+    if (routeKey) similarTokenDismissedRoute = '';
     const trackerPanel = similarTokenTrackerPanel();
     if (!route || !trackerPanel) return void clearSimilarTokenPanel();
     const candidates = [];

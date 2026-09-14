@@ -13,6 +13,7 @@ try {
   await page.addStyleTag({content:read('styles.css')});
   await page.addScriptTag({content:`
     let similarTokenPanelEl=document.querySelector('aside'),similarTokenTrackerAnchor=document.querySelector('#track');
+    let similarTokenUserPosition=null;
     let similarTokenPositionRaf=0,similarTokenXWatches=[],similarTokenXResize=null,similarTokenXMutation=null;
     const clearSimilarTokenPanel=()=>{};
     ${['scheduleSimilarTokenPosition','similarTokenXPreviewRects','positionSimilarTokenPanel'].map(take).join('\n')}

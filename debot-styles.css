@@ -1105,6 +1105,10 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
   min-height: 46px;
   padding: 7px 8px 7px 10px;
   border-bottom: 1px solid var(--border-muted, #404754);
+  gap: 8px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
 .gdh-debot-similar-token__header > div {
@@ -1122,6 +1126,31 @@ tr[data-gdh-debot-special-rainbow="1"] > td {
 .gdh-debot-similar-token__header span {
   color: var(--text-tertiary, #8a93a6);
   font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gdh-debot-similar-token__header.is-dragging { cursor: grabbing; }
+
+.gdh-debot-similar-token__close {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: 20px/24px sans-serif;
+  opacity: .65;
+  cursor: pointer;
+}
+
+.gdh-debot-similar-token__close:hover,
+.gdh-debot-similar-token__close:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .gdh-debot-similar-token__list {
