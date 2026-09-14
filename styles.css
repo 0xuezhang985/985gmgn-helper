@@ -3023,12 +3023,13 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-fomofeed.is-table {
   height: auto;
   min-height: 44px;
-  padding: 0 0 0 6px;
+  padding: 0 var(--gdh-feed-table-right, 12px) 0 var(--gdh-feed-table-left, 12px);
   gap: 0;
   justify-content: center;
 }
 .gdh-fomofeed__trow {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--gdh-feed-table-columns, 32px 0px minmax(0, 1fr) 0px minmax(0, 1fr) 12px minmax(64px, .65fr) 0px 60px);
   align-items: center;
   padding: 8px 0;
   line-height: 28px;
@@ -3042,21 +3043,21 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
   flex: none;
   overflow: hidden;
   white-space: nowrap;
+  min-width: 0;
 }
-.gdh-fomofeed__ttime { width: 42px; color: #8a93a6; font-size: 12px; }
-.gdh-fomofeed__twho { width: 120px; }
-.gdh-fomofeed__twho .gdh-fomofeed__name { max-width: 62px; }
-.gdh-fomofeed__twho.has-rank .gdh-fomofeed__name { max-width: 34px; }
-.gdh-fomofeed__tsym { width: 120px; }
-.gdh-fomofeed__symtext { overflow: hidden; text-overflow: ellipsis; max-width: 62px; color: inherit; }
-.gdh-fomofeed__tamt { width: 84px; font-weight: 600; justify-content: flex-end; }
+.gdh-fomofeed__ttime { grid-column: 1; color: #8a93a6; }
+.gdh-fomofeed__twho { grid-column: 3; padding-right: 4px; box-sizing: border-box; }
+.gdh-fomofeed__twho .gdh-fomofeed__name { min-width: 0; max-width: none; flex: 0 1 auto; }
+.gdh-fomofeed__tsym { grid-column: 5; }
+.gdh-fomofeed__symtext { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: inherit; }
+.gdh-fomofeed__tamt { grid-column: 7; font-weight: 600; justify-content: flex-start; }
 .gdh-fomofeed.is-buy .gdh-fomofeed__tamt { color: #22c55e; }
 .gdh-fomofeed.is-sell .gdh-fomofeed__tamt { color: #f87171; }
 .gdh-fomofeed.is-transfer .gdh-fomofeed__tamt { color: #94a3b8; }
 .gdh-fomofeed.is-refund .gdh-fomofeed__tamt { color: #fb923c; }
 .gdh-fomofeed.is-swap .gdh-fomofeed__tamt { color: #eab308; }
-.gdh-fomofeed__tmc { flex: 1; min-width: 0; justify-content: flex-end; padding-right: 10px; color: #8a93a6; font-size: 12px; }
-.gdh-fomofeed.is-table .gdh-fomofeed__thesis { padding: 0 10px 8px 6px; }
+.gdh-fomofeed__tmc { grid-column: 9; justify-content: flex-end; color: #8a93a6; }
+.gdh-fomofeed.is-table .gdh-fomofeed__thesis { padding: 0 0 8px; }
 
 /* 带 Flap 徽章行的战壕卡：放开高度限制，让币名行、徽章行、Dev 战绩行都完整显示，
    而不是互相挤。GMGN 原生把卡片和指标行写死了高度（h-[64px] / h-[24px] +

@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.76：修复 FOMO 守护页跳转后反复开新标签页的问题；按标签页 ID 复用，安全清理插件遗留的闲置重复页，不关闭用户正在看的页面。
+v0.46.77：修复 GMGN 列表模式中 FOMO / Pump 行错位，五列跟随原生列宽对齐，金额左对齐、长名字不挤列；调整面板宽度后自动跟随。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

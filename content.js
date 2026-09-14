@@ -7974,6 +7974,72 @@ ${flapTooltipText(info)}
     };
   }
 
+  let fomoFeedTableLayout = null;
+  let fomoFeedTableObserver = null;
+  let fomoFeedTableNodes = [];
+
+  function resetFomoFeedTableLayout() {
+    fomoFeedTableObserver?.disconnect();
+    fomoFeedTableObserver = null;
+    fomoFeedTableNodes = [];
+    fomoFeedTableLayout = null;
+  }
+
+  /** 原生列宽会随面板改变；测量五列和各自间隔，不写死旧版 42/120/120/84。 */
+  function syncFomoFeedTableLayout(cards) {
+    const header = document.querySelector(TRACKER_TABLE_HEADER);
+    const refs = header ? [{ row: header, outer: header }] : [];
+    for (const card of cards.slice(0, 3)) {
+      const row = card.querySelector(TRACKER_SYMBOL_CELL)?.parentElement || card;
+      refs.push({ row, outer: row.closest('a[href*="/token/"]') || row });
+    }
+    for (const { row, outer } of refs) {
+      const cells = [...row.children].filter(el => el instanceof HTMLElement
+        && !el.matches('.gdh-star-button, .gdh-color-button, .gdh-tokenblock, .gdh-token-relation'));
+      if (cells.length !== 5) continue;
+      const bounds = outer.getBoundingClientRect();
+      const boxes = cells.map(el => el.getBoundingClientRect());
+      if (!(bounds.width > 0) || boxes.some(box => !(box.width > 0 && box.height > 0))) continue;
+      const left = boxes[0].left - bounds.left;
+      const right = bounds.right - boxes[4].right;
+      const inner = boxes[4].right - boxes[0].left;
+      if (left < -0.5 || right < -0.5 || inner <= 0) continue;
+      const tracks = [];
+      let valid = true;
+      boxes.forEach((box, i) => {
+        if (i) {
+          const gap = box.left - boxes[i - 1].right;
+          if (gap < -0.5) valid = false;
+          tracks.push(Math.max(0, gap));
+        }
+        tracks.push(box.width);
+      });
+      if (!valid) continue;
+      // 百分比同时适应 CSS zoom / 浮动容器；每列间隔独立，兼容原生负 margin 抵消 gap。
+      const percent = (value, total) => `${(Math.max(0, value) / total * 100).toFixed(6)}%`;
+      fomoFeedTableLayout = {
+        '--gdh-feed-table-columns': tracks.map(value => percent(value, inner)).join(' '),
+        '--gdh-feed-table-left': percent(left, bounds.width),
+        '--gdh-feed-table-right': percent(right, bounds.width),
+      };
+      const nodes = [outer, ...cells];
+      if (nodes.some((el, i) => el !== fomoFeedTableNodes[i])) {
+        fomoFeedTableObserver?.disconnect();
+        fomoFeedTableObserver = new ResizeObserver(() => scheduleScan());
+        fomoFeedTableNodes = nodes;
+        nodes.forEach(el => fomoFeedTableObserver.observe(el));
+      }
+      return;
+    }
+  }
+
+  function applyFomoFeedTableLayout(card) {
+    if (!fomoFeedTableLayout || !card.classList.contains('is-table')) return;
+    for (const [key, value] of Object.entries(fomoFeedTableLayout)) {
+      if (card.style.getPropertyValue(key) !== value) card.style.setProperty(key, value);
+    }
+  }
+
   /** 表格模式的一行:列结构与 GMGN 对齐(时间 | 名称 | 币种 | 金额 | 市值)。 */
   function buildFomoFeedTableRow(ev, card, tag) {
     const profile = trackingFeedProfileMeta(ev);
@@ -8203,6 +8269,7 @@ ${flapTooltipText(info)}
       el = buildFomoFeedCard(ev);
       fomoFeedCards.set(ev.key, el);
     }
+    applyFomoFeedTableLayout(el);
     // 相对时间只在文案变化时写，避免和 MutationObserver 互相触发
     const timeEl = el.querySelector('.gdh-fomofeed__time');
     const next = fomoFeedRelTime(ev.ts);
@@ -8358,6 +8425,7 @@ ${flapTooltipText(info)}
     for (const el of fomoFeedCards.values()) el.remove();
     fomoFeedCards.clear();
     clearFomoFeedShifts();
+    resetFomoFeedTableLayout();
   }
 
   let fomoFeedLastMode = null;
@@ -8385,6 +8453,8 @@ ${flapTooltipText(info)}
       if (cards.length) layoutFomoFeedFixed(cards, new Map());
       return;
     }
+
+    if (mode === 'table') syncFomoFeedTableLayout(cards);
 
     const withTs = cards
       .map((el) => ({ el, ts: Number(el.getAttribute('data-gdh-track-ts')) || 0 }))
