@@ -24,11 +24,17 @@
         return JSON.parse(fallback);
       }
     };
-    const storageGet = (defaults) => new Promise((resolve) => {
-      try { chrome.storage.local.get(defaults, resolve); } catch { resolve(defaults); }
+    const storageGet = (defaults) => new Promise((resolve, reject) => {
+      try { chrome.storage.local.get(defaults, (value) => {
+        if (chrome.runtime.lastError) reject(new Error('extension storage unavailable'));
+        else resolve(value);
+      }); } catch (error) { reject(error); }
     });
-    const storageSet = (values) => new Promise((resolve) => {
-      try { chrome.storage.local.set(values, resolve); } catch { resolve(); }
+    const storageSet = (values) => new Promise((resolve, reject) => {
+      try { chrome.storage.local.set(values, () => {
+        if (chrome.runtime.lastError) reject(new Error('extension storage unavailable'));
+        else resolve();
+      }); } catch (error) { reject(error); }
     });
     const accountKey = (value) => (/^0x/i.test(String(value || ''))
       ? String(value || '').toLowerCase() : String(value || ''));
@@ -83,8 +89,14 @@
     let lastPrefsStamp = '';
     let lastFullSyncAt = 0;
     const syncAccount = async (force = false) => {
+      if (!chrome.runtime?.id) return;
       if (syncInflight) return syncInflight;
+      let lease = '';
+      let retryAfterMs = 0;
       syncInflight = (async () => {
+        const permission = await chrome.runtime.sendMessage({ type: '985-monitor-sync-acquire' });
+        if (!permission?.ok || !permission.lease) return;
+        lease = permission.lease;
         const auth = pageAuth();
         const stored = await storageGet({ monitor985SessionV1: null, monitor985ClientIdV1: '', monitor985SyncStateV1: null });
         let clientId = String(stored.monitor985ClientIdV1 || '').trim();
@@ -97,7 +109,7 @@
         const sameAccount = accountKey(session?.accountId) === accountKey(auth.wallet);
         const sessionFresh = sameAccount && session?.token && Number(session.expiresAt) > Date.now() + 24 * 60 * 60 * 1000;
         if (!auth.wallet || !auth.token) {
-          if (!sessionFresh) {
+          if (!session?.token || Number(session.expiresAt) <= Date.now()) {
             await storageSet({ monitor985SyncStateV1: { connected: false, reason: 'login-required', checkedAt: Date.now() } });
           }
           return;
@@ -109,14 +121,21 @@
         if (!force && !needsRebind && prefsStamp === lastPrefsStamp && !periodic) return;
         const endpoint = needsRebind ? '/api/extension/session' : '/api/extension/prefs';
         const payload = needsRebind ? { clientId, prefs } : { prefs };
+        if (!chrome.runtime?.id) return;
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: pageHeaders(auth),
           cache: 'no-store',
+          signal: AbortSignal.timeout(20000),
           body: JSON.stringify(payload),
         });
         const body = await response.json().catch(() => null);
+        if (!chrome.runtime?.id) return;
         if (!response.ok || body?.ok !== true || !body?.config) {
+          if (response.status === 429) {
+            const raw = response.headers.get('Retry-After') || '';
+            retryAfterMs = Math.max(60000, /^\d+$/.test(raw) ? Number(raw) * 1000 : (Date.parse(raw) - Date.now()) || 0);
+          } else if (response.status >= 500) retryAfterMs = 30000;
           if (response.status === 401) {
             await storageSet({ monitor985SyncStateV1: { connected: false, reason: 'login-required', checkedAt: Date.now() } });
           }
@@ -139,8 +158,14 @@
           chrome.runtime.sendMessage({ type: '985-monitor-session-updated' }, () => void chrome.runtime.lastError);
         } catch {}
       })().catch(() => {
+        retryAfterMs = 30000;
         // 短暂离线沿用上次已验证配置，后台会继续重试专用只读会话。
-      }).finally(() => { syncInflight = null; });
+      }).finally(async () => {
+        if (lease) {
+          try { await chrome.runtime.sendMessage({ type: '985-monitor-sync-release', lease, retryAfterMs }); } catch {}
+        }
+        syncInflight = null;
+      });
       return syncInflight;
     };
     // 后台在扩展启动/升级时会 ping 已打开的 985monitor 页面。收到消息说明当前

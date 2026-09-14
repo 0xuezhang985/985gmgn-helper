@@ -54,13 +54,18 @@ async function cleanupLegacyBrewPageUi() {
 async function refreshSupportedTabsAfterVersionChange() {
   try {
     const version = chrome.runtime.getManifest().version;
-    const stored = await chrome.storage.local.get(RUNNING_VERSION_KEY);
+    const stored = await chrome.storage.local.get([RUNNING_VERSION_KEY, 'gdhMonitorSyncBridgeV2']);
     if (stored?.[RUNNING_VERSION_KEY] === version) return;
     await cleanupLegacyBrewPageUi();
-    const tabs = await chrome.tabs.query({ url: ['https://gmgn.ai/*', 'https://debot.ai/*'] });
-    await Promise.allSettled(
+    const urls = ['https://gmgn.ai/*', 'https://debot.ai/*'];
+    // 老版本的失效脚本没有退出同步定时器；仅本次迁移重建监控页上下文。
+    if (!stored.gdhMonitorSyncBridgeV2) urls.push('https://985monitor.xyz/*', 'https://*.985monitor.xyz/*');
+    const tabs = await chrome.tabs.query({ url: urls });
+    const results = await Promise.allSettled(
       tabs.filter((tab) => Number.isInteger(tab.id)).map((tab) => chrome.tabs.reload(tab.id)),
     );
+    if (results.some((result) => result.status === 'rejected')) return;
+    await chrome.storage.local.set({ gdhMonitorSyncBridgeV2: true });
     await chrome.storage.local.set({ [RUNNING_VERSION_KEY]: version });
   } catch {
     // 下次 service worker 唤醒时重试；不影响其它功能
@@ -1944,6 +1949,35 @@ const FOMO_FEED_URL = `${MONITOR985_ORIGIN}/api/extension/fomo-events?limit=150`
 const PUMP_FEED_URL = `${MONITOR985_ORIGIN}/api/extension/pump-trade-events?limit=150`;
 const MONITOR985_CONFIG_TTL_MS = 3 * 60 * 1000;
 let monitor985ConfigInflight = null;
+let monitor985SyncLease = null;
+let monitor985SyncRetryAt = 0;
+
+// 跨 www/裸域、所有标签页共用一个同步写入者，避免同 clientId 互相吊销会话。
+function acquireMonitor985SyncLease(sender) {
+  let url;
+  try { url = new URL(sender?.url || ''); } catch { return { ok: false }; }
+  const tabId = sender?.tab?.id;
+  if (!Number.isInteger(tabId) || url.protocol !== 'https:'
+    || !/(^|\.)985monitor\.xyz$/.test(url.hostname)) return { ok: false };
+  const now = Date.now();
+  if (now < monitor985SyncRetryAt || (monitor985SyncLease && now < monitor985SyncLease.expiresAt)) return { ok: false };
+  monitor985SyncLease = { tabId, lease: crypto.randomUUID(), expiresAt: now + 30000 };
+  return { ok: true, lease: monitor985SyncLease.lease };
+}
+
+function releaseMonitor985SyncLease(message, sender) {
+  if (!monitor985SyncLease || sender?.tab?.id !== monitor985SyncLease.tabId
+    || message?.lease !== monitor985SyncLease.lease) return { ok: false };
+  const retryMs = Math.min(15 * 60000, Math.max(0, Number(message.retryAfterMs) || 0));
+  monitor985SyncRetryAt = Date.now() + retryMs;
+  monitor985SyncLease = null;
+  return { ok: true };
+}
+
+async function monitor985SessionIsCurrent(session) {
+  const stored = await chrome.storage.local.get('monitor985SessionV1');
+  return (stored.monitor985SessionV1?.token || '') === (session?.token || '');
+}
 
 async function monitor985Session() {
   const stored = await chrome.storage.local.get({ monitor985SessionV1: null });
@@ -1963,7 +1997,9 @@ function resetMonitor985EventCaches() {
   pumpDefaultWatchCache = { wallets: [], fetchedAt: 0 };
 }
 
-async function markMonitor985Disconnected(reason, clearSession = false) {
+async function markMonitor985Disconnected(reason, clearSession = false, session) {
+  // 旧 SSE / HTTP 的迟到 401 不能删除页面刚刚换入的新会话。
+  if (session !== undefined && !await monitor985SessionIsCurrent(session)) return false;
   resetMonitor985EventCaches();
   const patch = {
     monitorFomoConfig: { connected: false, at: Date.now() },
@@ -1972,6 +2008,7 @@ async function markMonitor985Disconnected(reason, clearSession = false) {
   };
   if (clearSession) patch.monitor985SessionV1 = null;
   await chrome.storage.local.set(patch);
+  return true;
 }
 
 async function applyMonitor985Config(config, session) {
@@ -2000,7 +2037,7 @@ async function refreshMonitor985Config(force = false) {
     const stored = await chrome.storage.local.get({ monitor985SessionV1: null, monitor985SyncStateV1: null });
     const session = stored.monitor985SessionV1;
     if (!session?.token || Number(session.expiresAt) <= Date.now()) {
-      await markMonitor985Disconnected('login-required', Boolean(session));
+      await markMonitor985Disconnected('login-required', Boolean(session), session || null);
       return false;
     }
     if (!force && stored.monitor985SyncStateV1?.connected
@@ -2011,8 +2048,9 @@ async function refreshMonitor985Config(force = false) {
         cache: 'no-store',
       });
       const body = await response.json().catch(() => null);
+      if (!await monitor985SessionIsCurrent(session)) return false;
       if (response.status === 401) {
-        await markMonitor985Disconnected('unauthorized', true);
+        await markMonitor985Disconnected('unauthorized', true, session);
         return false;
       }
       if (!response.ok || body?.ok !== true || !body?.config) throw new Error(`HTTP ${response.status}`);
@@ -2225,6 +2263,8 @@ async function fetchFomoFeed() {
   if (!session) return { ok: false, reason: 'not-connected', events: [] };
   await ensureFomoRankSnapshot();
   await refreshMonitor985Config(false);
+  if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
+  if (fomoFeedInflight) return fomoFeedInflight;
   const now = Date.now();
   if (now - fomoFeedCache.fetchedAt < FOMO_FEED_MIN_INTERVAL_MS || now < fomoFeedBackoffUntil) {
     return { ok: true, ...fomoFeedCache, stale: true };
@@ -2240,17 +2280,19 @@ async function fetchFomoFeed() {
       } finally {
         clearTimeout(timer);
       }
+      if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
       if (response.status === 304) {
         fomoFeedCache.fetchedAt = Date.now();
         fomoFeedFailCount = 0;
         return { ok: true, ...fomoFeedCache };
       }
       if (response.status === 401) {
-        await markMonitor985Disconnected('unauthorized', true);
+        await markMonitor985Disconnected('unauthorized', true, session);
         return { ok: false, reason: 'not-connected', events: [] };
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
+      if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
       const events = dedupeTrackingFeedEvents((Array.isArray(body?.events) ? body.events : [])
         .map(slimFomoEvent)
         .filter(Boolean)
@@ -2345,6 +2387,8 @@ async function fetchPumpFeed() {
   const session = await monitor985Session();
   if (!session) return { ok: false, reason: 'not-connected', events: [], defaultWallets: [] };
   await refreshMonitor985Config(false);
+  if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
+  if (pumpFeedInflight) return pumpFeedInflight;
   const now = Date.now();
   if (now - pumpFeedCache.fetchedAt < PUMP_FEED_MIN_INTERVAL_MS || now < pumpFeedBackoffUntil) {
     return { ok: true, ...pumpFeedCache, defaultWallets: [], stale: true };
@@ -2363,12 +2407,14 @@ async function fetchPumpFeed() {
       } finally {
         clearTimeout(timer);
       }
+      if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
       if (response.status === 401) {
-        await markMonitor985Disconnected('unauthorized', true);
+        await markMonitor985Disconnected('unauthorized', true, session);
         return { ok: false, reason: 'not-connected', events: [], defaultWallets: [] };
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
+      if (!await monitor985SessionIsCurrent(session)) return { ok: false, reason: 'session-changed', events: [] };
       const events = dedupeTrackingFeedEvents((Array.isArray(body?.events) ? body.events : [])
         .map(slimPumpEvent)
         .filter(Boolean)
@@ -2653,6 +2699,8 @@ async function connectFomoSse() {
   if (!session || fomoSseAbort) return;
   await refreshMonitor985Config(false);
   await ensureFomoRankSnapshot();
+  if (fomoSseAbort || !await monitor985SessionIsCurrent(session)) return;
+  if (fomoSseAbort) return;
   const generation = fomoSseGeneration;
   const controller = new AbortController();
   fomoSseAbort = controller;
@@ -2669,8 +2717,9 @@ async function connectFomoSse() {
       cache: 'no-store',
       signal: controller.signal,
     });
+    if (generation !== fomoSseGeneration || !await monitor985SessionIsCurrent(session)) { controller.abort(); return; }
     if (response.status === 401) {
-      await markMonitor985Disconnected('unauthorized', true);
+      await markMonitor985Disconnected('unauthorized', true, session);
       return;
     }
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
@@ -2684,6 +2733,7 @@ async function connectFomoSse() {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (generation !== fomoSseGeneration) { controller.abort(); return; }
       buffer += decoder.decode(value, { stream: true });
       let idx;
       while ((idx = buffer.indexOf('\n')) >= 0) {
@@ -2952,6 +3002,14 @@ async function recordFomoPageHeartbeat(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === '985-monitor-sync-acquire') {
+    sendResponse(acquireMonitor985SyncLease(sender));
+    return false;
+  }
+  if (message?.type === '985-monitor-sync-release') {
+    sendResponse(releaseMonitor985SyncLease(message, sender));
+    return false;
+  }
   if (message?.type === '985-monitor-session-updated') {
     refreshMonitor985Config(true)
       .then((ok) => { restartFomoSse(); sendResponse({ ok: Boolean(ok) }); })
