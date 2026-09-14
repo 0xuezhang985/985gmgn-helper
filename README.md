@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.73：精简更新说明，取消顶部醒目提示框、独立确认按钮、确认弹窗和自动打开说明页。只在版本按钮旁保留简短说明，详细规则见 [隐私说明](PRIVACY.md)；更新 / 确认后默认参与公开 FOMO 榜单更新，未确认不上传。沿用 v0.46.72 的 SDK 续期修复。
+v0.46.74：修复 DeBot 同名 / 相似币浮窗遮挡原生推文，自动移到推文下方；空间不足暂时隐藏，关闭后恢复，不清缓存。不改登录续期、交易与既有更新说明。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

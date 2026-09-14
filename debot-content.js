@@ -2342,6 +2342,50 @@
   let similarTokenPanelKey = '';
   let similarTokenNextRequestAt = 0;
   let similarTokenScanRaf = 0;
+  let similarTokenTrackerAnchor = null;
+  let similarTokenPositionRaf = 0;
+  let similarTokenXWatches = [];
+  let similarTokenXResize = null;
+  let similarTokenXMutation = null;
+
+  function scheduleSimilarTokenPosition() {
+    if (similarTokenPositionRaf || !similarTokenPanelEl?.isConnected || document.visibilityState === 'hidden') return;
+    similarTokenPositionRaf = requestAnimationFrame(() => {
+      similarTokenPositionRaf = 0;
+      positionSimilarTokenPanel(similarTokenTrackerAnchor);
+    });
+  }
+
+  function similarTokenXPreviewRects() {
+    // DeBot 2.2.136 uses MUI Popper, not GMGN's pi-tooltip/Sentry markers.
+    // The preview height variable also identifies loading/error/account/community cards.
+    const previews = [...document.querySelectorAll('.MuiTooltip-popper, [role="tooltip"]')].filter((node) => {
+      const tooltip = node.querySelector('.MuiTooltip-tooltip') || node;
+      if (getComputedStyle(tooltip).getPropertyValue('--twitter-preview-max-height').trim()) return true;
+      return [...tooltip.querySelectorAll('a[href]')].some((link) => {
+        try { return /^(?:(?:www|mobile)\.)?(?:x|twitter)\.com$/.test(new URL(link.href).hostname); } catch { return false; }
+      });
+    });
+    const watches = [...new Set(previews.flatMap((node) => [node, node.querySelector('.MuiTooltip-tooltip')]).filter(Boolean))];
+    if (watches.length !== similarTokenXWatches.length || watches.some((node, i) => node !== similarTokenXWatches[i])) {
+      similarTokenXResize?.disconnect();
+      similarTokenXMutation?.disconnect();
+      similarTokenXWatches = watches;
+      if (watches.length) {
+        similarTokenXResize ||= new ResizeObserver(scheduleSimilarTokenPosition);
+        similarTokenXMutation ||= new MutationObserver(scheduleSimilarTokenPosition);
+        for (const node of watches) {
+          similarTokenXResize.observe(node);
+          similarTokenXMutation.observe(node, { attributes: true, attributeFilter: ['style', 'class', 'hidden', 'data-state'] });
+        }
+      }
+    }
+    return previews.filter((node) => [node, node.querySelector('.MuiTooltip-tooltip')].filter(Boolean).every((el) => {
+      const style = getComputedStyle(el);
+      return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0
+        && !el.closest('[hidden], [data-state="closed"]');
+    })).map((node) => node.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+  }
 
   function similarTokenNormalizedName(value) {
     return String(value || '')
@@ -2514,6 +2558,12 @@
   }
 
   function clearSimilarTokenPanel() {
+    if (similarTokenPositionRaf) cancelAnimationFrame(similarTokenPositionRaf);
+    similarTokenPositionRaf = 0;
+    similarTokenXResize?.disconnect();
+    similarTokenXMutation?.disconnect();
+    similarTokenXWatches = [];
+    similarTokenTrackerAnchor = null;
     similarTokenPanelEl?.remove();
     similarTokenPanelEl = null;
     similarTokenPanelKey = '';
@@ -2529,6 +2579,7 @@
 
   function positionSimilarTokenPanel(trackerPanel) {
     if (!similarTokenPanelEl?.isConnected || !(trackerPanel instanceof HTMLElement)) return;
+    similarTokenTrackerAnchor = trackerPanel;
     const trackingBody = trackerPanel.querySelector('[data-testid="virtuoso-scroller"]');
     const panelRect = trackerPanel.getBoundingClientRect();
     const bodyRect = (trackingBody || trackerPanel).getBoundingClientRect();
@@ -2542,9 +2593,17 @@
     if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
     else left = panelRect.right + gap;
     left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
-    const top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    let top = Math.max(edge, Math.min(bodyRect.top, window.innerHeight - 168));
+    let avoidingX = false;
+    for (const preview of similarTokenXPreviewRects()) {
+      if (preview.right <= left || preview.left >= left + width || preview.bottom <= 0 || preview.top >= window.innerHeight) continue;
+      top = Math.max(top, Math.ceil(preview.bottom) + gap);
+      avoidingX = true;
+    }
+    const available = Math.max(0, Math.floor(window.innerHeight - top - edge));
     const placement = { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`,
-      maxHeight: `${Math.max(160, Math.round(window.innerHeight - top - edge))}px` };
+      maxHeight: `${avoidingX ? available : Math.max(160, available)}px`,
+      visibility: avoidingX && available < 100 ? 'hidden' : '' };
     for (const [property, value] of Object.entries(placement)) {
       if (similarTokenPanelEl.style[property] !== value) similarTokenPanelEl.style[property] = value;
     }
