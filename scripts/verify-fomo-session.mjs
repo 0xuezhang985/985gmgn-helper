@@ -25,23 +25,28 @@ pass('未登录、未水合和营销首页不冒充可续期应用页，也不�
 
 const ops = [];
 let tabs = [{ id: 1, url: 'https://fomo.family/', discarded: false }];
-const owner = context(['fomoEnsureSdkOwner'], {
+const keeperStore = {};
+const owner = context(['fomoTabUrl', 'fomoRecoverKeeper', 'fomoSelectSdkOwner', 'fomoEnsureSdkOwner'], {
+  FOMO_KEEPER_STATE_KEY: 'fomoKeeperTabsV1', fomoOwnerInFlight: null, fomoPageWasKeeper() {},
   FOMO_KEEPER_URL: 'https://fomo.family/token?gdh_keeper=1', fomoAuthNote: async () => {}, fomoOpenTabs: async () => tabs,
   fomoSdkAccess: async () => ({ status: 'ready' }),
-  chrome: { tabs: { create: async opts => { ops.push(['create', opts]); const tab = { id: 2, ...opts }; tabs.push(tab); return tab; },
-    update: async (id, opts) => { ops.push(['update', id, opts]); return { ...tabs.find(t => t.id === id), ...opts }; },
-    reload: async id => ops.push(['reload', id]), remove: async ids => ops.push(['remove', ids]) } },
+  chrome: { storage: { session: { get: async () => keeperStore, set: async values => Object.assign(keeperStore, values) } },
+    scripting: { executeScript: async () => [{ result: false }] },
+    tabs: { create: async opts => { ops.push(['create', opts]); const tab = { id: 2, ...opts }; tabs.push(tab); return tab; },
+    get: async id => tabs.find(t => t.id === id),
+    update: async (id, opts) => { ops.push(['update', id, opts]); return Object.assign(tabs.find(t => t.id === id), opts); },
+    reload: async id => ops.push(['reload', id]), remove: async id => { ops.push(['remove', id]); tabs = tabs.filter(t => t.id !== id); } } },
 });
 assert.equal((await owner.fomoEnsureSdkOwner()).id, 2); await owner.fomoEnsureSdkOwner();
 assert.equal(ops.filter(x => x[0] === 'create').length, 1); assert.equal(ops.filter(x => x[0] === 'reload').length, 0);
 assert.match(ops[0][1].url, /\/token\?/); assert.equal(ops[0][1].active, false);
 pass('首页心跳不当作 SDK，创建真实应用守护页后不重复开页或重载');
-tabs = [{ id: 4, url: 'https://fomo.family/?gdh_keeper=1' }]; ops.length = 0;
+tabs = [{ id: 4, url: 'https://fomo.family/?gdh_keeper=1', pinned: true }]; ops.length = 0;
 await owner.fomoEnsureSdkOwner(); assert.equal(ops[0][2].url, 'https://fomo.family/token?gdh_keeper=1');
 pass('旧首页 keeper 原位迁移到应用页，不增加第二个守护页');
-tabs = [{ id: 3, url: 'https://fomo.family/profile/test', active: true }, { id: 4, url: 'https://fomo.family/token?gdh_keeper=1' }]; ops.length = 0;
+tabs = [{ id: 3, url: 'https://fomo.family/profile/test', active: true }, { id: 4, url: 'https://fomo.family/token?gdh_keeper=1', pinned: true }]; ops.length = 0;
 assert.equal((await owner.fomoEnsureSdkOwner()).id, 3); assert.equal(ops.filter(x => x[0] === 'reload').length, 0);
-assert.deepEqual(Array.from(ops.find(x => x[0] === 'remove')[1]), [4]);
+assert.equal(ops.find(x => x[0] === 'remove')[1], 4);
 pass('已登录真实应用页接管后只关闭扩展自己的 keeper，不刷新用户页');
 
 const store = { fomoToken: { token: 'old', exp: Date.now() - 10000 } };
@@ -66,6 +71,10 @@ assert.equal(await recovery.fomoRefreshSession(), null); recovery = makeRecovery
 assert.equal(starts, before); assert.equal(store.fomoSessionRecoveryV1.status, 'signed-out');
 assert.ok(store.fomoSessionRecoveryV1.retryAt > Date.now()); assert.ok(!JSON.stringify(store.fomoSessionRecoveryV1).includes('expired'));
 pass('失败五分钟冷却落盘，SW 重启也不重复开页；诊断不含凭证');
+store.enabled = false; store.fomoSessionRecoveryV1 = null;
+assert.equal(await recovery.fomoRefreshSession(), null); assert.equal(starts, before);
+delete store.enabled;
+pass('关闭插件总开关后不再创建守护页或调用 SDK 续期');
 
 let upstream = 0;
 const fetcher = context(['fomoAuthedFetch', 'fomoBodyUnauthed', 'fomoResponseUnauthed'], {

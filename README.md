@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.75：GMGN / DeBot 同名币浮窗支持拖动标题栏移动，并可点击右上角 × 关闭；行情更新不复位、关闭当前币后不立即弹回。原有推文避让继续生效。
+v0.46.76：修复 FOMO 守护页跳转后反复开新标签页的问题；按标签页 ID 复用，安全清理插件遗留的闲置重复页，不关闭用户正在看的页面。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

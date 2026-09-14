@@ -1701,15 +1701,18 @@ await test('FOMO 插卡按账号名单、屏蔽、类型、代币和最低成交
 
 await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async () => {
   const calls = [];
-  const chrome = { tabs: {
+  const chrome = { storage: { session: { get: async () => ({}), set: async () => {} } }, tabs: {
     query: async () => [],
+    get: async id => ({ id, url: 'https://fomo.family/token?gdh_keeper=1', pinned: true }),
     create: async (options) => { calls.push(['create', options]); return { id: 7, url: options.url, discarded: false }; },
     update: async (id, options) => { calls.push(['update', id, options]); return { id, url: 'https://fomo.family/token?gdh_keeper=1', discarded: false }; },
     reload: async () => {},
   } };
-  const fn = extractFunction(background, 'fomoEnsureSdkOwner');
+  const fn = ['fomoTabUrl', 'fomoSelectSdkOwner', 'fomoEnsureSdkOwner'].map(name => extractFunction(background, name)).join('\n');
   const result = evaluate([fn], 'fomoEnsureSdkOwner(true)', {
     chrome, URL,
+    FOMO_KEEPER_STATE_KEY: 'fomoKeeperTabsV1', fomoOwnerInFlight: null,
+    fomoSdkAccess: async () => ({ status: 'not-ready' }),
     FOMO_KEEPER_URL: 'https://fomo.family/token?gdh_keeper=1',
     fomoOpenTabs: async () => [],
     fomoAuthNote: async () => {},
@@ -1719,14 +1722,17 @@ await test('FOMO keeper 由真实后台页承担且禁止 Chrome 丢弃', async 
   assert.equal(calls[0][1].pinned, true);
   assert.equal(calls[1][2].autoDiscardable, false);
   const frozenCalls = [];
-  const frozenChrome = { tabs: {
+  const frozenChrome = { storage: chrome.storage, tabs: {
     query: async () => [],
+    get: chrome.tabs.get,
     create: async (options) => { frozenCalls.push(['create', options]); return { id: 8, url: options.url, discarded: false }; },
     update: async (id, options) => ({ id, url: 'https://fomo.family/token?gdh_keeper=1', discarded: false, ...options }),
     reload: async () => {},
   } };
   await evaluate([fn], 'fomoEnsureSdkOwner(true)', {
     chrome: frozenChrome, URL,
+    FOMO_KEEPER_STATE_KEY: 'fomoKeeperTabsV1', fomoOwnerInFlight: null,
+    fomoSdkAccess: async () => ({ status: 'not-ready' }),
     FOMO_KEEPER_URL: 'https://fomo.family/token?gdh_keeper=1',
     fomoOpenTabs: async () => [{ id: 3, url: 'https://fomo.family/', discarded: false, status: 'complete' }],
     fomoAuthNote: async () => {},
