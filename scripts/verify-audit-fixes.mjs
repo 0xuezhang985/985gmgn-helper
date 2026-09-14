@@ -886,9 +886,10 @@ await test('插件连续同源近额成交在 20 秒内只保留最新一条', (
     ])})`,
     { TRACKING_FEED_BURST_MS: 20000 },
   );
-  assert.equal(deduped.length, 2);
+  assert.equal(deduped.length, 3);
   assert.equal(deduped[0].key, 'fomo:new');
-  assert.equal(deduped[1].key, 'fomo:unique');
+  assert.equal(deduped[1].key, 'fomo:old');
+  assert.equal(deduped[2].key, 'fomo:unique');
   assert.ok(extractFunction(background, 'fetchFomoFeed').includes('dedupeTrackingFeedEvents'));
   assert.ok(extractFunction(background, 'fetchPumpFeed').includes('dedupeTrackingFeedEvents'));
 });
@@ -904,7 +905,7 @@ await test('插入事件会与 GMGN 原生追踪交易去重且不误伤观点�
 
   const fomo = { source: 'fomo', type: 'buy', addr: '0xABCDEF', chain: 'bsc', ts: 100000, usd: 100 };
   const row = { addr: '0xabcdef', chain: 'bsc', side: 'buy', ts: 110000, usd: 103 };
-  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify(fomo)}, ${JSON.stringify(row)})`), true);
+  assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify(fomo)}, ${JSON.stringify(row)})`), false);
   assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify({ ...fomo, type: 'thesis' })}, ${JSON.stringify(row)})`), false);
   assert.equal(evaluate(functions, `trackingFeedIsNativeDuplicate(${JSON.stringify({ ...fomo, usd: 130 })}, ${JSON.stringify(row)})`), false);
 

@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.78：修复 FOMO / Pump 卡片因账号同步竞争而消失；多页面串行同步、保护新会话、停止升级后失效脚本，实时流维持单连接。
+v0.46.79：修复热门币高频成交时 FOMO / Pump 买入被误去重的问题；不同交易哈希分别保留，无法确认同一钱包时不再按近额成交隐藏 FOMO。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

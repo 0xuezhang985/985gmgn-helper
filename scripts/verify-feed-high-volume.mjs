@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const content = fs.readFileSync(new URL('../content.js', import.meta.url), 'utf8');
+const background = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+const debot = fs.readFileSync(new URL('../debot-content.js', import.meta.url), 'utf8');
+const audit = fs.readFileSync(new URL('./verify-audit-fixes.mjs', import.meta.url), 'utf8');
+const extract = vm.runInNewContext(audit.slice(audit.indexOf('function extractFunction('), audit.indexOf('function evaluate(')) + ';extractFunction', { assert });
+const make = (source, names) => {
+  const c = vm.createContext({ TRACKING_FEED_BURST_MS: 20000 });
+  vm.runInContext(names.map(n => extract(source, n)).join('\n'), c); return c;
+};
+const c = make(content, ['trackingFeedNormalizedAddress', 'trackingFeedNormalizedTx', 'trackingFeedIsNativeDuplicate', 'trackingFeedBurstDuplicate']);
+const fomo = { source: 'fomo', type: 'buy', handle: 'fixture-kol', addr: '0xabc', chain: 'bsc', tx: '0xf001', ts: 100000, usd: 1000 };
+const row = { addr: '0xabc', chain: 'bsc', side: 'buy', maker: 'other-wallet', tx: '0xa001', ts: 101000, usd: 1000 };
+assert.equal(c.trackingFeedIsNativeDuplicate(fomo, row), false);
+assert.equal(c.trackingFeedIsNativeDuplicate({ ...fomo, tx: '' }, row), false);
+console.log('PASS different transactions and unknown FOMO wallet do not disappear');
+assert.equal(c.trackingFeedIsNativeDuplicate(fomo, { ...row, tx: '0xF001' }), true);
+assert.equal(c.trackingFeedIsNativeDuplicate({ ...fomo, type: 'thesis' }, { ...row, tx: fomo.tx }), false);
+console.log('PASS known duplicate transaction still dedupes; thesis stays');
+const pump = { ...fomo, source: 'pump', pumpWallet: 'known-wallet', tx: '' };
+assert.equal(c.trackingFeedIsNativeDuplicate(pump, row), false);
+assert.equal(c.trackingFeedIsNativeDuplicate(pump, { ...row, maker: pump.pumpWallet }), true);
+assert.equal(c.trackingFeedIsNativeDuplicate({ ...pump, tx: '0x9999' }, { ...row, maker: pump.pumpWallet }), false);
+console.log('PASS Pump fallback requires same wallet and cannot override a different hash');
+const burst = Array.from({ length: 500 }, (_, i) => ({ ...row, tx: `0x${(10000 + i).toString(16)}`, ts: 100000 + i, usd: 1000 + i % 10 }));
+for (const native of burst) assert.equal(c.trackingFeedIsNativeDuplicate(fomo, native), false);
+console.log('PASS 500 rapid native records do not remove an unrelated FOMO buy');
+const d = make(debot, ['safeText', 'normalizeAddress', 'isNativeDuplicate']);
+assert.equal(d.isNativeDuplicate(fomo, row), false);
+assert.equal(d.isNativeDuplicate({ ...fomo, tx: '' }, row), false);
+assert.equal(d.isNativeDuplicate(fomo, { ...row, tx: fomo.tx }), true);
+assert.equal(d.isNativeDuplicate(pump, { ...row, maker: pump.pumpWallet }), true);
+assert.equal(d.isNativeDuplicate({ ...pump, tx: '0x9999' }, { ...row, maker: pump.pumpWallet }), false);
+console.log('PASS DeBot uses the same strict transaction and wallet checks');
+for (const source of [content, background]) {
+  const b = make(source, ['trackingFeedNormalizedAddress', 'trackingFeedBurstDuplicate']);
+  assert.equal(b.trackingFeedBurstDuplicate(fomo, { ...fomo, tx: '0xf002', ts: 101000 }), false);
+  assert.equal(b.trackingFeedBurstDuplicate(fomo, { ...fomo, tx: '0xF001', ts: 101000 }), true);
+  assert.equal(b.trackingFeedBurstDuplicate({ ...fomo, tx: '' }, { ...fomo, tx: '', ts: 101000 }), true);
+}
+console.log('PASS both background and renderer preserve separate confirmed trades');

@@ -2475,6 +2475,9 @@ function trackingFeedNormalizedAddress(raw) {
 }
 
 function trackingFeedBurstDuplicate(a, b) {
+  const txA = trackingFeedNormalizedAddress(a?.tx);
+  const txB = trackingFeedNormalizedAddress(b?.tx);
+  if (txA && txB && txA !== txB) return false;
   const type = String(a?.type || '').trim().toLowerCase();
   if (type !== 'buy' && type !== 'sell') return false;
   if (type !== String(b?.type || '').trim().toLowerCase()) return false;

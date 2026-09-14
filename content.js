@@ -7856,6 +7856,9 @@ ${flapTooltipText(info)}
   const TRACKING_FEED_BURST_MS = 20000;
 
   function trackingFeedBurstDuplicate(a, b) {
+    const txA = trackingFeedNormalizedAddress(a?.tx);
+    const txB = trackingFeedNormalizedAddress(b?.tx);
+    if (txA && txB && txA !== txB) return false;
     const type = String(a?.type || '').trim().toLowerCase();
     if (type !== 'buy' && type !== 'sell') return false;
     if (type !== String(b?.type || '').trim().toLowerCase()) return false;
@@ -7893,7 +7896,11 @@ ${flapTooltipText(info)}
     const side = String(ev?.type || '').trim().toLowerCase();
     if (side !== 'buy' && side !== 'sell') return false;
     const tx = trackingFeedNormalizedTx(ev?.tx);
-    if (tx && row?.tx && tx === row.tx) return true;
+    const nativeTx = trackingFeedNormalizedTx(row?.tx);
+    if (tx && nativeTx) return tx === nativeTx;
+    // FOMO 只有 handle，不能拿“同币 + 近额 + 近时”猜成原生钱包的交易。
+    // 高频行情下大量用户会买相同金额；无法确认身份时保留推送。
+    if (ev?.source !== 'pump') return false;
     const addr = trackingFeedNormalizedAddress(ev?.addr);
     if (!addr || !row?.addr || addr !== row.addr || !row.side || side !== row.side) return false;
     const chain = String(ev?.chain || '').trim().toLowerCase();

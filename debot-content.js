@@ -571,7 +571,9 @@
     const side = safeText(event?.type, 16).toLowerCase();
     if (side !== 'buy' && side !== 'sell') return false;
     const tx = safeText(event?.tx, 180);
-    if (tx && row.tx && normalizeAddress(tx) === normalizeAddress(row.tx)) return true;
+    if (tx && row.tx) return normalizeAddress(tx) === normalizeAddress(row.tx);
+    // 无钱包身份的 FOMO 不按近额成交猜测去重，避免热门币高频买入被吞。
+    if (event.source !== 'pump') return false;
     if (!event.addr || normalizeAddress(event.addr) !== row.addr || side !== row.side) return false;
     if (event.chain && row.chain && safeText(event.chain, 24).toLowerCase() !== row.chain) return false;
     if (!event.ts || !row.ts || Math.abs(Number(event.ts) - row.ts) > 15000) return false;
