@@ -3128,3 +3128,29 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
   cursor: pointer;
 }
 .gdh-addw-cross__go:hover { background: rgba(245, 184, 61, 0.2); }
+
+/* Shared inline strategy editor inside the existing star manager. */
+.gdh-manager-tabs { display: flex; gap: 6px; padding: 8px 10px; flex-shrink: 0; border-bottom: 1px solid rgba(139,147,161,.2); }
+.gdh-manager-tabs button, .gdh-strategy-actions button { font: inherit; color: inherit; background: transparent; border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
+.gdh-manager-tabs [aria-selected="true"] { color: #f5b83d; border-color: #a67c20; background: rgba(245,184,61,.1); }
+.gdh-manager-new { margin-left: 5px; color: #58d7ae; font: 600 9px/1 system-ui; }
+.gdh-manager-wallets { min-height: 0; overflow: auto; }
+.gdh-sp-manage-modal > .gdh-manager-wallets { display: flex; flex: 1; flex-direction: column; }
+.gdh-manager-wallets[hidden], .gdh-strategy-editor[hidden] { display: none !important; }
+.gdh-strategy-editor { padding: 10px; min-height: 0; overflow: auto; overscroll-behavior: contain; font: 400 12px/1.5 system-ui, sans-serif; }
+.gdh-strategy-editor * { box-sizing: border-box; }
+.gdh-strategy-hint { margin: 0 0 8px; opacity: .72; font-size: 11px; }
+.gdh-strategy-editor fieldset { min-width: 0; margin: 0 0 10px; padding: 10px; border: 1px solid rgba(139,147,161,.25); border-radius: 6px; }
+.gdh-strategy-toggle { display: flex; align-items: center; gap: 7px; font-weight: 600; margin-bottom: 5px; cursor: pointer; }
+.gdh-strategy-toggle input { accent-color: #f5b83d; width: 14px; height: 14px; margin: 0; }
+.gdh-strategy-number { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.gdh-strategy-editor input[type="number"], .gdh-strategy-editor select, .gdh-strategy-editor textarea { font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
+.gdh-strategy-editor input[type="number"] { width: 108px; min-width: 0; }
+.gdh-strategy-editor select, .gdh-strategy-editor textarea { display: block; width: 100%; margin-bottom: 7px; }
+.gdh-strategy-editor textarea { resize: vertical; min-height: 65px; line-height: 1.6; }
+.gdh-strategy-actions { display: flex; gap: 8px; }
+.gdh-strategy-actions .gdh-strategy-save { color: #17191e; background: #f5b83d; border-color: #f5b83d; font-weight: 600; }
+.gdh-strategy-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.gdh-strategy-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
+.gdh-strategy-status.is-error { color: #ff8787; }
+.gdh-strategy-editor :focus-visible, .gdh-manager-tabs :focus-visible { outline: 2px solid #f5b83d; outline-offset: 2px; }

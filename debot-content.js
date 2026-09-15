@@ -1483,25 +1483,26 @@
       root.appendChild(button);
     }
     button.textContent = `★${specialWalletMap.size}`;
-    button.title = '重点关注管理';
+    button.title = '特别关注 / 策略追踪';
     button.classList.toggle('is-active', specialManageOpen);
     let modal = root.querySelector(':scope > .gdh-debot-special-manage');
     if (!specialManageOpen) { modal?.remove(); return; }
     if (!modal) {
       modal = document.createElement('section');
       modal.className = 'gdh-debot-special-manage';
+      const head = document.createElement('div'); head.className = 'gdh-debot-special-manage__head';
+      const title = document.createElement('strong'); title.textContent = '特别关注 / 策略追踪';
+      const close = document.createElement('button'); close.type = 'button'; close.textContent = '×';
+      close.addEventListener('click', () => { specialManageOpen = false; modal.remove(); button.classList.remove('is-active'); });
+      head.append(title, close); modal.appendChild(head);
       root.appendChild(modal);
     }
+    const body = globalThis.GdhBuyStrategies?.mountManager(modal, settings.priorityBuyStrategies, settings.specialWallets) || modal;
     const blocked = [...blockedTokenSet()];
     const renderKey = JSON.stringify([settings.specialWallets, blocked]);
     if (modal.dataset.renderKey === renderKey) return;
     modal.dataset.renderKey = renderKey;
-    modal.replaceChildren();
-    const head = document.createElement('div'); head.className = 'gdh-debot-special-manage__head';
-    const title = document.createElement('strong'); title.textContent = `重点关注 · ${specialWalletMap.size}`;
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×';
-    close.addEventListener('click', () => { specialManageOpen = false; modal.remove(); button.classList.remove('is-active'); });
-    head.append(title, close); modal.appendChild(head);
+    body.replaceChildren();
     const add = document.createElement('div'); add.className = 'gdh-debot-special-manage__add';
     const address = document.createElement('input'); address.placeholder = '钱包地址'; address.spellcheck = false;
     const label = document.createElement('input'); label.placeholder = '备注';
@@ -1511,7 +1512,7 @@
       if (!normalized || specialWalletMap.has(normalized)) return void address.classList.add('is-error');
       toggleSpecialWallet(normalized, label.value); address.value = ''; label.value = '';
     });
-    add.append(address, label, submit); modal.appendChild(add);
+    add.append(address, label, submit); body.appendChild(add);
     const list = document.createElement('div'); list.className = 'gdh-debot-special-manage__list';
     for (const [walletAddress, meta] of specialWalletMap) {
       const row = document.createElement('div'); row.className = 'gdh-debot-special-manage__row';
@@ -1528,7 +1529,7 @@
       row.append(swatch, pin, name, remove); list.appendChild(row);
     }
     if (!specialWalletMap.size) list.textContent = '还没有重点关注的钱包';
-    modal.appendChild(list);
+    body.appendChild(list);
     if (blocked.length) {
       const blockedBox = document.createElement('div'); blockedBox.className = 'gdh-debot-special-manage__blocked';
       const blockedTitle = document.createElement('strong'); blockedTitle.textContent = `已屏蔽代币 · ${blocked.length}`;
@@ -1539,7 +1540,7 @@
         restore.addEventListener('click', () => unblockToken(token));
         blockedBox.appendChild(restore);
       }
-      modal.appendChild(blockedBox);
+      body.appendChild(blockedBox);
     }
   }
 

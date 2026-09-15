@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.81：新增买入策略重点置顶：指定多人在时间窗口内共同买入同一币，或指定人单笔买入大于设定 USD 金额；两条件独立开关、默认关闭，GMGN / DeBot 共用。
+v0.46.82：点击追踪面板原有的 ⭐ 人数条，在「策略追踪 NEW」分栏直接修改共同买入人物、时间窗口、大额买入人物和 USD 门槛；GMGN / DeBot 与插件设置共用配置，默认关闭，保存后生效。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>

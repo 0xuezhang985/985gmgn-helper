@@ -121,5 +121,144 @@
       if (value != null && row.dataset[name] !== String(value)) row.dataset[name] = String(value);
     }
   }
-  globalThis.GdhBuyStrategies = { normalize, enabled, parseWallets, create, fromRow, tagFeed };
+  function readFields(field) {
+    const result = {};
+    for (const type of ['group', 'amount']) {
+      const on = field(`${type}-enabled`).checked;
+      let wallets;
+      try { wallets = parseWallets(field(`${type}-wallets`).value); }
+      catch (error) { throw new Error(`${type === 'group' ? '共同买入' : '大额买入'}：${error.message}`); }
+      if (on && wallets.length < (type === 'group' ? 2 : 1)) throw new Error(type === 'group' ? '共同买入至少需要 2 个不同钱包' : '大额买入至少需要 1 个钱包');
+      result[type] = { enabled: on, wallets };
+    }
+    result.group.windowSeconds = Number(field('group-window').value);
+    if (!Number.isInteger(result.group.windowSeconds) || result.group.windowSeconds < 10 || result.group.windowSeconds > 3600) throw new Error('共同买入时间窗口需要填写 10–3600 的整数秒');
+    result.amount.minUsd = Number(field('amount-usd').value);
+    if (!Number.isFinite(result.amount.minUsd) || result.amount.minUsd <= 0) throw new Error('单笔买入金额需要大于 0 USD');
+    return result;
+  }
+
+  // One editor per open manager; feed scans only sync committed settings, never rebuild drafts.
+  const managers = new WeakMap();
+  function mountManager(modal, raw, wallets) {
+    let state = managers.get(modal);
+    if (!state) {
+      const node = (tag, className, value) => {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (value) el.textContent = value;
+        if (tag === 'button') el.type = 'button';
+        return el;
+      };
+      const body = node('div', 'gdh-manager-wallets');
+      while (modal.children.length > 1) body.append(modal.children[1]);
+      const tabs = node('div', 'gdh-manager-tabs'); tabs.setAttribute('role', 'tablist');
+      const people = node('button', '', '特别关注');
+      const strategy = node('button', '', '策略追踪');
+      strategy.append(node('em', 'gdh-manager-new', 'NEW'));
+      const editor = node('div', 'gdh-strategy-editor');
+      editor.append(node('p', 'gdh-strategy-hint', '命中任一策略即重点置顶，直到手动关闭。仅处理开启后的新买入，不自动交易。'));
+      const fields = {}, boxes = [];
+      for (const [type, title, hint, valueKey, valueTitle, min, max, step] of [
+        ['group', '指定人物共同买入', '指定的所有人，在窗口内买入同链同一个币。', 'window', '时间窗口（秒）', '10', '3600', '1'],
+        ['amount', '指定人物大额买入', '任一指定人物的单笔买入严格大于金额门槛。', 'usd', '单笔金额门槛（USD）', '0', '', 'any'],
+      ]) {
+        const box = node('fieldset'); boxes.push(box);
+        const toggle = node('label', 'gdh-strategy-toggle');
+        const check = node('input'); check.type = 'checkbox'; fields[`${type}-enabled`] = check;
+        toggle.append(check, document.createTextNode(title));
+        const numberLabel = node('label', 'gdh-strategy-number', valueTitle);
+        const number = node('input'); number.type = 'number'; number.min = min; number.step = step;
+        if (max) number.max = max;
+        number.setAttribute('aria-label', valueTitle); fields[`${type}-${valueKey}`] = number; numberLabel.append(number);
+        const picker = node('select'); picker.setAttribute('aria-label', `${title}：选择人物`);
+        const input = node('textarea'); input.rows = 3; input.spellcheck = false;
+        input.placeholder = '每行：完整钱包地址 备注（可选）'; input.setAttribute('aria-label', `${title}：钱包列表`);
+        fields[`${type}-wallets`] = input; fields[`${type}-picker`] = picker;
+        picker.addEventListener('change', () => {
+          if (!picker.value) return;
+          try {
+            input.value = parseWallets(`${input.value}\n${picker.value}`).map(p => `${p.address} ${p.label}`.trim()).join('\n');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          } catch (error) { show(error.message, true); }
+          picker.value = '';
+        });
+        box.append(toggle, node('p', 'gdh-strategy-hint', hint), numberLabel, picker, input); editor.append(box);
+      }
+      for (const [key, el] of Object.entries(fields)) el.dataset.buy = key;
+      const actions = node('div', 'gdh-strategy-actions');
+      const save = node('button', 'gdh-strategy-save', '保存策略');
+      const reset = node('button', '', '重新读取');
+      const status = node('div', 'gdh-strategy-status'); status.setAttribute('role', 'status');
+      const show = (message, error = false) => { status.textContent = message; status.classList.toggle('is-error', error); };
+      let dirty = false, conflict = false, saving = false, latest = normalize(raw), signature = JSON.stringify(latest), pickerKey = '';
+      const fill = (config) => {
+        for (const type of ['group', 'amount']) {
+          fields[`${type}-enabled`].checked = config[type].enabled;
+          fields[`${type}-wallets`].value = config[type].wallets.map(p => `${p.address} ${p.label}`.trim()).join('\n');
+        }
+        fields['group-window'].value = config.group.windowSeconds; fields['amount-usd'].value = config.amount.minUsd;
+        dirty = conflict = false; save.disabled = false;
+      };
+      fill(latest);
+      editor.addEventListener('input', () => { dirty = true; if (!conflict) show('尚未保存'); });
+      reset.addEventListener('click', () => { fill(latest); show('已读取最新保存的策略'); });
+      save.addEventListener('click', async () => {
+        if (saving || conflict) return;
+        let next;
+        try { next = normalize(readFields(key => fields[key])); }
+        catch (error) { show(error.message, true); return; }
+        saving = true; save.disabled = reset.disabled = true; boxes.forEach(box => { box.disabled = true; });
+        try {
+          // Catch an external save even when the feed's next scheduled scan has not run yet.
+          const stored = await chrome.storage.local.get('priorityBuyStrategies');
+          const current = normalize(stored.priorityBuyStrategies);
+          if (JSON.stringify(current) !== signature) {
+            latest = current; signature = JSON.stringify(current); conflict = true;
+            show('策略已在其他页面修改，请重新读取后再编辑。当前草稿未覆盖。', true);
+          } else {
+            await chrome.storage.local.set({ priorityBuyStrategies: next });
+            latest = next; signature = JSON.stringify(next); fill(next); show('已保存，与插件设置同步');
+          }
+        } catch { show('保存失败，请重试；当前草稿已保留。', true); }
+        finally { saving = false; save.disabled = conflict; reset.disabled = false; boxes.forEach(box => { box.disabled = false; }); }
+      });
+      actions.append(save, reset); editor.append(actions, status);
+      tabs.append(people, strategy); modal.append(tabs, body, editor);
+      const activate = button => {
+        for (const [tab, content] of [[people, body], [strategy, editor]]) {
+          const active = tab === button; tab.setAttribute('aria-selected', String(active)); content.hidden = !active;
+        }
+      };
+      for (const [button, panel] of [[people, body], [strategy, editor]]) {
+        button.setAttribute('role', 'tab'); panel.setAttribute('role', 'tabpanel');
+        button.addEventListener('click', () => activate(button));
+      }
+      activate(people);
+      for (const event of ['click', 'pointerdown', 'keydown']) modal.addEventListener(event, e => e.stopPropagation());
+      state = { body, sync(config, list) {
+        const next = normalize(config), key = JSON.stringify(next);
+        if (!saving && key !== signature) {
+          latest = next; signature = key;
+          if (dirty) { conflict = true; save.disabled = true; show('策略已在其他页面修改，请重新读取后再编辑。当前草稿未覆盖。', true); }
+          else { fill(next); show('已同步最新策略'); }
+        }
+        const entries = Array.isArray(list) ? list : [], listKey = JSON.stringify(entries);
+        if (listKey === pickerKey) return;
+        pickerKey = listKey;
+        for (const type of ['group', 'amount']) {
+          const picker = fields[`${type}-picker`]; picker.replaceChildren(new Option('从特别关注添加人物…', ''));
+          for (const person of entries) {
+            if (!address(person?.address)) continue;
+            const label = text(person.label), a = address(person.address);
+            picker.append(new Option(`${label || '未命名'} · ${a.slice(0, 6)}…${a.slice(-4)}`, `${a} ${label}`.trim()));
+          }
+        }
+      } };
+      managers.set(modal, state);
+    }
+    state.sync(raw, wallets);
+    return state.body;
+  }
+  globalThis.GdhBuyStrategies = { normalize, enabled, parseWallets, create, fromRow, tagFeed, readFields, mountManager };
 })();

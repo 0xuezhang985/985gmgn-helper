@@ -1,5 +1,7 @@
 'use strict';
 
+let buyStrategyDirty = false;
+
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DEFAULTS = {
   enabled: true,
@@ -333,6 +335,7 @@ saveButton.addEventListener('click', async () => {
       setStatus(`保存失败：${chrome.runtime.lastError.message}`, 'error');
       return;
     }
+    buyStrategyDirty = false;
     devListInput.value = formatDevList(parsed.entries);
     setStatus(`已保存 ${parsed.entries.length} 个重点 Dev`, 'success');
   });
@@ -523,7 +526,10 @@ sendRuntimeMessage({ type: 'get-update-state' })
     });
   });
 
+document.querySelector('#buy-strategy-settings').addEventListener('input', () => { buyStrategyDirty = true; });
+
 function renderBuyStrategies(raw) {
+  buyStrategyDirty = false;
   const config = GdhBuyStrategies.normalize(raw);
   for (const type of ['group', 'amount']) {
     document.querySelector(`#buy-${type}-enabled`).checked = config[type].enabled;
@@ -534,20 +540,7 @@ function renderBuyStrategies(raw) {
 }
 
 function readBuyStrategies() {
-  const result = {};
-  for (const type of ['group', 'amount']) {
-    const enabled = document.querySelector(`#buy-${type}-enabled`).checked;
-    let wallets;
-    try { wallets = GdhBuyStrategies.parseWallets(document.querySelector(`#buy-${type}-wallets`).value); }
-    catch (error) { throw new Error(`${type === 'group' ? '共同买入' : '大额买入'}：${error.message}`); }
-    if (enabled && wallets.length < (type === 'group' ? 2 : 1)) throw new Error(type === 'group' ? '共同买入至少需要 2 个不同钱包' : '大额买入至少需要 1 个钱包');
-    result[type] = { enabled, wallets };
-  }
-  result.group.windowSeconds = Number(document.querySelector('#buy-group-window').value);
-  if (!Number.isInteger(result.group.windowSeconds) || result.group.windowSeconds < 10 || result.group.windowSeconds > 3600) throw new Error('共同买入时间窗口需要填写 10–3600 的整数秒');
-  result.amount.minUsd = Number(document.querySelector('#buy-amount-usd').value);
-  if (!Number.isFinite(result.amount.minUsd) || result.amount.minUsd <= 0) throw new Error('单笔买入金额需要大于 0 USD');
-  return result;
+  return GdhBuyStrategies.readFields(key => document.querySelector(`#buy-${key}`));
 }
 
 function renderBuyStrategyPickers(wallets) {
@@ -566,6 +559,7 @@ function renderBuyStrategyPickers(wallets) {
       try {
         const entries = GdhBuyStrategies.parseWallets(`${input.value}\n${select.value}`);
         input.value = entries.map(p => `${p.address} ${p.label}`.trim()).join('\n');
+        buyStrategyDirty = true;
       } catch (error) { setStatus(error.message, 'error'); }
       select.value = '';
     };
@@ -573,7 +567,12 @@ function renderBuyStrategyPickers(wallets) {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.specialWallets) renderBuyStrategyPickers(changes.specialWallets.newValue);
+  if (area !== 'local') return;
+  if (changes.specialWallets) renderBuyStrategyPickers(changes.specialWallets.newValue);
+  if (changes.priorityBuyStrategies) {
+    if (!buyStrategyDirty) renderBuyStrategies(changes.priorityBuyStrategies.newValue);
+    else setStatus('策略在其他页面有更新；当前未保存的草稿已保留。重新打开设置可读取最新配置。', 'error');
+  }
 });
 
 // Per-wallet opt-in; never overwrite the latest color/pin preferences on save.

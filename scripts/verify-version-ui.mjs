@@ -7,11 +7,12 @@ const read=f=>fs.readFileSync(new URL('../'+f,import.meta.url),'utf8').replace(/
 const browser=await chromium.launch({channel:'chrome',headless:true});let checks=0;
 try {
   const page=await browser.newPage({viewport:{width:430,height:900}});
+  const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
   await page.route('**/*',route=>route.fulfill({body:'',contentType:'text/plain'}));
   await page.setContent(read('popup.html').replace(/<script[^>]*src="(?:popup|buy-strategies).js"[^>]*><\/script>/g,''));
   await page.addStyleTag({content:read('popup.css')});
   await page.addScriptTag({content:`
-    window.confirm=()=>{throw Error("unexpected confirmation dialog")};window.failConsent=false;window.msgs=[];window.reloads=0;window.failInstall=true;
+    window.confirm=()=>{throw Error("unexpected confirmation dialog")};window.failConsent=false;window.msgs=[];window.reloads=0;window.failInstall=true;window.storageListeners=[];
     window.state={status:'available',currentVersion:'0.46.69',latestVersion:'0.46.70',updateAvailable:true,updaterInstalled:true,protocolVersion:2,summary:'修复布局和隐藏按钮，保留个人配置。'};
     window.chrome={runtime:{getManifest:()=>({version:'0.46.69'}),reload:()=>reloads++,sendMessage:(m,cb)=>{
       msgs.push(m);if(m.type==='skip-update'){state={...state,skipped:!!m.version,updateAvailable:!m.version,status:m.version?'skipped':'available'};cb(state);}
@@ -19,7 +20,7 @@ try {
       else if(m.type==='update-history')cb({ok:true,versions:[{version:'0.46.67',summary:'稳定旧版，保留配置。'},{version:'0.46.66',summary:'旧版简介 <img src=x onerror=alert(1)>'}]});
       else if(m.type==='rollback-update'||m.type==='install-update')cb(failInstall?{ok:false,error:'浏览器加载的是另一目录'}:{ok:true,updatedVersion:m.version});
       else cb(state);
-    }},storage:{local:{get:(defaults,cb)=>cb(typeof defaults==='object'?defaults:{}),set:(_s,cb)=>cb?.()},onChanged:{addListener:()=>{}}},tabs:{create:()=>{}}};
+    }},storage:{local:{get:(defaults,cb)=>cb(typeof defaults==='object'?defaults:{}),set:(_s,cb)=>cb?.()},onChanged:{addListener:f=>storageListeners.push(f)}},tabs:{create:()=>{}}};
   `});
   await page.addScriptTag({content:read('buy-strategies.js')});
   await page.addScriptTag({content:read('popup.js')});
@@ -62,6 +63,18 @@ try {
   await page.evaluate(()=>{failConsent=false;}); await page.locator('#check-update').click();
   assert.equal(await page.locator('#check-update').innerText(),'重新检查');
   console.log(`PASS ${++checks}: 手动安装沿用版本按钮确认，保存失败不视为同意，确认后恢复正常版本操作`);
+  await page.evaluate(()=>{
+    window.savedStrategy={group:{enabled:false,wallets:[],windowSeconds:123},amount:{enabled:false,wallets:[],minUsd:4321}};
+    storageListeners.forEach(f=>f({priorityBuyStrategies:{newValue:savedStrategy}},'local'));
+    document.querySelector('#buy-strategy-settings').open=true;
+  });
+  assert.equal(await page.locator('#buy-group-window').inputValue(),'123');
+  assert.equal(await page.locator('#buy-amount-usd').inputValue(),'4321');
+  await page.locator('#buy-group-window').fill('456');
+  await page.evaluate(()=>{savedStrategy.group.windowSeconds=789;storageListeners.forEach(f=>f({priorityBuyStrategies:{newValue:savedStrategy}},'local'));});
+  assert.equal(await page.locator('#buy-group-window').inputValue(),'456');
+  assert.deepEqual(pageErrors,[]);
+  console.log(`PASS ${++checks}: 实际插件设置同步分栏保存的策略、外部更新不覆盖未保存草稿、初始化无异常`);
   // Real observed frontrun portal shape; simulate its inline style being replaced.
   const content=read('content.js');const start=content.indexOf('  const FRONTRUN_LIGHTNING_SELECTOR');
   const end=content.indexOf('  // ---- 价格/市值提醒',start);
