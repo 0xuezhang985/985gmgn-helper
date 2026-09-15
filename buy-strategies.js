@@ -98,7 +98,8 @@
     const own = d.gdhStrategyWallet !== undefined;
     const prefix = own ? 'gdhStrategy' : site === 'debot.ai' ? 'gdhDebotTrack' : 'gdhTrack';
     const get = (key) => d[prefix + key];
-    const href = row.matches('a[href*="/token/"]') ? row.getAttribute('href') : row.querySelector('a[href*="/token/"]')?.getAttribute('href');
+    const href = (row.matches('a[href*="/token/"]') ? row.getAttribute('href') : row.querySelector('a[href*="/token/"]')?.getAttribute('href'))
+      || (own ? (site === 'gmgn.ai' ? `/${get('Chain')}/token/${get('Token')}` : `/token/${get('Chain')}/${get('Token')}`) : '');
     if (!href) return null;
     const event = { wallet: get(own || site === 'debot.ai' ? 'Wallet' : 'Maker'),
       token: get(own || site === 'debot.ai' ? 'Token' : 'Addr'), chain: get('Chain'), side: get('Side'),

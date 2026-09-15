@@ -110,9 +110,10 @@ try {
   pass(`${site} 无特别关注也能策略置顶、SPA 点击不消失、刷新恢复、关闭同步与不复活、写失败重试`);
  }
  const p=await fixture('gmgn.ai');
- await p.evaluate(({A,T})=>{const row=document.createElement('a');row.href=`/bsc/token/${T}`;GdhBuyStrategies.tagFeed(row,{source:'pump',pumpWallet:A,addr:T,chain:'bsc',type:'buy',ts:Date.now()+1,tx:'pump-fixture',usd:2000,symbol:'PUMP'});document.querySelector('#root').appendChild(row);api.scanBuys([row]);},{A,T});
+ await p.evaluate(({A,T})=>{const row=document.createElement('div');row.className='gdh-fomofeed';GdhBuyStrategies.tagFeed(row,{source:'pump',pumpWallet:A,addr:T,chain:'bsc',type:'buy',ts:Date.now()+1,tx:'pump-fixture',usd:2000,symbol:'PUMP'});document.querySelector('#root').appendChild(row);api.scanBuys([row]);},{A,T});
  await p.waitForFunction(()=>document.querySelector('.gdh-priority-push')?.textContent.includes('PUMP'));
- pass('具有明确钱包身份的 Pump 混排卡参与策略');
+ assert.match(await p.locator('.gdh-priority-push a').first().getAttribute('href'),/\/bsc\/token\//);
+ pass('GMGN 真实无链接 div 结构的 Pump 混排卡参与策略并生成正确跳转');
  const ui=await browser.newPage();await ui.setContent(read('popup.html').replace(/<script[^>]*src=[^>]+><\/script>/g,''));await ui.addStyleTag({content:read('popup.css')});await ui.addScriptTag({content:source});
  const popup=read('popup.js');const a=popup.indexOf('function renderBuyStrategies('),b=popup.indexOf("chrome.storage.onChanged.addListener((changes, area) => {",a);
  await ui.addScriptTag({content:'function setStatus(s){document.querySelector("#status").textContent=s;}'+popup.slice(a,b)});
