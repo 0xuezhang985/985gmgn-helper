@@ -68,11 +68,11 @@ try {
     storageListeners.forEach(f=>f({priorityBuyStrategies:{newValue:savedStrategy}},'local'));
     document.querySelector('#buy-strategy-settings').open=true;
   });
-  assert.equal(await page.locator('#buy-group-window').inputValue(),'123');
-  assert.equal(await page.locator('#buy-amount-usd').inputValue(),'4321');
-  await page.locator('#buy-group-window').fill('456');
+  assert.equal(await page.locator('#buy-strategy-editor [data-buy=group-window]').inputValue(),'123');
+  assert.equal(await page.locator('#buy-strategy-editor [data-buy=amount-usd]').inputValue(),'4321');
+  await page.locator('#buy-strategy-editor [data-buy=group-window]').fill('456');
   await page.evaluate(()=>{savedStrategy.group.windowSeconds=789;storageListeners.forEach(f=>f({priorityBuyStrategies:{newValue:savedStrategy}},'local'));});
-  assert.equal(await page.locator('#buy-group-window').inputValue(),'456');
+  assert.equal(await page.locator('#buy-strategy-editor [data-buy=group-window]').inputValue(),'456');
   assert.deepEqual(pageErrors,[]);
   console.log(`PASS ${++checks}: 实际插件设置同步分栏保存的策略、外部更新不覆盖未保存草稿、初始化无异常`);
   // Real observed frontrun portal shape; simulate its inline style being replaced.

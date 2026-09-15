@@ -114,17 +114,8 @@ try {
  await p.waitForFunction(()=>document.querySelector('.gdh-priority-push')?.textContent.includes('PUMP'));
  assert.match(await p.locator('.gdh-priority-push a').first().getAttribute('href'),/\/bsc\/token\//);
  pass('GMGN 真实无链接 div 结构的 Pump 混排卡参与策略并生成正确跳转');
- const ui=await browser.newPage();await ui.setContent(read('popup.html').replace(/<script[^>]*src=[^>]+><\/script>/g,''));await ui.addStyleTag({content:read('popup.css')});await ui.addScriptTag({content:source});
- const popup=read('popup.js');const a=popup.indexOf('function renderBuyStrategies('),b=popup.indexOf("chrome.storage.onChanged.addListener((changes, area) => {",a);
- await ui.addScriptTag({content:'function setStatus(s){document.querySelector("#status").textContent=s;}'+popup.slice(a,b)});
- await ui.evaluate(({A,B})=>{renderBuyStrategies();renderBuyStrategyPickers([{address:A,label:'甲'},{address:B,label:'乙'}]);document.querySelector('#buy-strategy-settings').open=true;},{A,B});
- assert.equal(await ui.locator('#buy-group-enabled').isChecked(),false);assert.equal(await ui.locator('#buy-amount-enabled').isChecked(),false);
- await ui.locator('#buy-group-picker').selectOption({label:`甲 · ${A.slice(0,6)}…${A.slice(-4)}`});await ui.locator('#buy-group-picker').selectOption({label:`乙 · ${B.slice(0,6)}…${B.slice(-4)}`});await ui.locator('#buy-group-enabled').check();
- assert.equal(await ui.evaluate(()=>readBuyStrategies().group.wallets.length),2);
- await ui.locator('#buy-amount-wallets').fill('同名人物');assert.match(await ui.evaluate(()=>{try{readBuyStrategies();return '';}catch(e){return e.message}}),/完整/);
- await ui.locator('#buy-amount-wallets').fill(`${A} 甲`);await ui.locator('#buy-amount-enabled').check();await ui.locator('#buy-amount-usd').fill('2000');
- assert.equal(await ui.evaluate(()=>readBuyStrategies().amount.minUsd),2000);
- await ui.locator('#buy-strategy-settings').screenshot({path:new URL('../dist/buy-strategies-settings.png',import.meta.url).pathname.replace(/^\/([A-Z]:)/i,'$1')});
- pass('真实设置字段默认关闭、从特别关注选人、无效输入拦截、两种条件独立保存');
+ const migrated=S.normalizeGroups(config);assert.equal(migrated.groups.length,1);assert.equal(migrated.groups[0].id,'legacy');assert.equal(migrated.groups[0].enabled,true);
+ assert.equal(migrated.groups[0].conditions.group.wallets.length,2);assert.equal(migrated.groups[0].conditions.amount.minUsd,1000);
+ pass('旧版共同买入和大额条件无损转为第一组，原开关和名单保持');
  console.log(`1..${checks}`);
 } finally {await browser.close();}

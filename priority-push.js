@@ -41,6 +41,7 @@
         if (!/^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(wallet)) throw new Error('无效的钱包地址');
         const record = { id, wallet, strategy: data.strategy === true, href: href.pathname + href.search, name: clean(data.name, 64),
           detail: clean(data.detail, 500), at: Date.now() };
+        if (record.strategy && /^[a-zA-Z0-9_-]{1,64}$/.test(String(data.strategyGroup || ''))) record.strategyGroup = data.strategyGroup;
         await chrome.storage.local.set({ [key]: record });
         return { ok: true, record };
       }).then(respond, (error) => respond({ ok: false, error: String(error?.message || error) }));
@@ -59,6 +60,7 @@
       const strategies = globalThis.GdhBuyStrategies?.create();
       const strategyPending = new Map();
       let strategyActive = false;
+      let strategyGroups = new Set();
       const request = async (type, extra = {}) => {
         const result = await chrome.runtime.sendMessage({ type, ...extra });
         if (!result?.ok) throw new Error(result?.error || '扩展连接失效');
@@ -78,7 +80,7 @@
       function render() {
         if (!root?.isConnected) { box?.remove(); box = null; return; }
         if (!dirty && (!box || box.isConnected)) return;
-        const active = [...records.values()].filter((record) => record.strategy ? strategyActive : wallets.get(record.wallet)?.persistentPin === true)
+        const active = [...records.values()].filter((record) => record.strategy ? strategyGroups.has(record.strategyGroup || 'legacy') : wallets.get(record.wallet)?.persistentPin === true)
           .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
         if (!active.length && (!error || (!walletKey && !strategyActive))) { box?.remove(); box = null; dirty = false; return; }
         if (!box?.isConnected) {
@@ -153,7 +155,12 @@
       const api = {
         setContext(panel, top, map, strategyConfig) {
           const nextStrategyActive = globalThis.GdhBuyStrategies?.enabled(strategyConfig) === true;
-          if (strategies?.configure(strategyConfig)) { strategyPending.clear(); dirty = true; }
+          if (strategies?.configure(strategyConfig)) {
+            for (const [key, alert] of strategyPending) if (!strategies.current(alert)) strategyPending.delete(key);
+            dirty = true;
+          }
+          strategyGroups = new Set((globalThis.GdhBuyStrategies?.normalizeGroups(strategyConfig).groups || [])
+            .filter(g => g.enabled && (g.conditions.group.enabled || g.conditions.amount.enabled)).map(g => g.id));
           strategyActive = nextStrategyActive;
           const nextKey = [...map].filter(([, meta]) => meta.persistentPin === true).map(([address]) => address).sort().join('|');
           if (root !== panel || walletKey !== nextKey) dirty = true;

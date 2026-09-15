@@ -61,18 +61,8 @@
           <label class="switch-row"><span><strong>追踪人名防误触</strong><small>开启后点人物名字不再跳转钱包；币名仍正常跳币</small></span><input id="disable-tracker-person-navigation" type="checkbox" /></label>
           <details class="sub-settings compact" id="buy-strategy-settings">
             <summary><strong>买入策略 · 重点置顶 <em class="new-badge">NEW</em></strong></summary>
-            <small>两种条件满足任意一种即提醒，点 × 才关闭。默认关闭，与特别关注高亮开关独立；保存后监听新成交，不补报开启前的历史交易。只读取当前追踪页面已加载的数据，不额外请求接口。</small>
-            <label class="switch-row"><span><strong>指定多人共同买入</strong><small>时间窗口内，名单中的每个人都买入同一链的同一代币</small></span><input id="buy-group-enabled" type="checkbox" /></label>
-            <label class="control-row" for="buy-group-window"><span>共同买入时间窗口（秒）</span><input id="buy-group-window" type="number" min="10" max="3600" step="1" value="300" /></label>
-            <label class="field" for="buy-group-wallets"><span>共同买入名单（2–20 人）</span></label>
-            <select id="buy-group-picker" aria-label="从特别关注添加共同买入人物"><option value="">从特别关注添加人物…</option></select>
-            <textarea id="buy-group-wallets" rows="3" spellcheck="false" placeholder="每行：完整钱包地址 备注人名"></textarea>
-            <label class="switch-row"><span><strong>指定人单笔大额买入</strong><small>名单中任意一人的单笔买入，严格大于以下美元金额</small></span><input id="buy-amount-enabled" type="checkbox" /></label>
-            <label class="control-row" for="buy-amount-usd"><span>单笔买入大于（USD）</span><input id="buy-amount-usd" type="number" min="0.01" step="any" value="1000" /></label>
-            <label class="field" for="buy-amount-wallets"><span>大额买入名单（1–20 人）</span></label>
-            <select id="buy-amount-picker" aria-label="从特别关注添加大额买入人物"><option value="">从特别关注添加人物…</option></select>
-            <textarea id="buy-amount-wallets" rows="3" spellcheck="false" placeholder="每行：完整钱包地址 备注人名"></textarea>
-            <small>按完整地址匹配，不按同名人物猜测。支持 EVM / Solana；缺少钱包、成交时间或美元金额时不猜算。卖出、转入、观点不触发；同笔重复不重复提醒，多人规则再次提醒需所有人再次买入。</small>
+            <small>策略按组独立保存，不随下方「保存全部设置」覆盖。新增组默认关闭；保存条件后，使用各组开关启停。</small>
+            <div id="buy-strategy-editor"></div>
           </details>
           <label class="switch-row"><span><strong>GMGN 监控全链聚合</strong><small>汇总各链追踪代币，并沿用监控面板当前筛选条件</small></span><input id="enable-monitor-aggregate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>GMGN / DeBot：当前币与 ≥90% 相似币一起排序；支持拖动标题栏、点击 × 关闭；市值跟随追踪缓存更新，点击无刷新跳转</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>

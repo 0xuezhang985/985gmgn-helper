@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('priority-push.js');
+importScripts('buy-strategies.js', 'priority-push.js');
 
 const NATIVE_HOST = 'com.xuezhang985.gmgn_helper';
 const RELEASES_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';

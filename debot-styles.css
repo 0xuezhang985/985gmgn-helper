@@ -1269,3 +1269,13 @@ html[data-theme="light"] .gdh-debot-similar-token__current { color: #087a49; }
 .gdh-strategy-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
 .gdh-strategy-status.is-error { color: #ff8787; }
 .gdh-strategy-editor :focus-visible, .gdh-manager-tabs :focus-visible { outline: 2px solid #f5b83d; outline-offset: 2px; }
+
+/* Individually saved strategy groups. */
+.gdh-strategy-groups { display: grid; gap: 5px; max-height: 154px; overflow: auto; margin: 9px 0 12px; }
+.gdh-strategy-group { display: flex; align-items: center; gap: 8px; border: 1px solid rgba(139,147,161,.25); border-radius: 5px; padding: 5px 7px; }
+.gdh-strategy-group.is-selected { border-color: #a67c20; background: rgba(245,184,61,.08); }
+.gdh-strategy-group > button { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 3px; }
+.gdh-strategy-group > label { display: flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 11px; cursor: pointer; }
+.gdh-strategy-group input { width: 14px; height: 14px; margin: 0; accent-color: #f5b83d; }
+.gdh-strategy-editor input[type="text"] { min-width: 0; width: 70%; font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
+.gdh-strategy-form[hidden] { display: none !important; }

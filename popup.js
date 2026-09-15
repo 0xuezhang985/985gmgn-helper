@@ -1,6 +1,6 @@
 'use strict';
 
-let buyStrategyDirty = false;
+let buyStrategyEditor = null, buyStrategyConfig = {}, buyStrategyWallets = [];
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const DEFAULTS = {
@@ -281,9 +281,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 saveButton.addEventListener('click', async () => {
-  let priorityBuyStrategies;
-  try { priorityBuyStrategies = readBuyStrategies(); }
-  catch (error) { setStatus(error.message, 'error'); return; }
   const parsed = parseDevList(devListInput.value);
   if (parsed.errors.length) {
     setStatus(`第 ${parsed.errors.join('、')} 行不是完整的 BSC 钱包地址`, 'error');
@@ -304,7 +301,6 @@ saveButton.addEventListener('click', async () => {
   }
 
   const next = {
-    priorityBuyStrategies,
     ...Object.fromEntries(
       Object.entries(featureInputs).map(([key, input]) => [key, input.checked]),
     ),
@@ -335,7 +331,6 @@ saveButton.addEventListener('click', async () => {
       setStatus(`保存失败：${chrome.runtime.lastError.message}`, 'error');
       return;
     }
-    buyStrategyDirty = false;
     devListInput.value = formatDevList(parsed.entries);
     setStatus(`已保存 ${parsed.entries.length} 个重点 Dev`, 'success');
   });
@@ -526,53 +521,19 @@ sendRuntimeMessage({ type: 'get-update-state' })
     });
   });
 
-document.querySelector('#buy-strategy-settings').addEventListener('input', () => { buyStrategyDirty = true; });
-
 function renderBuyStrategies(raw) {
-  buyStrategyDirty = false;
-  const config = GdhBuyStrategies.normalize(raw);
-  for (const type of ['group', 'amount']) {
-    document.querySelector(`#buy-${type}-enabled`).checked = config[type].enabled;
-    document.querySelector(`#buy-${type}-wallets`).value = config[type].wallets.map(p => `${p.address} ${p.label}`.trim()).join('\n');
-  }
-  document.querySelector('#buy-group-window').value = config.group.windowSeconds;
-  document.querySelector('#buy-amount-usd').value = config.amount.minUsd;
+  buyStrategyConfig = raw;
+  if (!buyStrategyEditor) buyStrategyEditor = GdhBuyStrategies.createEditor(document.querySelector('#buy-strategy-editor'), raw, buyStrategyWallets);
+  else buyStrategyEditor.sync(raw, buyStrategyWallets);
 }
-
-function readBuyStrategies() {
-  return GdhBuyStrategies.readFields(key => document.querySelector(`#buy-${key}`));
-}
-
 function renderBuyStrategyPickers(wallets) {
-  for (const type of ['group', 'amount']) {
-    const select = document.querySelector(`#buy-${type}-picker`);
-    select.replaceChildren(new Option('从特别关注添加人物…', ''));
-    for (const person of Array.isArray(wallets) ? wallets : []) {
-      try {
-        const [entry] = GdhBuyStrategies.parseWallets(`${person.address} ${person.label || ''}`);
-        if (entry) select.append(new Option(`${entry.label || '未命名'} · ${entry.address.slice(0,6)}…${entry.address.slice(-4)}`, `${entry.address} ${entry.label}`.trim()));
-      } catch { /* Ignore malformed legacy wallet entries. */ }
-    }
-    select.onchange = () => {
-      if (!select.value) return;
-      const input = document.querySelector(`#buy-${type}-wallets`);
-      try {
-        const entries = GdhBuyStrategies.parseWallets(`${input.value}\n${select.value}`);
-        input.value = entries.map(p => `${p.address} ${p.label}`.trim()).join('\n');
-        buyStrategyDirty = true;
-      } catch (error) { setStatus(error.message, 'error'); }
-      select.value = '';
-    };
-  }
+  buyStrategyWallets = wallets;
+  buyStrategyEditor?.sync(buyStrategyConfig, wallets);
 }
-
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
+  if (changes.priorityBuyStrategies) renderBuyStrategies(changes.priorityBuyStrategies.newValue);
   if (changes.specialWallets) renderBuyStrategyPickers(changes.specialWallets.newValue);
-  if (changes.priorityBuyStrategies) {
-    if (!buyStrategyDirty) renderBuyStrategies(changes.priorityBuyStrategies.newValue);
-    else setStatus('策略在其他页面有更新；当前未保存的草稿已保留。重新打开设置可读取最新配置。', 'error');
-  }
 });
 
 // Per-wallet opt-in; never overwrite the latest color/pin preferences on save.

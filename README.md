@@ -4,7 +4,7 @@
 
 高亮重点 Dev、把 fomo.family 与 Pump 实时事件搬进 GMGN、持仓异动大卡片提醒、追踪流降噪。
 
-v0.46.82：点击追踪面板原有的 ⭐ 人数条，在「策略追踪 NEW」分栏直接修改共同买入人物、时间窗口、大额买入人物和 USD 门槛；GMGN / DeBot 与插件设置共用配置，默认关闭，保存后生效。
+v0.46.83：策略追踪支持最多 20 组，可分别命名、保存和开关；每组独立判断共同买入 / 大额买入。⭐ 管理分栏与插件设置同步，旧配置保留为第一组，新组默认关闭。
 
 - 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>
