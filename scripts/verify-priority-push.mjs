@@ -126,6 +126,7 @@ try {
     if (site === 'gmgn.ai') {
       await page.addScriptTag({ content: `
         const specialWalletMap = new Map([['${wallet}',{label:'测试人物',persistentPin:true,pin:true}]]);
+        const settings={enableSpecialWallet:true};
         const specialPinSeen=new Set(); const SPECIAL_PIN_SEEN_MAX=400; let specialPinBaselineDone=false;
         const priorityPush={capture:(id,record)=>{window.captured=[id,record]},setContext:()=>{}};
         const trackerCards=()=>[...document.querySelectorAll('[data-fixture-row]')];

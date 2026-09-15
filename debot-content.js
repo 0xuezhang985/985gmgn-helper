@@ -17,6 +17,7 @@
     similarTokenCacheMinutes: 5,
     enableSpecialWallet: true,
     specialWallets: [],
+    priorityBuyStrategies: {},
     blockedTokens: [],
     debotFomoPanelOpen: false,
     debotFomoPanelFolded: false,
@@ -636,6 +637,7 @@
     card.className = `gdh-debot-feed__row ${tag.cls}${event.source === 'pump' ? ' is-pump' : ''}`;
     card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
     card.href = debotTokenHref(event.chain, event.addr);
+    globalThis.GdhBuyStrategies?.tagFeed(card, event);
     bindDebotNavigation(card);
 
     const stripe = document.createElement('span');
@@ -724,6 +726,7 @@
         feedCards.delete(first);
       }
     }
+    globalThis.GdhBuyStrategies?.tagFeed(card, event);
     const time = card.querySelector('.gdh-debot-feed__time');
     if (time) time.textContent = relativeTime(event.ts);
     return card;
@@ -938,6 +941,7 @@
       card.dataset.gdhDebotFomoKey = safeText(event.key, 220);
       card.dataset.gdhDebotMode = mode;
       card.href = debotTokenHref(event.chain, event.addr);
+      globalThis.GdhBuyStrategies?.tagFeed(card, event);
       bindDebotNavigation(card);
 
       const stripe = document.createElement('span');
@@ -1039,6 +1043,7 @@
         sidebarFeedCards.delete(first);
       }
     }
+    globalThis.GdhBuyStrategies?.tagFeed(card, event);
     const time = card.querySelector('.gdh-debot-sidefeed__time');
     if (time) time.textContent = relativeTime(event.ts);
     return card;
@@ -1541,6 +1546,10 @@
   function scanSidebarFeatures() {
     const layout = sidebarTrackLayout();
     const root = document.querySelector('[data-edge-dock-panel="track"]');
+    const strategyRoot = isTrackShellPage() && layout && root instanceof HTMLElement ? root : null;
+    const strategyTop = strategyRoot ? layout.list.getBoundingClientRect().top - root.getBoundingClientRect().top : 0;
+    priorityPush?.setContext(strategyRoot, Math.max(42, strategyTop), settings.enableSpecialWallet === false ? new Map() : specialWalletMap, settings.priorityBuyStrategies);
+    if (strategyRoot && globalThis.GdhBuyStrategies?.enabled(settings.priorityBuyStrategies)) priorityPush?.scanBuys?.([...sidebarTrackRows(layout.list), ...root.querySelectorAll('[data-gdh-strategy-wallet]')]);
     if (!isTrackShellPage() || !layout || !(root instanceof HTMLElement) || settings.enableSpecialWallet === false) {
       document.querySelectorAll('.gdh-debot-special-star, .gdh-debot-special-swatch, .gdh-debot-special-manage-button, .gdh-debot-special-manage')
         .forEach((node) => node.remove());
@@ -1552,12 +1561,11 @@
         row.style.removeProperty('--gdh-debot-special-color');
       });
       specialPinStrip?.remove(); specialPinStrip = null;
-      priorityPush?.setContext(null, 0, specialWalletMap);
       return;
     }
     ensureSpecialManageUI(root);
     const top = layout.list.getBoundingClientRect().top - root.getBoundingClientRect().top;
-    priorityPush?.setContext(root, Math.max(42, top), specialWalletMap);
+    priorityPush?.setContext(root, Math.max(42, top), specialWalletMap, settings.priorityBuyStrategies);
     const rows = sidebarTrackRows(layout.list);
     const current = [];
     for (const row of rows) {

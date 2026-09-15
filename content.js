@@ -245,6 +245,7 @@
     syncGmgnTokenBlacklist: true,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
+    priorityBuyStrategies: {},
     highlightColor: '#f5b83d',
     badgeColors: {
       fomo: '#6d4ed4',
@@ -3636,7 +3637,7 @@ ${flapTooltipText(info)}
 
   function scanSpecialWallets() {
     if (settings.enableSpecialWallet === false) {
-      priorityPush?.setContext(null, 0, specialWalletMap);
+      scanPinnedPush();
       closeColorPalette();
       specialManageOpen = false;
       document
@@ -4300,10 +4301,13 @@ ${flapTooltipText(info)}
   function scanPinnedPush() {
     const panel = document.querySelector('[data-sentry-component="WalletTrack"]');
     const body = panel?.querySelector('[data-sentry-component="TrackingBody"]');
-    if (panel && [...specialWalletMap.values()].some((meta) => meta.persistentPin)) panel.classList.add('gdh-callout-panel-host');
-    priorityPush?.setContext(panel, panel ? (body || panel).getBoundingClientRect().top - panel.getBoundingClientRect().top : 0, specialWalletMap);
+    const pinWallets = settings.enableSpecialWallet === false ? new Map() : specialWalletMap;
+    if (panel && ([...pinWallets.values()].some((meta) => meta.persistentPin) || globalThis.GdhBuyStrategies?.enabled(settings.priorityBuyStrategies))) panel.classList.add('gdh-callout-panel-host');
+    priorityPush?.setContext(panel, panel ? (body || panel).getBoundingClientRect().top - panel.getBoundingClientRect().top : 0, pinWallets, settings.priorityBuyStrategies);
     if (!(panel instanceof HTMLElement)) return;
     const cards = trackerCards().filter((card) => panel.contains(card) && !card.closest('.gdh-pin-strip, .gdh-priority-push'));
+    if (globalThis.GdhBuyStrategies?.enabled(settings.priorityBuyStrategies)) priorityPush?.scanBuys?.([...cards, ...panel.querySelectorAll('.gdh-fomofeed')]);
+    if (settings.enableSpecialWallet === false) return;
     if (!cards.length) return;
 
     if (!specialPinBaselineDone) {
@@ -8162,6 +8166,7 @@ ${flapTooltipText(info)}
     card.className = `gdh-fomofeed ${tag.cls}${ev.source === 'pump' ? ' is-pump' : ''}`;
     card.dataset.gdhFomoKey = ev.key;
     card.dataset.gdhFeedSource = ev.source || 'fomo';
+    globalThis.GdhBuyStrategies?.tagFeed(card, ev);
 
     // 链条色竖条：对齐原生（5px、绝对定位盖在左缘）
     if (ev.chain) {
@@ -8301,6 +8306,7 @@ ${flapTooltipText(info)}
       el = buildFomoFeedCard(ev);
       fomoFeedCards.set(ev.key, el);
     }
+    globalThis.GdhBuyStrategies?.tagFeed(el, ev);
     applyFomoFeedTableLayout(el);
     // 相对时间只在文案变化时写，避免和 MutationObserver 互相触发
     const timeEl = el.querySelector('.gdh-fomofeed__time');
@@ -9041,6 +9047,10 @@ ${flapTooltipText(info)}
         scheduleSimilarTokenScan();
         continue;
       }
+      if (record.type === 'attributes' && record.attributeName.startsWith('data-gdh-track-')) {
+        if (globalThis.GdhBuyStrategies?.enabled(settings.priorityBuyStrategies)) { scheduleScan(); return; }
+        continue;
+      }
       // 虚拟列表新挂载的行必须在本帧绘制前继承已有插卡位移。合到同一 rAF，
       // 避免一次 mutation delivery 里反复读 offsetHeight / 写 transform。
       scheduleFomoFeedRowReflow();
@@ -9054,6 +9064,8 @@ ${flapTooltipText(info)}
     attributes: true,
     attributeFilter: [
       'data-gdh-track-mc',
+      'data-gdh-track-addr', 'data-gdh-track-chain', 'data-gdh-track-maker',
+      'data-gdh-track-side', 'data-gdh-track-ts', 'data-gdh-track-tx', 'data-gdh-track-usd',
       'data-gdh-creator',
       'data-gdh-migrated',
       'data-gdh-total',

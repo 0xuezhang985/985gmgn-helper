@@ -8,7 +8,7 @@ const browser=await chromium.launch({channel:'chrome',headless:true});let checks
 try {
   const page=await browser.newPage({viewport:{width:430,height:900}});
   await page.route('**/*',route=>route.fulfill({body:'',contentType:'text/plain'}));
-  await page.setContent(read('popup.html').replace(/<script[^>]*src="popup.js"[^>]*><\/script>/,''));
+  await page.setContent(read('popup.html').replace(/<script[^>]*src="(?:popup|buy-strategies).js"[^>]*><\/script>/g,''));
   await page.addStyleTag({content:read('popup.css')});
   await page.addScriptTag({content:`
     window.confirm=()=>{throw Error("unexpected confirmation dialog")};window.failConsent=false;window.msgs=[];window.reloads=0;window.failInstall=true;
@@ -21,6 +21,7 @@ try {
       else cb(state);
     }},storage:{local:{get:(defaults,cb)=>cb(typeof defaults==='object'?defaults:{}),set:(_s,cb)=>cb?.()},onChanged:{addListener:()=>{}}},tabs:{create:()=>{}}};
   `});
+  await page.addScriptTag({content:read('buy-strategies.js')});
   await page.addScriptTag({content:read('popup.js')});
   assert.equal(await page.locator('#enable-fomo-rank-contribution').count(),0);
   assert.equal(await page.locator('#accept-fomo-update-notice').count(),0);

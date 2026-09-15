@@ -18,6 +18,7 @@ $files = @(
   'manifest.json',
   'background.js',
   'priority-push.js',
+  'buy-strategies.js',
   'page-bridge.js',
   'monitor-aggregate.js',
   'content.js',

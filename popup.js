@@ -11,6 +11,7 @@ const DEFAULTS = {
   enableManifestoTab: true,
   enableSpecialWallet: true,
   specialWallets: [],
+  priorityBuyStrategies: { group: { enabled: false, wallets: [], windowSeconds: 300 }, amount: { enabled: false, wallets: [], minUsd: 1000 } },
   disableTrackerPersonNavigation: false,
   enableRemindAlert: true,
   enableFomoPanel: true,
@@ -225,6 +226,8 @@ function formatDevList(entries) {
 }
 
 chrome.storage.local.get(DEFAULTS, (stored) => {
+  renderBuyStrategies(stored.priorityBuyStrategies);
+  renderBuyStrategyPickers(stored.specialWallets);
   for (const [key, input] of Object.entries(featureInputs)) {
     input.checked = stored[key] !== false;
   }
@@ -276,6 +279,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 saveButton.addEventListener('click', async () => {
+  let priorityBuyStrategies;
+  try { priorityBuyStrategies = readBuyStrategies(); }
+  catch (error) { setStatus(error.message, 'error'); return; }
   const parsed = parseDevList(devListInput.value);
   if (parsed.errors.length) {
     setStatus(`第 ${parsed.errors.join('、')} 行不是完整的 BSC 钱包地址`, 'error');
@@ -296,6 +302,7 @@ saveButton.addEventListener('click', async () => {
   }
 
   const next = {
+    priorityBuyStrategies,
     ...Object.fromEntries(
       Object.entries(featureInputs).map(([key, input]) => [key, input.checked]),
     ),
@@ -515,6 +522,59 @@ sendRuntimeMessage({ type: 'get-update-state' })
       error: error.message,
     });
   });
+
+function renderBuyStrategies(raw) {
+  const config = GdhBuyStrategies.normalize(raw);
+  for (const type of ['group', 'amount']) {
+    document.querySelector(`#buy-${type}-enabled`).checked = config[type].enabled;
+    document.querySelector(`#buy-${type}-wallets`).value = config[type].wallets.map(p => `${p.address} ${p.label}`.trim()).join('\n');
+  }
+  document.querySelector('#buy-group-window').value = config.group.windowSeconds;
+  document.querySelector('#buy-amount-usd').value = config.amount.minUsd;
+}
+
+function readBuyStrategies() {
+  const result = {};
+  for (const type of ['group', 'amount']) {
+    const enabled = document.querySelector(`#buy-${type}-enabled`).checked;
+    let wallets;
+    try { wallets = GdhBuyStrategies.parseWallets(document.querySelector(`#buy-${type}-wallets`).value); }
+    catch (error) { throw new Error(`${type === 'group' ? '共同买入' : '大额买入'}：${error.message}`); }
+    if (enabled && wallets.length < (type === 'group' ? 2 : 1)) throw new Error(type === 'group' ? '共同买入至少需要 2 个不同钱包' : '大额买入至少需要 1 个钱包');
+    result[type] = { enabled, wallets };
+  }
+  result.group.windowSeconds = Number(document.querySelector('#buy-group-window').value);
+  if (!Number.isInteger(result.group.windowSeconds) || result.group.windowSeconds < 10 || result.group.windowSeconds > 3600) throw new Error('共同买入时间窗口需要填写 10–3600 的整数秒');
+  result.amount.minUsd = Number(document.querySelector('#buy-amount-usd').value);
+  if (!Number.isFinite(result.amount.minUsd) || result.amount.minUsd <= 0) throw new Error('单笔买入金额需要大于 0 USD');
+  return result;
+}
+
+function renderBuyStrategyPickers(wallets) {
+  for (const type of ['group', 'amount']) {
+    const select = document.querySelector(`#buy-${type}-picker`);
+    select.replaceChildren(new Option('从特别关注添加人物…', ''));
+    for (const person of Array.isArray(wallets) ? wallets : []) {
+      try {
+        const [entry] = GdhBuyStrategies.parseWallets(`${person.address} ${person.label || ''}`);
+        if (entry) select.append(new Option(`${entry.label || '未命名'} · ${entry.address.slice(0,6)}…${entry.address.slice(-4)}`, `${entry.address} ${entry.label}`.trim()));
+      } catch { /* Ignore malformed legacy wallet entries. */ }
+    }
+    select.onchange = () => {
+      if (!select.value) return;
+      const input = document.querySelector(`#buy-${type}-wallets`);
+      try {
+        const entries = GdhBuyStrategies.parseWallets(`${input.value}\n${select.value}`);
+        input.value = entries.map(p => `${p.address} ${p.label}`.trim()).join('\n');
+      } catch (error) { setStatus(error.message, 'error'); }
+      select.value = '';
+    };
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.specialWallets) renderBuyStrategyPickers(changes.specialWallets.newValue);
+});
 
 // Per-wallet opt-in; never overwrite the latest color/pin preferences on save.
 function renderPriorityWallets(list) {

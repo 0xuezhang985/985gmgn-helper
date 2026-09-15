@@ -272,6 +272,10 @@ footer { margin-top: 9px; text-align: center; font-size: 11px; }
   overscroll-behavior: contain;
 }
 
+#buy-strategy-settings > small { display: block; line-height: 1.6; margin: 8px 0; }
+#buy-strategy-settings textarea, #buy-strategy-settings > select { width: 100%; margin: 5px 0 10px; }
+#buy-strategy-settings input[type="number"] { width: 110px; min-width: 0; }
+
 #priority-wallet-list .control-row > span {
   min-width: 0;
   overflow: hidden;

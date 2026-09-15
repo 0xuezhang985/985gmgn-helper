@@ -39,7 +39,7 @@
         if (href.origin !== `https://${site}` || !href.pathname.includes('/token/')) throw new Error('无效的代币链接');
         const wallet = clean(data.wallet, 64);
         if (!/^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(wallet)) throw new Error('无效的钱包地址');
-        const record = { id, wallet, href: href.pathname + href.search, name: clean(data.name, 64),
+        const record = { id, wallet, strategy: data.strategy === true, href: href.pathname + href.search, name: clean(data.name, 64),
           detail: clean(data.detail, 500), at: Date.now() };
         await chrome.storage.local.set({ [key]: record });
         return { ok: true, record };
@@ -56,6 +56,9 @@
       const sent = new Set();
       const pending = new Set();
       let root = null, box = null, wallets = new Map(), dirty = true, page = 0, walletKey = '', error = '', offsetTop = '0px';
+      const strategies = globalThis.GdhBuyStrategies?.create();
+      const strategyPending = new Map();
+      let strategyActive = false;
       const request = async (type, extra = {}) => {
         const result = await chrome.runtime.sendMessage({ type, ...extra });
         if (!result?.ok) throw new Error(result?.error || '扩展连接失效');
@@ -75,9 +78,9 @@
       function render() {
         if (!root?.isConnected) { box?.remove(); box = null; return; }
         if (!dirty && (!box || box.isConnected)) return;
-        const active = [...records.values()].filter((record) => wallets.get(record.wallet)?.persistentPin === true)
+        const active = [...records.values()].filter((record) => record.strategy ? strategyActive : wallets.get(record.wallet)?.persistentPin === true)
           .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
-        if (!active.length && (!error || !walletKey)) { box?.remove(); box = null; dirty = false; return; }
+        if (!active.length && (!error || (!walletKey && !strategyActive))) { box?.remove(); box = null; dirty = false; return; }
         if (!box?.isConnected) {
           box = document.createElement('section');
           box.className = 'gdh-priority-push';
@@ -147,8 +150,11 @@
         if (changed) render();
       });
 
-      return {
-        setContext(panel, top, map) {
+      const api = {
+        setContext(panel, top, map, strategyConfig) {
+          const nextStrategyActive = globalThis.GdhBuyStrategies?.enabled(strategyConfig) === true;
+          if (strategies?.configure(strategyConfig)) { strategyPending.clear(); dirty = true; }
+          strategyActive = nextStrategyActive;
           const nextKey = [...map].filter(([, meta]) => meta.persistentPin === true).map(([address]) => address).sort().join('|');
           if (root !== panel || walletKey !== nextKey) dirty = true;
           if (root !== panel) { box?.remove(); box = null; }
@@ -158,17 +164,35 @@
           if (box && box.style.top !== offsetTop) box.style.top = offsetTop;
         },
         async capture(id, record) {
-          if (!id || pending.has(id) || sent.has(id)) return;
+          if (!id || pending.has(id)) return false;
+          if (sent.has(id)) return true;
           pending.add(id);
           try {
             await ready;
-            if (sent.has(id)) return;
+            if (sent.has(id)) return true;
             const result = await request('priority-push-add', { id, record });
-            remember(result.record); error = ''; render();
-          } catch { error = '本地保存失败，请检查扩展存储'; dirty = true; render(); }
+            remember(result.record); error = ''; render(); return true;
+          } catch { error = '本地保存失败，请检查扩展存储'; dirty = true; render(); return false; }
           finally { pending.delete(id); }
         },
+        scanBuys(rows) {
+          if (!strategyActive || !root?.isConnected || !strategies) return;
+          const events = rows.map(row => globalThis.GdhBuyStrategies.fromRow(row, location.hostname)).filter(Boolean);
+          for (const alert of strategies.ingest(events)) if (!strategyPending.has(alert.key)) strategyPending.set(alert.key, alert);
+          for (const alert of strategyPending.values()) {
+            if (alert.sending) continue;
+            alert.sending = true;
+            (async () => {
+              const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(alert.key));
+              if (!strategyActive || strategyPending.get(alert.key) !== alert) return;
+              const id = 'buy-strategy:' + [...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');
+              if (await api.capture(id, alert.record)) strategyPending.delete(alert.key);
+            })().catch(() => { error = '策略提醒保存失败，请重试'; dirty = true; render(); })
+              .finally(() => { alert.sending = false; });
+          }
+        },
       };
+      return api;
     },
     snapshot(row) {
       const copy = row.cloneNode(true);
