@@ -1045,8 +1045,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ---- fomo 代币数据（在后台取，避开页面 CORS/CSP；令牌由 fomo.family 上的脚本捕获）----
 const FOMO_API = 'https://prod-api.fomo.family';
-// fomo 自己每个请求都带这个头（少了它 /hodlers/top 会返回空）：eth,bnb,monad,robinhood,base,solana
-const FOMO_CHAINS = '1,56,143,4663,8453,1399811149';
+// fomo 自己每个请求都带这个头（少了它 /hodlers/top 会返回空）：eth,bnb,monad,robinhood,arc,base,solana
+const FOMO_CHAINS = '1,56,143,4663,5042,8453,1399811149';
 const FOMO_CACHE_MS = 90 * 1000;
 const FOMO_CACHE_MAX = 60;
 const fomoCache = new Map();
@@ -2118,7 +2118,7 @@ let fomoTrendingPending = null;
 function compactFomoTrendingItems(value) {
   const chainByNetwork = new Map([
     [1, 'eth'], [56, 'bsc'], [143, 'monad'], [4663, 'robinhood'],
-    [8453, 'base'], [1399811149, 'sol'],
+    [5042, 'arc'], [8453, 'base'], [1399811149, 'sol'],
   ]);
   const numeric = (input) => input !== null && input !== undefined && input !== ''
     && Number.isFinite(Number(input)) ? Number(input) : null;

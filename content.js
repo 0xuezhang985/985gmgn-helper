@@ -4544,9 +4544,9 @@ ${flapTooltipText(info)}
   }
 
   // ---- fomo 浮窗：在 GMGN 代币页看该代币在 fomo 的观点/交易 ----
-  const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143 };
-  const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol', robinhood: 'robinhood', monad: 'monad' };
-  const FOMO_GMGN_CHAIN = { 1: 'eth', 56: 'bsc', 143: 'monad', 4663: 'robinhood', 8453: 'base', 1399811149: 'sol' };
+  const FOMO_NETWORK_ID = { bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143, arc: 5042 };
+  const FOMO_CHAIN_SLUG = { bsc: 'bnb', eth: 'eth', base: 'base', sol: 'sol', robinhood: 'robinhood', monad: 'monad', arc: 'arc' };
+  const FOMO_GMGN_CHAIN = { 1: 'eth', 56: 'bsc', 143: 'monad', 4663: 'robinhood', 5042: 'arc', 8453: 'base', 1399811149: 'sol' };
   const FOMO_REFRESH_MS = 2 * 60 * 1000;
   let fomoPanelEl = null;
   let fomoTab = 'thesis';
