@@ -2085,7 +2085,12 @@ const FOMO_FEED_TYPE = {
 };
 
 // fomo 的链名 → GMGN 的路径段
-const FOMO_CHAIN_SLUG = { bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth', base: 'base', robinhood: 'robinhood', 'chain 143': 'monad' };
+const FOMO_CHAIN_SLUG = {
+  bnb: 'bsc', bsc: 'bsc', sol: 'sol', solana: 'sol', eth: 'eth', ethereum: 'eth',
+  base: 'base', robinhood: 'robinhood', 'chain 143': 'monad',
+  // FOMO 实际推送使用 chain5042；必须在卡片和聚合缓存消费之前转成站内链名。
+  arc: 'arc', chain5042: 'arc', 'chain 5042': 'arc',
+};
 const FOMO_RANK_SNAPSHOT_KEY = 'fomoRankSnapshotV1';
 const FOMO_RANK_BOARD_KEYS = new Set(['all', '30d', '7d', '24h']);
 let fomoRankSnapshot = { updatedAt: 0, ranks: new Map() };

@@ -1,15 +1,33 @@
 // Production FOMO click + cross-world bridge in an isolated browser, no accounts / APIs.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const read = p => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const content = read('content.js'), bridge = read('page-bridge.js');
+const content = read('content.js'), bridge = read('page-bridge.js'), background = read('background.js');
 const take = name => { const start = content.indexOf(`function ${name}(`); assert.ok(start >= 0); return content.slice(start, content.indexOf('\n  }', start) + 4); };
 const navBridge = bridge.slice(bridge.indexOf("  document.addEventListener('gdh-navigate',"), bridge.lastIndexOf('})();'));
+const normalizeFeed = [
+  background.match(/const FOMO_CHAIN_SLUG = [^;]+;/)[0],
+  background.match(/const FOMO_FEED_TYPE = [\s\S]*?\n};/)[0],
+  background.slice(background.indexOf('function slimFomoEvent('), background.indexOf('\nasync function fetchFomoFeed(')),
+].join('\n');
 const browser = await chromium.launch({ headless: true });
 let checks = 0; const pass = text => console.log(`PASS ${++checks}: ${text}`);
 try {
+  for (const [input, expected] of [
+    ['chain5042', 'arc'], [' Chain5042 ', 'arc'], ['chain 5042', 'arc'], ['Arc', 'arc'],
+    ['bnb', 'bsc'], ['ethereum', 'eth'], ['solana', 'sol'], ['robinhood', 'robinhood'],
+    ['chain 143', 'monad'], ['chain999999', 'chain999999'],
+  ]) {
+    const event = vm.runInNewContext(`${normalizeFeed};slimFomoEvent(raw)`, {
+      raw: { eventType: 'FOMO_BUY', chainName: input, tokenAddress: '0x' + '2'.repeat(40), ts: Date.now() },
+    });
+    assert.equal(event.chain, expected, `chainName=${input}`);
+    assert.equal(event.addr, '0x' + '2'.repeat(40));
+  }
+  pass('生产推送归一化识别 chain5042 / Arc，保留合约及其他链，不猜测未知链');
   const page = await browser.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', r => r.fulfill({ contentType: 'text/html', body: '<html><body><main>原生图表</main></body></html>' }));
@@ -25,15 +43,16 @@ try {
     ${take('gdhSpaNavigate')}
     ${take('attachFomoFeedCardBehavior')}
     ${navBridge}
+    ${normalizeFeed}
     const card=document.createElement('div'); card.id='fomo-arc'; card.textContent='FOMO Arc 代币';
-    attachFomoFeedCardBehavior({chain:'arc',addr:'0x'+'2'.repeat(40),symbol:'ARC',key:'arc-test'},card);
+    attachFomoFeedCardBehavior(slimFomoEvent({eventType:'FOMO_BUY',chainName:'chain5042',tokenAddress:'0x'+'2'.repeat(40),symbol:'ARC',key:'arc-test',ts:Date.now()}),card);
     document.body.appendChild(card);
   ` });
   await page.locator('#fomo-arc').click();
   await page.waitForURL('**/arc/token/0x' + '2'.repeat(40));
   assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
   assert.equal(await page.locator('#fomo-arc').count(), 1);
-  pass('真实 FOMO 卡片点击跨链进入 Arc，1.2 秒慢路由仍不整页刷新');
+  pass('chain5042 原始推送经生产转换和卡片点击跨链进入 Arc，1.2 秒慢路由仍不整页刷新');
   await page.evaluate(() => gdhSpaNavigate('/arc/token/0x' + '3'.repeat(40)));
   await page.waitForURL('**/arc/token/0x' + '3'.repeat(40));
   assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
