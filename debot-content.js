@@ -1590,7 +1590,7 @@
         const href = row.matches('a[href*="/token/"]') ? row.getAttribute('href')
           : row.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
         priorityPush?.capture(`${new URL(href, location.origin).pathname.split('/').slice(0, 3).join('/')}|${item.signature}`, { wallet: item.wallet.address, href,
-          name: item.wallet.meta.label || item.wallet.label, detail: globalThis.GdhPriorityPush.snapshot(row) });
+          name: item.wallet.meta.label || item.wallet.label, detail: globalThis.GdhPriorityPush.snapshot(row), visual: globalThis.GdhPriorityPush.describe(row) });
       } else if (item.wallet.meta?.pin) pinSidebarRow(item.row);
     }
   }

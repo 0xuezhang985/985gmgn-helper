@@ -4212,7 +4212,9 @@ ${flapTooltipText(info)}
   const specialPinSeen = new Set();
   let specialPinBaselineDone = false;
   let specialPinStrip = null;
-  const priorityPush = globalThis.GdhPriorityPush?.create((href) => gdhSpaNavigate(href));
+  const priorityPush = globalThis.GdhPriorityPush?.create((href) => gdhSpaNavigate(href), {
+    view: () => ({ table: isTrackerTableMode(), columns: fomoFeedTableLayout }),
+  });
 
   function hasPinnedWallets() {
     for (const meta of specialWalletMap.values()) if (meta.pin) return true;
@@ -4334,7 +4336,7 @@ ${flapTooltipText(info)}
         const href = card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
         const chain = String(card.dataset.gdhTrackChain || href.split('/')[1] || '');
         priorityPush?.capture(`${chain}|${sig}`, { wallet: address, href,
-          name: meta.label || extractRowWalletLabel(card), detail: globalThis.GdhPriorityPush.snapshot(card) });
+          name: meta.label || extractRowWalletLabel(card), detail: globalThis.GdhPriorityPush.snapshot(card), visual: globalThis.GdhPriorityPush.describe(card) });
       } else if (pinnedActive && meta?.pin === true) {
         pinTrackerCard(card, panel);
       }

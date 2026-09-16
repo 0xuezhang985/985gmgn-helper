@@ -120,7 +120,7 @@
           seen.set(event.id, previous);
           if (reasons.length) out.push({ key: key + '|' + event.id, record: { wallet: event.wallet, href: event.href,
             strategy: true, name: `买入策略 · ${text(event.symbol) || event.token.slice(0, 10)}`,
-            detail: `${event.chain.toUpperCase()} · ${reasons.join('；')}` } });
+            detail: `${event.chain.toUpperCase()} · ${reasons.join('；')}`, visual: event.visual } });
         }
         return out;
       },

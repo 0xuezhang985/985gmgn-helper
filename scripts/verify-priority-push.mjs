@@ -42,7 +42,8 @@ async function fixture(site) {
   await page.addScriptTag({ content: code });
   await page.evaluate(({ wallet }) => {
     window.navigations = [];
-    window.api = GdhPriorityPush.create((href) => navigations.push(href));
+    window.priorityView = {};
+    window.api = GdhPriorityPush.create((href) => navigations.push(href), { view: () => priorityView });
     window.wallets = new Map([[wallet, { persistentPin: true }]]);
     api.setContext(document.querySelector('#root'), 45, wallets);
   }, { wallet });
@@ -107,6 +108,74 @@ try {
   });
   assert.equal(mutationCount, 0);
   pass('DeBot 独立恢复，稳定扫描零 DOM 改写');
+
+  stored.prioritySettingsFixture = { enabled: true, groups: ['keep'] };
+  await send('gmgn.ai', { type: 'priority-push-add', id: 'hidden-wallet', record: { ...record('gmgn.ai'), wallet: '0x' + '3'.repeat(40) } });
+  failWrite = true;
+  await restored.getByRole('button', { name: '全部清除', exact: true }).click();
+  await restored.waitForFunction(() => document.querySelector('.gdh-priority-push header')?.textContent.includes('全部清除未保存'));
+  assert.equal(await restored.locator('.gdh-priority-push article').count(), 20);
+  failWrite = false;
+  await restored.getByRole('button', { name: '全部清除', exact: true }).click();
+  await restored.waitForFunction(() => !document.querySelector('.gdh-priority-push'));
+  assert.equal(await gmgn.locator('.gdh-priority-push').count(), 0);
+  assert.equal((await send('gmgn.ai', { type: 'priority-push-list' })).records.length, 0);
+  assert.equal(await debot.locator('.gdh-priority-push article').count(), 1);
+  assert.deepEqual(stored.prioritySettingsFixture, { enabled: true, groups: ['keep'] });
+  await capture(restored, 'gmgn.ai', 'event-2');
+  assert.equal(await restored.locator('.gdh-priority-push').count(), 0);
+  const afterClear = await fixture('gmgn.ai');
+  assert.equal(await afterClear.locator('.gdh-priority-push').count(), 0);
+  pass('全清失败保留卡片；成功清除所有页及隐藏提醒，跨标签同步、重开不复活，不改策略或另一站提醒');
+  const concurrent = await Promise.all([
+    send('gmgn.ai', { type: 'priority-push-add', id: 'before-clear', record: record('gmgn.ai') }),
+    send('gmgn.ai', { type: 'priority-push-clear' }),
+    send('gmgn.ai', { type: 'priority-push-add', id: 'after-clear', record: record('gmgn.ai') }),
+  ]);
+  assert.ok(concurrent.every(r => r.ok));
+  assert.ok(stored['gdhPriorityPushV1:gmgn.ai:before-clear'].dismissed);
+  assert.ok(!stored['gdhPriorityPushV1:gmgn.ai:after-clear'].dismissed);
+  assert.equal((await send('evil.example', { type: 'priority-push-clear' })).ok, false);
+  pass('新增与全清串行处理，清除后到达的新提醒正常保留，外站不能执行全清');
+
+  const rich = await fixture('gmgn.ai');
+  await rich.route('https://gmgn.ai/static/*.png', r => r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="8" fill="#5c8de5"/></svg>' }));
+  const visual = await rich.evaluate(({ wallet, token }) => {
+    const native = document.createElement('a');
+    Object.assign(native.dataset, { gdhTrackMaker: wallet, gdhTrackAddr: token, gdhTrackChain: 'arc', gdhTrackSide: 'buy', gdhTrackUsd: '2000', gdhTrackMc: '6400000', gdhTrackSymbol: 'COOL', gdhTrackTs: String(Date.now() - 60000) });
+    native.innerHTML = '<span style="background-color:#5c8de5"></span><div data-testid="follow-tracking-row-maker"><img src="/static/avatar.png"><a href="/arc/address/' + wallet + '">原生备注</a></div><span data-testid="follow-tracking-row-side">加仓</span><div data-testid="follow-tracking-row-amount"><img src="/static/usdc.png">2K</div><div data-testid="follow-tracking-row-symbol"><img src="/static/token.png"><span>COOL</span></div>';
+    return GdhPriorityPush.describe(native);
+  }, { wallet, token });
+  assert.equal(visual.symbol, 'COOL'); assert.equal(visual.amount, '2K'); assert.equal(visual.mc, '$6.4M');
+  assert.equal(visual.avatar, 'https://gmgn.ai/static/avatar.png');
+  await rich.evaluate(({ data, wallet, token }) => api.capture('rich', { wallet, name: '设置备注', href: `/arc/token/${token}`, detail: '原生记录', visual: data }), { data: visual, wallet, token });
+  const card = rich.locator('[data-priority-id="rich"]');
+  assert.equal(await card.locator('.gdh-priority-name').innerText(), '设置备注');
+  assert.equal(await card.locator('.gdh-priority-action').innerText(), '加仓');
+  assert.equal(await card.locator('.gdh-priority-amount').innerText(), '2K');
+  assert.equal(await card.locator('.gdh-priority-avatar img').count(), 2);
+  const cardSize = await card.locator('a').boundingBox(); assert.equal(cardSize.height, 64.5);
+  const urlBefore = await rich.evaluate(() => navigations.length);
+  await card.locator('.gdh-priority-symbol').click();
+  assert.equal(await rich.evaluate(() => navigations.length), urlBefore + 1);
+  assert.equal(await card.count(), 1);
+  await rich.screenshot({ path: new URL('../dist/priority-native-card-v90.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
+  await rich.evaluate(() => { priorityView = { table: true }; api.setContext(document.querySelector('#root'), 45, wallets); });
+  assert.equal(await rich.locator('.gdh-priority-push.is-table').count(), 1);
+  const cells = await card.locator('.gdh-priority-time,.gdh-priority-who,.gdh-priority-token,.gdh-priority-amount,.gdh-priority-mc').evaluateAll(nodes => nodes.map(e => ({ c: e.className, x: e.getBoundingClientRect().x, y: e.getBoundingClientRect().y, right: e.getBoundingClientRect().right })));
+  const ordered = ['time','who','token','amount','mc'].map(k => cells.find(c => c.c === 'gdh-priority-' + k));
+  for (let i = 1; i < ordered.length; i++) assert.ok(ordered[i].x >= ordered[i - 1].right - 0.5);
+  assert.ok(Math.max(...ordered.map(c=>c.y))-Math.min(...ordered.map(c=>c.y))<3);
+  await rich.evaluate(() => { const s=document.documentElement.style; s.setProperty('--color-bg','255 255 255');s.setProperty('--color-text-100','26 26 26'); });
+  assert.equal(await rich.locator('.gdh-priority-push').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(255, 255, 255)');
+  assert.equal(await card.locator('.gdh-priority-name').evaluate(e=>getComputedStyle(e).color),'rgb(26, 26, 26)');
+  await rich.screenshot({ path: new URL('../dist/priority-native-table-v90.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
+  pass('原生头像 / 报价图标 / 加仓 / 金额 / 市值持久保存，两行卡片切五列表格不重叠，浅色主题和站内点击保留');
+  const unsafe = await send('gmgn.ai', { type: 'priority-push-add', id: 'unsafe-visual', record: { ...record('gmgn.ai'), visual: { avatar: 'javascript:alert(1)', tokenImage:'http://unsafe.example/a.png', color:'red;position:fixed', symbol:'<img onerror=alert(1)>', ts:1e100 } } });
+  assert.equal(unsafe.record.visual.avatar,'');assert.equal(unsafe.record.visual.tokenImage,'');assert.equal(unsafe.record.visual.color,'');
+  assert.equal(unsafe.record.visual.ts,0);
+  assert.equal(await rich.locator('[data-priority-id="unsafe-visual"] .gdh-priority-symbol img').count(),0);
+  pass('展示字段限长校验，禁止非 HTTPS 图片及任意 CSS，文本不作为 HTML 执行');
 
   for (const site of ['gmgn.ai', 'debot.ai']) for (const mode of ['card', 'list']) {
     const page = await fixture(site);
