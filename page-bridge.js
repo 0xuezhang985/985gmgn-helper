@@ -854,6 +854,7 @@
       for (const record of records) {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
         if (target?.closest('.gdh-monitor-aggregate')) continue;
+        if (target?.closest('.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab')) continue;
         scheduleScan();
         return;
       }

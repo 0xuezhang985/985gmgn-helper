@@ -1130,7 +1130,7 @@ await test('重点 Dev 高亮开关不再充当 FOMO/Pump 插卡总开关', () =
   assert.ok(!extractFunction(debotContent, 'pollPump').includes('settings.enabled'));
 });
 
-await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
+await test('GMGN 默认站内导航不因暂未到目标路径而强制整页刷新', () => {
   const fn = extractFunction(content, 'gdhSpaNavigate');
   const target = '/robinhood/token/0x65eeaf07b545c9560dcbd8a72f239fa1ab961501';
   const location = { origin: 'https://gmgn.ai', pathname: '/follow', href: '' };
@@ -1146,7 +1146,7 @@ await test('GMGN SPA 误跳主页时仍会回退到正确代币路径', () => {
     window: { setTimeout: (callback) => callback() },
   });
   assert.equal(nav, target);
-  assert.equal(location.href, target);
+  assert.equal(location.href, '');
 });
 
 await test('DeBot 只注入追踪、FOMO 与独立 Brew 浮窗模块', () => {
@@ -1824,8 +1824,15 @@ await test('/bgm 同步只使用 GitHub Release 原始资产并校验 SHA256', (
   assert.ok(bgmSync.includes('release_file_hashes[fn]'));
   assert.ok(bgmSync.includes('Release SHA256 不一致'));
   assert.ok(!bgmSync.includes("os.path.join(DIST, fn)"));
-  assert.ok(site.includes(`985gmgn-helper-setup-v${manifest.version}.exe`));
-  assert.ok(site.includes(`985gmgn-helper-v${manifest.version}.zip`));
+  // Local-only builds must NOT advertise unpublished download assets.
+  const changelog = read('CHANGELOG.md');
+  const localHeader = changelog.split(/\r?\n/).find(line => line.startsWith(`## v${manifest.version} (`));
+  const publicVersion = localHeader?.includes('本地试用，未发布')
+    ? changelog.split(/\r?\n/).map(line => line.match(/^## v(\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}\)$/)?.[1]).find(Boolean)
+    : manifest.version;
+  assert.ok(publicVersion, 'public download version must be explicit');
+  assert.ok(site.includes(`985gmgn-helper-setup-v${publicVersion}.exe`));
+  assert.ok(site.includes(`985gmgn-helper-v${publicVersion}.zip`));
 });
 
 await test('Solana 供应量缓存键不再统一小写', () => {

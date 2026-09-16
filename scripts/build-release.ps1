@@ -21,6 +21,8 @@ $files = @(
   'buy-strategies.js',
   'page-bridge.js',
   'monitor-aggregate.js',
+  'aggregate-monitor.js',
+  'aggregate-monitor.css',
   'content.js',
   'debot-bridge.js',
   'debot-content.js',

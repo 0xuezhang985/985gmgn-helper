@@ -7720,6 +7720,31 @@ ${flapTooltipText(info)}
     globalTradeMinUsd: 10, at: 0,
   };
 
+  // New native panel consumes the existing local feed snapshots; no new request loop.
+  function publishBuyAggregateFeeds(reset = false) {
+    if (document.documentElement.getAttribute('data-gdh-buy-aggregate-active') !== '1') return;
+    const packet = {
+      reset,
+      enabled: { fomo: settings.enableFomoFeed !== false, pump: settings.enablePumpFeed !== false },
+      fomo: fomoFeedEvents.filter(fomoFeedEventAllowed),
+      pump: pumpFeedEvents.filter(pumpFeedEventAllowed),
+    };
+    document.documentElement.setAttribute('data-gdh-buy-aggregate-feeds', JSON.stringify(packet));
+    document.dispatchEvent(new Event('gdh-buy-aggregate-feeds'));
+  }
+  document.addEventListener('gdh-buy-aggregate-request', () => {
+    publishBuyAggregateFeeds();
+    if (document.documentElement.getAttribute('data-gdh-buy-aggregate-active') !== '1') return;
+    if (Date.now() - fomoFeedLastPollAt > FOMO_FEED_POLL_MS) pollFomoFeed();
+    if (Date.now() - pumpFeedLastPollAt > FOMO_FEED_POLL_MS) pollPumpFeed();
+  });
+
+  function buyAggregateConfigSignature(raw) {
+    // The config cache also changes its fetch timestamp. That is not a filter change.
+    return JSON.stringify(['connected', 'wallet', 'watch', 'muted', 'prefs', 'filters',
+      'tokenFilters', 'globalTradeMinUsd', 'onlyMine'].map(key => raw?.[key]));
+  }
+
   function loadMonitorFomoCfg(raw) {
     const muted = new Set(
       (Array.isArray(raw?.muted) ? raw.muted : []).map((h) => String(h || '').toLowerCase()).filter(Boolean),
@@ -7953,16 +7978,18 @@ ${flapTooltipText(info)}
 
   function pollFomoFeed() {
     if (settings.enableFomoFeed === false) return;
-    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
+    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length
+      && document.documentElement?.getAttribute('data-gdh-buy-aggregate-active') !== '1') return;
     fomoFeedLastPollAt = Date.now();
     try {
       chrome.runtime.sendMessage({ type: 'fomo-feed' }, (resp) => {
         if (chrome.runtime.lastError) return;
         if (!resp?.ok) {
-          if (resp?.reason === 'not-connected') { fomoFeedEvents = []; scheduleScan(); }
+          if (resp?.reason === 'not-connected') { fomoFeedEvents = []; publishBuyAggregateFeeds(['fomo']); scheduleScan(); }
           return;
         }
         fomoFeedEvents = Array.isArray(resp.events) ? resp.events : [];
+        publishBuyAggregateFeeds();
         scheduleScan();
       });
     } catch {
@@ -7978,9 +8005,9 @@ ${flapTooltipText(info)}
     return `${Math.floor(diff / 86400000)}d`;
   }
 
-  /** 站内跳转：请 MAIN world 的 page-bridge 走 Next 客户端路由（和点原生卡一致，
-   *  不整页重载）；bridge 没装上/没响应时回退成普通跳转。 */
-  function gdhSpaNavigate(url, spaOnly = false) {
+  /** 默认只走 MAIN world 的 Next 客户端路由；不能用短超时打断慢加载，
+   *  否则 Arc 等链的正常跳转会被强制变成整页刷新。 */
+  function gdhSpaNavigate(url, spaOnly = true) {
     const targetPath = new URL(url, location.origin).pathname;
     if (location.pathname === targetPath) return; // 已在目标页
     try {
@@ -7990,14 +8017,9 @@ ${flapTooltipText(info)}
       document.dispatchEvent(new Event('gdh-navigate'));
     } catch {
       if (!spaOnly) location.href = url;
+      else document.dispatchEvent(new Event('gdh-navigation-error'));
       return;
     }
-    if (spaOnly) return; // 不用短定时器把仍在加载的客户端路由变成整页刷新。
-    window.setTimeout(() => {
-      // router 在 GMGN 某些构建中会把未识别的 push 错误归一到主页。
-      // 只要没到真正的目标代币路径，就用同源普通跳转纠正。
-      if (location.pathname !== targetPath) location.href = url;
-    }, 450);
   }
 
   function trackingFeedProfileMeta(ev) {
@@ -8335,13 +8357,14 @@ ${flapTooltipText(info)}
 
   function pollPumpFeed() {
     if (settings.enablePumpFeed === false) return;
-    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length) return;
+    if (!document.querySelector(TRACK_TAB_CELL) && !trackerCards().length
+      && document.documentElement?.getAttribute('data-gdh-buy-aggregate-active') !== '1') return;
     pumpFeedLastPollAt = Date.now();
     try {
       chrome.runtime.sendMessage({ type: 'pump-feed' }, (resp) => {
         if (chrome.runtime.lastError) return;
         if (!resp?.ok) {
-          if (resp?.reason === 'not-connected') { pumpFeedEvents = []; pumpDefaultWallets = new Set(); scheduleScan(); }
+          if (resp?.reason === 'not-connected') { pumpFeedEvents = []; pumpDefaultWallets = new Set(); publishBuyAggregateFeeds(['pump']); scheduleScan(); }
           return;
         }
         pumpFeedEvents = Array.isArray(resp.events) ? resp.events : [];
@@ -8349,6 +8372,7 @@ ${flapTooltipText(info)}
           (Array.isArray(resp.defaultWallets) ? resp.defaultWallets : [])
             .map((item) => String(item || '')).filter(Boolean),
         );
+        publishBuyAggregateFeeds();
         scheduleScan();
       });
     } catch {
@@ -9031,7 +9055,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '.gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
@@ -9200,6 +9224,14 @@ ${flapTooltipText(info)}
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
     if (monitorAggregateChanged) syncMonitorAggregateSetting();
+    const aggregateResetSources = ['fomo', 'pump'].filter(source => {
+      const name = source === 'fomo' ? 'Fomo' : 'Pump';
+      const config = changes[`monitor${name}Config`];
+      return Object.hasOwn(changes, `enable${name}Feed`) || Object.hasOwn(changes, 'blockedTokens')
+        || source === 'fomo' && Object.hasOwn(changes, 'fomoFeedTypes')
+        || config && buyAggregateConfigSignature(config.oldValue) !== buyAggregateConfigSignature(config.newValue);
+    });
+    if (aggregateResetSources.length) publishBuyAggregateFeeds(aggregateResetSources);
     scheduleScan();
   });
 
