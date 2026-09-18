@@ -72,7 +72,7 @@ const write = (id, action, extra={}, expected) => {
   assert.equal((await write('overflow','save',{group:group('overflow')})).ok,false);
   pass('来源校验、无效条件、写失败不损坏配置，最多保存 20 组');
 }
-stored={priorityBuyStrategies:{},specialWallets:[{address:A,label:'甲'},{address:B,label:'乙'}]};
+stored={priorityStrategyLanguageV1:'zh',priorityBuyStrategies:{},specialWallets:[{address:A,label:'甲'},{address:B,label:'乙'}]};
 const browser=await chromium.launch({headless:true});
 async function fixture(site,popup=false){
   const p=await browser.newPage({viewport:{width:700,height:950}});const errors=[];p.on('pageerror',e=>errors.push(e.message));p._errors=errors;

@@ -150,6 +150,7 @@ try {
   assert.equal(visual.avatar, 'https://gmgn.ai/static/avatar.png');
   await rich.evaluate(({ data, wallet, token }) => api.capture('rich', { wallet, name: '设置备注', href: `/arc/token/${token}`, detail: '原生记录', visual: data }), { data: visual, wallet, token });
   const card = rich.locator('[data-priority-id="rich"]');
+  assert.equal(await card.evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(250, 204, 21, 0.18)');
   assert.equal(await card.locator('.gdh-priority-name').innerText(), '设置备注');
   assert.equal(await card.locator('.gdh-priority-action').innerText(), '加仓');
   assert.equal(await card.locator('.gdh-priority-amount').innerText(), '2K');
@@ -159,7 +160,7 @@ try {
   await card.locator('.gdh-priority-symbol').click();
   assert.equal(await rich.evaluate(() => navigations.length), urlBefore + 1);
   assert.equal(await card.count(), 1);
-  await rich.screenshot({ path: new URL('../dist/priority-native-card-v90.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
+  await rich.locator('.gdh-priority-push').screenshot({ path: new URL('../dist/priority-yellow-card-v92.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
   await rich.evaluate(() => { priorityView = { table: true }; api.setContext(document.querySelector('#root'), 45, wallets); });
   assert.equal(await rich.locator('.gdh-priority-push.is-table').count(), 1);
   const cells = await card.locator('.gdh-priority-time,.gdh-priority-who,.gdh-priority-token,.gdh-priority-amount,.gdh-priority-mc').evaluateAll(nodes => nodes.map(e => ({ c: e.className, x: e.getBoundingClientRect().x, y: e.getBoundingClientRect().y, right: e.getBoundingClientRect().right })));
@@ -169,7 +170,11 @@ try {
   await rich.evaluate(() => { const s=document.documentElement.style; s.setProperty('--color-bg','255 255 255');s.setProperty('--color-text-100','26 26 26'); });
   assert.equal(await rich.locator('.gdh-priority-push').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(255, 255, 255)');
   assert.equal(await card.locator('.gdh-priority-name').evaluate(e=>getComputedStyle(e).color),'rgb(26, 26, 26)');
-  await rich.screenshot({ path: new URL('../dist/priority-native-table-v90.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
+  await card.locator('a').hover();
+  assert.equal(await card.evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(250, 204, 21, 0.18)');
+  assert.equal(await debot.locator('.gdh-priority-push article').first().evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(250, 204, 21, 0.18)');
+  await rich.locator('.gdh-priority-push').screenshot({ path: new URL('../dist/priority-yellow-table-v92.png', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1') });
+  pass('重点提醒黄色底色覆盖 GMGN / DeBot、深浅主题和卡片 / 列表，悬停不丢失底色');
   pass('原生头像 / 报价图标 / 加仓 / 金额 / 市值持久保存，两行卡片切五列表格不重叠，浅色主题和站内点击保留');
   const unsafe = await send('gmgn.ai', { type: 'priority-push-add', id: 'unsafe-visual', record: { ...record('gmgn.ai'), visual: { avatar: 'javascript:alert(1)', tokenImage:'http://unsafe.example/a.png', color:'red;position:fixed', symbol:'<img onerror=alert(1)>', ts:1e100 } } });
   assert.equal(unsafe.record.visual.avatar,'');assert.equal(unsafe.record.visual.tokenImage,'');assert.equal(unsafe.record.visual.color,'');

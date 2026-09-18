@@ -2542,6 +2542,7 @@ html[data-theme="light"] .gdh-similar-token__current { color: #087a49; }
 }
 
 .gdh-token-header-badges .gdh-marked,
+.gdh-token-marked-badges .gdh-marked,
 .gdh-token-header-stat {
   display: inline-flex;
   flex: 0 0 auto;
@@ -2598,6 +2599,8 @@ html[data-theme="light"] .gdh-token-header-fomo {
 .gdh-flap.is-market  { color: #a16207; }   /* 💰 未确认类别的市场收款 */
 .gdh-flap.is-hybrid  { color: #b48ae0; }   /* 混合分配 */
 .gdh-flap.is-unknown { color: #8b93a1; }
+.gdh-flap.is-genius-warning { color: #e44853; background: rgba(228,72,83,.1); }
+.gdh-flap.is-genius-check { color: #159768; background: rgba(21,151,104,.08); }
 
 /* Flap 徽章自己占一行：币名那行太挤，挤进去会被裁掉 */
 .gdh-flap-row {
@@ -2639,6 +2642,19 @@ html[data-theme="light"] .gdh-token-header-fomo {
   box-sizing: border-box;
   height: 16px;
   line-height: 14px;
+}
+.gdh-flap-row--trench .gdh-flap[data-gdh-fee-kind="genius"] {
+  width: 18px;
+  padding: 0;
+  text-align: center;
+  font-size: 12px;
+}
+.gdh-flap-row.gdh-flap-row--genius-icon {
+  position: absolute;
+  right: calc(100% + 2px);
+  bottom: 0;
+  width: 18px;
+  overflow: visible;
 }
 
 /* Robinhood 搜索结果：底池资产与持币分红分成两个短徽章。 */
@@ -3016,7 +3032,17 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 }
 
 /* 代币详情页的徽章独立行：整宽可换行，长分配串不再被标题行裁掉 */
-.gdh-flap-row--detail { width: 100%; flex-basis: 100%; min-width: 0; margin-top: 3px; }
+.gdh-token-detail-badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 3px;
+}
+.gdh-token-marked-badges { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.gdh-flap-row--detail { width: auto; flex: 0 0 auto; min-width: 0; margin: 0; }
 .gdh-flap-row--detail .gdh-flap { white-space: normal; line-height: 1.5; margin-left: 0; }
 
 /* ==== fomo 卡:表格模式(与 GMGN 表格行同构:时间|名称|币种|金额|市值) ==== */
@@ -3144,12 +3170,12 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-strategy-toggle { display: flex; align-items: center; gap: 7px; font-weight: 600; margin-bottom: 5px; cursor: pointer; }
 .gdh-strategy-toggle input { accent-color: #f5b83d; width: 14px; height: 14px; margin: 0; }
 .gdh-strategy-number { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.gdh-strategy-editor input[type="number"], .gdh-strategy-editor select, .gdh-strategy-editor textarea { font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
+.gdh-strategy-editor input[type="search"], .gdh-strategy-editor input[type="number"], .gdh-strategy-editor select, .gdh-strategy-editor textarea { font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
 .gdh-strategy-editor input[type="number"] { width: 108px; min-width: 0; }
 .gdh-strategy-editor select, .gdh-strategy-editor textarea { display: block; width: 100%; margin-bottom: 7px; }
 .gdh-strategy-editor textarea { resize: vertical; min-height: 65px; line-height: 1.6; }
 .gdh-strategy-actions { display: flex; gap: 8px; }
-.gdh-strategy-actions .gdh-strategy-save { color: #17191e; background: #f5b83d; border-color: #f5b83d; font-weight: 600; }
+.gdh-strategy-actions :is(.gdh-strategy-save, .gdh-global-save) { color: #17191e; background: #f5b83d; border-color: #f5b83d; font-weight: 600; }
 .gdh-strategy-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .gdh-strategy-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
 .gdh-strategy-status.is-error { color: #ff8787; }
@@ -3164,3 +3190,38 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-strategy-group input { width: 14px; height: 14px; margin: 0; accent-color: #f5b83d; }
 .gdh-strategy-editor input[type="text"] { min-width: 0; width: 70%; font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
 .gdh-strategy-form[hidden] { display: none !important; }
+
+.gdh-strategy-editor input[type="search"] { width: 100%; min-width: 0; margin-bottom: 7px; }
+.gdh-strategy-min-buyers[hidden] { display: none !important; }
+.gdh-strategy-number > select { width: 58%; min-width: 0; margin-bottom: 0; }
+.gdh-strategy-actions .gdh-strategy-language { width: auto; margin: 0 0 0 auto; }
+
+/* Independent global buy conditions; shares the existing strategy editor. */
+.gdh-strategy-global { border: 1px solid rgba(139,147,161,.3); border-radius: 6px; margin: 10px 0; }
+.gdh-strategy-global > summary { cursor: pointer; padding: 8px 10px; font-weight: 600; }
+.gdh-global-state { float: right; font-size: 11px; font-weight: 400; opacity: .8; }
+.gdh-global-form { padding: 0 10px 10px; }
+.gdh-global-form .gdh-strategy-number { align-items: start; }
+.gdh-global-form .gdh-strategy-number > input { flex-shrink: 0; }
+.gdh-global-form .gdh-strategy-actions { flex-wrap: wrap; }
+.gdh-global-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.gdh-global-sources .gdh-strategy-toggle { margin: 0; font-weight: 400; }
+.gdh-strategy-global-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
+.gdh-strategy-global-status.is-error { color: #ff8787; }
+
+/* Wallet-follow shortcuts are siblings, not replacements for GMGN's heart. */
+.gdh-wallet-follow-settings { position: static; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; height: 18px; padding: 0; margin: 0 2px; border: 0; border-radius: 3px; background: transparent; color: var(--text-200, #9199a7); font: 16px/1 system-ui; cursor: pointer; }
+.gdh-wallet-follow-settings:hover, .gdh-wallet-follow-settings:focus-visible { background: rgba(245,184,61,.16); outline: 1px solid #bd851b; }
+.gdh-wallet-follow-settings.is-starred { color: #bd851b; }
+.gdh-wallet-settings { width: min(350px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; color: var(--text-100, #f0f1f4); background: var(--bg-dialog, #1b1e24); font: 12px/1.5 system-ui; }
+.gdh-wallet-settings * { box-sizing: border-box; }
+.gdh-wallet-settings-header { display: flex; align-items: center; gap: 8px; }
+.gdh-wallet-settings-header strong { margin-right: auto; }
+.gdh-wallet-settings button, .gdh-wallet-settings select, .gdh-wallet-settings input[type=text] { font: inherit; color: inherit; background: transparent; border: 1px solid rgba(139,147,161,.4); border-radius: 4px; padding: 4px 6px; }
+.gdh-wallet-settings-address { overflow-wrap: anywhere; font-size: 10px; opacity: .7; }
+.gdh-wallet-settings-field { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.gdh-wallet-settings-field input[type=text] { width: 68%; min-width: 0; }
+.gdh-wallet-settings-field input[type=color] { width: 38px; height: 24px; padding: 0; }
+.gdh-wallet-settings p { margin: 2px 0; font-size: 11px; opacity: .7; }
+.gdh-wallet-settings .gdh-wallet-settings-save { background: #f5b83d; color: #17191e; font-weight: 600; cursor: pointer; }
+.gdh-wallet-settings-status { color: #ed6565; font-size: 11px; }

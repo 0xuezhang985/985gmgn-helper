@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('buy-strategies.js', 'priority-push.js');
+importScripts('buy-strategies.js', 'priority-push.js', 'genius-fees.js');
 
 const NATIVE_HOST = 'com.xuezhang985.gmgn_helper';
 const RELEASES_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
@@ -1863,6 +1863,23 @@ async function flapTokenInfo({ token, rpc }) {
   return data;
 }
 
+let geniusFeeReader;
+async function tokenFeeInfo({ token, rpc }) {
+  const address = String(token || '').toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(address)) return { ok: false, reason: 'bad-token' };
+  // Preserve the existing fast path for Flap; an address suffix alone never identifies Genius.
+  let flap;
+  if (/^0x[a-f0-9]{36}(7777|8888)$/.test(address)) {
+    flap = await flapTokenInfo({ token: address, rpc });
+    if (flap.ok || flap.reason !== 'not-flap') return flap;
+  }
+  // Only the pinned BSC endpoints are used: no page-supplied endpoint or Genius private API.
+  geniusFeeReader ||= GDHGeniusFees.createReader({ rpcUrls: FLAP_RPCS });
+  const genius = await geniusFeeReader.get(address);
+  if (genius.ok || genius.reason !== 'not-genius') return genius;
+  return flap || flapTokenInfo({ token: address, rpc });
+}
+
 // 代币总供应量（人类可读口径，和 fomo 的 humanAmount 对齐），用于算 fomo 持仓占比。
 // 供应量基本不变，长缓存；只支持 EVM 链（沿用 Flap 那条 RPC 通道）。
 const supplyCache = new Map();
@@ -3108,6 +3125,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tokenPools(message.payload || {})
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, reason: 'error', message: String(error?.message || '') }));
+    return true;
+  }
+
+  if (message?.type === 'token-fee-info') {
+    tokenFeeInfo(message.payload || {})
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, reason: 'rpc-failed' }));
     return true;
   }
 

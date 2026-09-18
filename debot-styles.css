@@ -1259,12 +1259,12 @@ html[data-theme="light"] .gdh-debot-similar-token__current { color: #087a49; }
 .gdh-strategy-toggle { display: flex; align-items: center; gap: 7px; font-weight: 600; margin-bottom: 5px; cursor: pointer; }
 .gdh-strategy-toggle input { accent-color: #f5b83d; width: 14px; height: 14px; margin: 0; }
 .gdh-strategy-number { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.gdh-strategy-editor input[type="number"], .gdh-strategy-editor select, .gdh-strategy-editor textarea { font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
+.gdh-strategy-editor input[type="search"], .gdh-strategy-editor input[type="number"], .gdh-strategy-editor select, .gdh-strategy-editor textarea { font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
 .gdh-strategy-editor input[type="number"] { width: 108px; min-width: 0; }
 .gdh-strategy-editor select, .gdh-strategy-editor textarea { display: block; width: 100%; margin-bottom: 7px; }
 .gdh-strategy-editor textarea { resize: vertical; min-height: 65px; line-height: 1.6; }
 .gdh-strategy-actions { display: flex; gap: 8px; }
-.gdh-strategy-actions .gdh-strategy-save { color: #17191e; background: #f5b83d; border-color: #f5b83d; font-weight: 600; }
+.gdh-strategy-actions :is(.gdh-strategy-save, .gdh-global-save) { color: #17191e; background: #f5b83d; border-color: #f5b83d; font-weight: 600; }
 .gdh-strategy-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .gdh-strategy-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
 .gdh-strategy-status.is-error { color: #ff8787; }
@@ -1279,3 +1279,21 @@ html[data-theme="light"] .gdh-debot-similar-token__current { color: #087a49; }
 .gdh-strategy-group input { width: 14px; height: 14px; margin: 0; accent-color: #f5b83d; }
 .gdh-strategy-editor input[type="text"] { min-width: 0; width: 70%; font: inherit; color: inherit; background: var(--bg-dialog, #101216); border: 1px solid rgba(139,147,161,.35); border-radius: 5px; padding: 5px 7px; }
 .gdh-strategy-form[hidden] { display: none !important; }
+
+.gdh-strategy-editor input[type="search"] { width: 100%; min-width: 0; margin-bottom: 7px; }
+.gdh-strategy-min-buyers[hidden] { display: none !important; }
+.gdh-strategy-number > select { width: 58%; min-width: 0; margin-bottom: 0; }
+.gdh-strategy-actions .gdh-strategy-language { width: auto; margin: 0 0 0 auto; }
+
+/* Independent global buy conditions; shares the existing strategy editor. */
+.gdh-strategy-global { border: 1px solid rgba(139,147,161,.3); border-radius: 6px; margin: 10px 0; }
+.gdh-strategy-global > summary { cursor: pointer; padding: 8px 10px; font-weight: 600; }
+.gdh-global-state { float: right; font-size: 11px; font-weight: 400; opacity: .8; }
+.gdh-global-form { padding: 0 10px 10px; }
+.gdh-global-form .gdh-strategy-number { align-items: start; }
+.gdh-global-form .gdh-strategy-number > input { flex-shrink: 0; }
+.gdh-global-form .gdh-strategy-actions { flex-wrap: wrap; }
+.gdh-global-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.gdh-global-sources .gdh-strategy-toggle { margin: 0; font-weight: 400; }
+.gdh-strategy-global-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
+.gdh-strategy-global-status.is-error { color: #ff8787; }

@@ -10,6 +10,36 @@
 .gdh-buy-controls select,.gdh-buy-controls input { height:25px; min-width:0; border:1px solid var(--line-200,#383b40); border-radius:4px; padding:2px 5px; font:inherit; color:inherit; background:var(--bg-200,#1c1e22); }
 .gdh-buy-controls input { width:65px; }
 .gdh-buy-controls label { display:flex; align-items:center; gap:4px; color:var(--text-300,#90959e); }
+.gdh-buy-alerts { flex-shrink:0; border-bottom:1px solid var(--line-100,#292b30); font-size:11px; }
+.gdh-buy-alerts summary { display:flex; align-items:center; gap:5px; padding:6px 10px; cursor:pointer; }
+.gdh-buy-alerts summary::before { content:'›'; color:var(--text-300); }
+.gdh-buy-alerts[open] summary::before { content:'⌄'; }
+.gdh-buy-alerts summary em { color:#27ba87; font-size:8px; font-style:normal; }
+.gdh-buy-alerts summary small { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-300); font-size:10px; }
+.gdh-buy-alerts form { max-height:340px; overflow:auto; scrollbar-width:thin; padding:2px 10px 9px; }
+.gdh-buy-alerts input,.gdh-buy-alerts select,.gdh-buy-alerts button { min-width:0; height:25px; border:1px solid var(--line-200); border-radius:4px; background:var(--bg-200); color:inherit; font:inherit; padding:2px 5px; }
+.gdh-buy-alerts input[type=checkbox] { width:12px; height:12px; margin:0 4px 0 0; accent-color:#27ba87; flex-shrink:0; }
+.gdh-buy-alerts label { display:flex; align-items:center; }
+.gdh-buy-alert-heading { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.gdh-buy-alert-timing { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0; }
+.gdh-buy-alert-timing label { align-items:stretch; flex-direction:column; gap:3px; }
+.gdh-buy-alert-once { display:flex; flex-direction:column; gap:3px; color:var(--text-300); font-size:10px; }
+.gdh-buy-alert-once strong { display:flex; align-items:center; min-height:25px; font-size:11px; font-weight:500; color:var(--text-100); }
+.gdh-buy-alert-grid { display:grid; grid-template-columns:68px minmax(0,1fr) minmax(0,.75fr) 33px; align-items:center; gap:5px; }
+.gdh-buy-alert-grid b { font-size:10px; font-weight:500; color:var(--text-300); }
+.gdh-buy-alert-grid input:not([type=checkbox]) { width:100%; box-sizing:border-box; }
+.gdh-buy-alert-tone { grid-column:1/-1; gap:8px; color:var(--text-300); }
+.gdh-buy-alert-tone select { flex:1; height:22px; padding:0 5px; color:var(--text-100); }
+.gdh-buy-alert-volume { gap:8px; margin:3px 0 6px; }
+.gdh-buy-alert-volume input[type=range] { flex:1; padding:0; border:0; accent-color:#27ba87; }
+.gdh-buy-alert-volume output { min-width:32px; text-align:right; font-variant-numeric:tabular-nums; }
+.gdh-buy-alerts p { margin:7px 0; color:var(--text-300); font-size:10px; line-height:1.5; }
+.gdh-buy-alert-actions { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+.gdh-buy-alerts button { cursor:pointer; }
+.gdh-buy-alerts button[type=submit] { border-color:#218b69; }
+.gdh-buy-alerts [hidden] { display:none; }
+.gdh-buy-alerts [data-alert-message] { color:var(--text-300); font-size:10px; margin-top:4px; }
+.gdh-buy-alerts :focus-visible { outline:2px solid #29c793; outline-offset:1px; }
 .gdh-buy-controls :focus-visible,.gdh-buy-monitor button:focus-visible,.gdh-buy-monitor a:focus-visible { outline:2px solid #29c793; outline-offset:1px; }
 .gdh-buy-status { padding:5px 12px; color:var(--text-300,#90959e); font-size:10px; }
 .gdh-buy-list { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }
@@ -33,8 +63,19 @@
 .gdh-buy-metrics .gdh-buy-positive { color:#27ba87; }
 .gdh-buy-metrics i { border:1px solid var(--line-200,#383b40); border-radius:3px; padding:0 3px; font-size:9px; font-style:normal; }
 .gdh-buy-meta { font-size:10px; }
+.gdh-buy-meta>span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gdh-buy-meta>span:last-child { flex-shrink:0; }
+.gdh-buy-flow { display:grid; grid-template-columns:1fr 1.15fr .65fr; gap:6px; margin:5px 0 0 17px; font-size:10px; color:var(--text-300); }
+.gdh-buy-flow>span,.gdh-buy-flow>button { min-width:0; display:flex; flex-direction:column; align-items:flex-start; }
+.gdh-buy-flow>button { cursor:pointer; border:0; padding:0; background:none; color:inherit; font:inherit; }
+.gdh-buy-flow b { color:var(--text-100); font-size:11px; font-weight:500; font-variant-numeric:tabular-nums; }
+.gdh-buy-flow .gdh-buy-positive,.gdh-buy-people .gdh-buy-positive { color:#27ba87; }
+.gdh-buy-flow .gdh-buy-negative,.gdh-buy-people .gdh-buy-negative { color:#ed626e; }
 .gdh-buy-people { margin:7px 0 0 17px; padding:6px 0 0; border-top:1px solid var(--line-100,#292b30); }
 .gdh-buy-people div { display:flex; gap:7px; align-items:center; margin:5px 0; }
+.gdh-buy-people .gdh-buy-person-detail { flex-wrap:wrap; row-gap:2px; }
+.gdh-buy-person-detail aside { width:100%; display:flex; gap:10px; color:var(--text-300); font-size:10px; }
+.gdh-buy-person-detail i { font-style:normal; }
 .gdh-buy-people span { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .gdh-buy-people small { color:var(--text-300,#90959e); font-size:9px; }
 .gdh-buy-people b { font-weight:500; font-variant-numeric:tabular-nums; color:#27ba87; }
@@ -44,3 +85,5 @@
 html.light .gdh-buy-monitor,html[data-theme="light"] .gdh-buy-monitor { --text-100:#1b2028; --text-300:#68717c; --bg-100:#fff; --bg-200:#f5f6f8; --line-100:#e5e8ed; --line-200:#cdd3dc; }
 html.light .gdh-buy-monitor .gdh-buy-positive,html[data-theme="light"] .gdh-buy-monitor .gdh-buy-positive,html.light .gdh-buy-people b,html[data-theme="light"] .gdh-buy-people b { color:#087b56; }
 html.light .gdh-buy-row .gdh-buy-count,html[data-theme="light"] .gdh-buy-row .gdh-buy-count { color:#087c91; }
+html.light .gdh-buy-flow .gdh-buy-positive,html[data-theme="light"] .gdh-buy-flow .gdh-buy-positive,html.light .gdh-buy-people .gdh-buy-positive,html[data-theme="light"] .gdh-buy-people .gdh-buy-positive { color:#087b56; }
+html.light .gdh-buy-negative,html[data-theme="light"] .gdh-buy-negative { color:#bb2638; }

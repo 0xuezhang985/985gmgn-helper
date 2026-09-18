@@ -52,7 +52,7 @@
       <section class="settings-section">
         <div class="section-heading"><div><h2>追踪流与特别关注</h2><small>GMGN / DeBot 共用</small></div></div>
         <div class="feature-list">
-          <label class="switch-row"><span><strong>特别关注高亮</strong><small>钱包列表和追踪行悬停显示 ⭐，颜色与置顶跨站共用</small></span><input id="enable-special-wallet" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>特别关注高亮</strong><small>钱包列表和追踪行悬停显示 ⭐，颜色与置顶跨站共用；NEW：GMGN 钱包心形旁可直接打开详细设置（含持有人详情）</small></span><input id="enable-special-wallet" type="checkbox" /></label>
           <details class="sub-settings compact">
             <summary><strong>重点提醒 · 持续置顶 <em class="new-badge">NEW</em></strong></summary>
             <small>开启特别关注高亮并选择钱包后，新推送以原生追踪卡片形式持续置顶；GMGN 跟随卡片 / 列表模式。点 × 关闭单条，「全部清除」关闭本站全部已保存提醒，不删除人物或策略，新提醒照常出现。点击代币不清除，仅本地保存，刷新可恢复。</small>
@@ -64,7 +64,7 @@
             <small>策略按组独立保存，不随下方「保存全部设置」覆盖。新增组默认关闭；保存条件后，使用各组开关启停。</small>
             <div id="buy-strategy-editor"></div>
           </details>
-          <details class="sub-settings compact"><summary><strong>聚合监控 <em class="new-badge">NEW</em></strong></summary><small>GMGN 底部「聚合监控」打开独立原生面板，支持拖拽、缩放和停靠；人数左侧显示买家头像，点击查看明细；汇总已接收的追踪 / FOMO / Pump 买入，按人数、USD 金额筛选排序。默认收起，筛选本地保存，不补抓历史，不执行交易。</small></details>
+          <details class="sub-settings compact"><summary><strong>聚合监控 · 声音警报 <em class="new-badge">NEW</em></strong></summary><small>GMGN 底部「聚合监控」打开独立原生面板，支持拖拽、缩放和停靠；人数左侧显示买家头像，点击查看明细；汇总已接收的追踪 / FOMO / Pump 买入，按人数、USD 金额筛选排序；新增卖出额、净买入额（买入减卖出）和确认清仓人数，缺数据不伪造。面板内 Sound alerts / 声音警报可配置秒数、金额或去重买家数、三级强度、同币每档仅提醒一次（跨刷新记忆）、0–100% 音量和每档独立的 6 种提示音，支持中文切换与试听，默认关闭。关闭面板仍监听；刷新后需点击启用声音。仅本地已接收数据，不补抓历史，不执行交易。</small></details>
           <label class="switch-row"><span><strong>GMGN 监控全链聚合</strong><small>汇总各链追踪代币，并沿用监控面板当前筛选条件</small></span><input id="enable-monitor-aggregate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>同名 / 相似币浮窗 <em class="new-badge">NEW</em></strong><small>GMGN / DeBot：当前币与 ≥90% 相似币一起排序；支持拖动标题栏、点击 × 关闭；市值跟随追踪缓存更新，点击无刷新跳转</small></span><input id="enable-similar-token-panel" type="checkbox" /></label>
           <label class="option-row" for="similar-token-cache-minutes"><span><strong>相似币缓存保留 <em class="new-badge">NEW</em></strong><small>GMGN / DeBot：移出列表后继续保留；更新市值不续期，无新数据时保留最后值</small></span><select id="similar-token-cache-minutes"><option value="1">1 分钟</option><option value="5">5 分钟</option><option value="10">10 分钟</option><option value="30">30 分钟</option></select></label>
@@ -102,7 +102,8 @@
             <textarea id="marked-list" rows="4" placeholder="0x地址 备注（一行一个）"></textarea>
           </div>
           <label class="switch-row"><span><strong>fomo 持仓者链上名次</strong><small>按 GMGN 已加载持有者数据标出“链上 #N”</small></span><input id="enable-merge-fomo-holders" type="checkbox" /></label>
-          <label class="switch-row"><span><strong>底池 / 分红徽章</strong><small>BSC 显示税收分配；Robinhood 显示底池资产与分红</small></span><input id="enable-flap-tax" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>底池 / 分红徽章 <em class="new-badge">NEW</em></strong><small>BSC：Flap 税收分配 / Genius Creator payout；Robinhood：底池资产与分红</small></span><input id="enable-flap-tax" type="checkbox" /></label>
+          <details class="sub-settings compact"><summary><strong>Genius fee badge <em class="new-badge">NEW</em></strong></summary><small>Creator payout &gt; 0.25%: red warning; ≤ 0.25%: checkmark. Trenches show only ✓ / ⚠ beside the native tax chip; hover for on-chain details. Token pages place marked-holder share beside the fee badge. A checkmark is not a token safety rating. Uses the badge switch above.</small><details><summary>中文说明</summary><small>Creator payout 大于 0.25% 红色警示，不超过则打勾；战壕在原生税标旁只显示 ✓ / ⚠，悬停看明细，原税标未加载时显示在 Genius 平台图标旁。代币页的标注人物占比与费率徽章并排，开关独立；勾选不代表代币安全。</small></details></details>
            <label class="switch-row"><span><strong>全部底池</strong><small>在主池下补完整底池清单，按流动性排序</small></span><input id="enable-all-pools" type="checkbox" /></label>
           <label class="switch-row"><span><strong>Brew 战壕浮窗</strong><small>在 GMGN / DeBot 的 fomo 按钮下方显示入口，不注入 Brew 页面</small></span><input id="enable-brew-panel" type="checkbox" /></label>
           <div class="sub-settings compact"><label class="control-row text-control" for="flap-rpc"><span>自定义 BSC RPC</span><input id="flap-rpc" type="text" placeholder="留空用公共节点" /></label></div>

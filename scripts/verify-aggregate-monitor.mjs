@@ -108,7 +108,7 @@ test('运行清单、NEW 文案、本地发布边界、禁止新 fetch / 交易�
   assert.ok(m.content_scripts.find(s => s.world === 'MAIN' && s.matches.includes('https://gmgn.ai/*')).js.includes('aggregate-monitor.js'));
   assert.ok(m.content_scripts.some(s => s.css?.includes('aggregate-monitor.css')));
   assert.ok(read('scripts/build-release.ps1').includes("'aggregate-monitor.js'"));
-  assert.ok(read('popup.html').includes('聚合监控 <em class="new-badge">NEW'));
+  assert.ok(read('popup.html').includes('聚合监控 · 声音警报 <em class="new-badge">NEW'));
   assert.ok(read('CHANGELOG.md').includes('本地试用，未发布'));
   assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendTransaction|eth_sendTransaction/.test(code));
   assert.ok(code.includes("visible: false, type: 'modal'"));

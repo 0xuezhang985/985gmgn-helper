@@ -2851,7 +2851,7 @@ await test('Flap 成功结果定时刷新、失败保留旧值且 RPC 只用实�
   assert.ok(content.includes('const FLAP_SUCCESS_TTL = 5 * 60 * 1000'));
   assert.ok(request.includes('cached.fetchedAt'));
   assert.ok(request.includes('fetchedAt: Date.now()'));
-  assert.ok(request.includes('if (!cached?.ok)'));
+  assert.ok(request.includes("if (!cached?.ok || cached.kind === 'genius')")); // Flap keeps stale values; Genius affirmative badges fail closed.
   assert.ok(background.includes("'https://rpc-bsc.48.club'"));
   assert.ok(background.includes("'https://bsc.rpc.blxrbdn.com'"));
   assert.ok(!background.includes("'https://bsc-dataseed1.defibit.io'"));

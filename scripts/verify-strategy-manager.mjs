@@ -30,7 +30,7 @@ try {
     await page.evaluate(({ A, B }) => {
       window.settings = { specialWallets: [{ address: A, label: '学长' }, { address: B, label: '测试人物' }], priorityBuyStrategies: {} };
       window.specialWalletMap = new Map(settings.specialWallets.map(p => [p.address, { ...p, color: '#aaa' }]));
-      window.specialManageOpen = false; window.stored = {}; window.failWrite = false; window.writes = 0;
+      window.specialManageOpen = false; window.stored = { priorityStrategyLanguageV1: 'zh' }; window.failWrite = false; window.writes = 0;
       window.chrome = { runtime: { sendMessage: window.strategyRequest }, storage: { local: {
         get: async () => structuredClone(stored),
         set: async next => { if (failWrite) throw Error('quota'); Object.assign(stored, next); Object.assign(settings, next); writes++; window.scan(); },
@@ -74,7 +74,8 @@ try {
     assert.equal(await field('group-window').inputValue(), '120');
     assert.equal(await field('group-wallets').inputValue(), `${A} 学长\n${B} 测试人物`);
     assert.equal(await page.evaluate(() => editorBefore === document.querySelector('.gdh-strategy-editor')), true);
-    assert.equal(await field('group-picker').locator('option').count(), 4);
+    assert.equal(await field('group-picker').locator('option').count(), 2); // Only the newly added, unselected wallet plus placeholder.
+    assert.equal(await field('group-picker').locator(`option[value^="${A}"]`).count(), 0);
     await page.getByRole('button', { name: '保存本组', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.gdh-strategy-status').textContent.includes('已保存'));
     assert.equal(await page.evaluate(() => stored.priorityBuyStrategies.groups[0].conditions.group.windowSeconds), 120);

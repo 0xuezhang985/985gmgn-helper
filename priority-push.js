@@ -68,12 +68,14 @@
         const href = new URL(String(data.href || ''), `https://${site}`);
         if (href.origin !== `https://${site}` || !href.pathname.includes('/token/')) throw new Error('无效的代币链接');
         const wallet = clean(data.wallet, 64);
-        if (!/^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(wallet)) throw new Error('无效的钱包地址');
+        if (!/^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(wallet)
+          && !(wallet === '' && data.strategy === true && data.strategyGlobal === true)) throw new Error('无效的钱包地址');
         const record = { id, wallet, strategy: data.strategy === true, href: href.pathname + href.search, name: clean(data.name, 64),
           detail: clean(data.detail, 500), at: Date.now() };
         const visual = visualData(data.visual, site);
         if (visual) record.visual = visual;
         if (record.strategy && /^[a-zA-Z0-9_-]{1,64}$/.test(String(data.strategyGroup || ''))) record.strategyGroup = data.strategyGroup;
+        if (record.strategy && data.strategyGlobal === true) record.strategyGlobal = true;
         await chrome.storage.local.set({ [key]: record });
         return { ok: true, record };
       }).then(respond, (error) => respond({ ok: false, error: String(error?.message || error) }));
@@ -152,6 +154,7 @@
       const strategies = globalThis.GdhBuyStrategies?.create();
       const strategyPending = new Map();
       let strategyActive = false;
+      let globalActive = false;
       let strategyGroups = new Set();
       let clearing = false, view = {}, viewKey = '', minute = 0;
       const request = async (type, extra = {}) => {
@@ -173,7 +176,7 @@
       function render() {
         if (!root?.isConnected) { box?.remove(); box = null; return; }
         if (!dirty && (!box || box.isConnected)) return;
-        const active = [...records.values()].filter((record) => record.strategy ? strategyGroups.has(record.strategyGroup || 'legacy') : wallets.get(record.wallet)?.persistentPin === true)
+        const active = [...records.values()].filter((record) => record.strategy ? (record.strategyGlobal ? globalActive : strategyGroups.has(record.strategyGroup || 'legacy')) : wallets.get(record.wallet)?.persistentPin === true)
           .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
         if (!active.length && (!error || (!walletKey && !strategyActive))) { box?.remove(); box = null; dirty = false; return; }
         if (!box?.isConnected) {
@@ -270,6 +273,7 @@
           if (nextViewKey !== viewKey || nextMinute !== minute) dirty = true;
           view = nextView; viewKey = nextViewKey; minute = nextMinute;
           const nextStrategyActive = globalThis.GdhBuyStrategies?.enabled(strategyConfig) === true;
+          globalActive = globalThis.GdhBuyStrategies?.normalizeGlobal(strategyConfig?.global).enabled === true;
           if (strategies?.configure(strategyConfig)) {
             for (const [key, alert] of strategyPending) if (!strategies.current(alert)) strategyPending.delete(key);
             dirty = true;
@@ -335,7 +339,7 @@
     .gdh-priority-push>header{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:5px 8px;border-bottom:1px solid rgb(var(--color-line-100,36 36 36));flex-shrink:0}
     .gdh-priority-push>header strong{flex:1;min-width:0}.gdh-priority-push small,.gdh-priority-push time{color:rgb(var(--color-text-300,128 128 128));font-size:11px}
     .gdh-priority-push__list{overflow:auto;overscroll-behavior:contain;min-height:0}
-    .gdh-priority-push article{position:relative;border-bottom:1px solid rgb(var(--color-line-100,36 36 36))}
+    .gdh-priority-push article{position:relative;background:rgba(250,204,21,.18);border-bottom:1px solid rgb(var(--color-line-100,36 36 36))}
     .gdh-priority-push a.gdh-priority-card{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:'who who time' 'amount token mc';align-items:center;gap:4px 6px;box-sizing:border-box;min-height:64.5px;padding:10px 28px 10px 12px;color:inherit;text-decoration:none;font-size:13px;line-height:18px}
     .gdh-priority-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--gdh-priority-chain,transparent);pointer-events:none}
     .gdh-priority-who{grid-area:who;display:flex;align-items:center;gap:4px;min-width:0}

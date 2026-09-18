@@ -109,7 +109,7 @@ try {
     function scheduleScan() {}
     let notificationPanelOpen = false, notificationPanelEl = null;
     function deepPick() { return null; }
-    ${functions('currentTokenRoute', 'holderTokenAmount', 'fomoHoldingSummary', 'holdingShareText', 'tokenHeaderBlock', 'renderTokenHeaderBadges', 'ensureFomoLauncher')}
+    ${functions('currentTokenRoute', 'holderTokenAmount', 'fomoHoldingSummary', 'holdingShareText', 'tokenHeaderBlock', 'tokenDetailBadgeRow', 'renderTokenMarkedBadge', 'renderTokenHeaderBadges', 'ensureFomoLauncher')}
     ensureFomoLauncher(); renderTokenHeaderBadges();
   ` });
   assert.equal(await page.locator('.gdh-fomo-launcher').count(), 1);

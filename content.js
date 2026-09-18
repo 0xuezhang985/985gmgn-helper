@@ -234,6 +234,7 @@
     ],
     enableMarkedHolders: true,
     enableFlapTax: true,
+    priorityStrategyLanguageV1: 'en',
     enableAllPools: true,
     flapRpc: '',
     enableFomoFeed: true,
@@ -986,9 +987,9 @@
     else delete chip.dataset.gdhCallerBlocked;
   }
 
-  // ---- Flap 代币税收徽章 ----
+  // ---- Flap / Genius 代币税收徽章（共用原生税标槽位） ----
   // 数据全部由用户浏览器直连公开 BSC RPC 读链上合约得到，不经任何第三方服务。
-  // 只处理 Flap 系代币（地址以 7777 / 8888 结尾）。
+  // Genius 按官方工厂注册记录确认，不按币名、地址尾号或总税率猜测。
   const FLAP_ADDR_RE = /^0x[a-fA-F0-9]{36}(?:7777|8888)$/;
   const flapInfoCache = new Map();
   const flapPending = new Set();
@@ -1160,7 +1161,7 @@
   }
 
   function clearFlapCard(card) {
-    card.querySelectorAll('.gdh-flap-row').forEach((el) => el.remove());
+    card.querySelectorAll('.gdh-flap-row, .gdh-flap').forEach((el) => el.remove());
     card.querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative);
     card.querySelectorAll('[data-gdh-flap-slot]').forEach((el) => el.removeAttribute('data-gdh-flap-slot'));
     delete card.dataset.gdhFlapRoom;
@@ -1198,14 +1199,65 @@
   }
 
   function clearFlapBadges() {
-    if (!document.querySelector('.gdh-flap-row, [data-gdh-flap-room], [data-gdh-flap-native], [data-gdh-flap-slot]')) return;
+    if (!document.querySelector('.gdh-flap-row, .gdh-flap, [data-gdh-flap-room], [data-gdh-flap-native], [data-gdh-flap-slot]')) return;
     document.querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative);
     document.querySelectorAll('[data-gdh-flap-slot]').forEach((el) => el.removeAttribute('data-gdh-flap-slot'));
-    document.querySelectorAll('.gdh-flap-row').forEach((el) => el.remove());
+    document.querySelectorAll('.gdh-flap-row, .gdh-flap').forEach((el) => el.remove());
     document.querySelectorAll('[data-gdh-flap-room]').forEach((el) => {
       delete el.dataset.gdhFlapRoom;
       delete el.dataset.gdhFlapKey;
     });
+    document.querySelectorAll('.gdh-token-detail-badges:empty').forEach(el => el.remove());
+  }
+
+  // Shared detail strip below the native header. Fee and marked-holder switches remain independent.
+  function tokenDetailBadgeRow(create = true) {
+    const route = currentTokenRoute();
+    const anchor = document.querySelector('[data-sentry-component="BaseInfoBar"]') || document.querySelector('h1');
+    const renderedAddress = anchor?.querySelector('#token-base-address[data-addr]')?.dataset.addr;
+    const key = route ? `${route.chain}|${route.address}` : '';
+    const ready = !!(key && anchor?.parentElement && (!renderedAddress || renderedAddress.toLowerCase() === route.address.toLowerCase()));
+    let row = null;
+    document.querySelectorAll('.gdh-token-detail-badges').forEach(el => {
+      if (!ready || el.dataset.gdhDetailToken !== key || el.parentElement !== anchor.parentElement || row) el.remove();
+      else row = el;
+    });
+    if (!ready) return null;
+    if (!row && create) {
+      row = document.createElement('div');
+      row.className = 'gdh-token-detail-badges';
+      row.dataset.gdhDetailToken = key;
+    }
+    if (row && row.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', row);
+    return row;
+  }
+
+  function geniusTrenchLink(card, token) {
+    return [...card.querySelectorAll('a[href*="genius.fun/token/"]')].find(link => {
+      try {
+        const url = new URL(link.href);
+        return url.origin === 'https://genius.fun' && url.pathname.toLowerCase() === `/token/${token}`;
+      } catch { return false; }
+    }) || null;
+  }
+
+  function geniusTrenchOwnRow(card, native, token) {
+    if (native) {
+      const row = flapTrenchOwnRow(card, native);
+      if (row?.classList.contains('gdh-flap-row--genius-icon')) row.classList.remove('gdh-flap-row--genius-icon');
+      return row;
+    }
+    // Before GMGN loads its tax chip, attach to its Genius platform icon, not guessed card levels.
+    const link = geniusTrenchLink(card, token);
+    if (!link) return void clearFlapCard(card);
+    card.querySelectorAll('[data-gdh-flap-native]').forEach(restoreFlapNative);
+    card.querySelectorAll('[data-gdh-flap-slot]').forEach(el => el.removeAttribute('data-gdh-flap-slot'));
+    let row = card.querySelector('.gdh-flap-row');
+    if (!row) row = document.createElement('div');
+    const cls = 'gdh-flap-row gdh-flap-row--trench gdh-flap-row--genius-icon';
+    if (row.className !== cls) row.className = cls;
+    if (row.parentElement !== link) link.appendChild(row);
+    return row;
   }
 
   // flap 官方税收详情页；Flap 目前只在 BSC，链名它那边写作 bnb
@@ -1214,8 +1266,33 @@
     return `https://flap.sh/bnb/${token.toLowerCase()}/taxinfo?lang=zh`;
   }
 
+  function geniusBadgeText(info) {
+    return `${info.creatorPayoutBps > 25 ? '⚠' : '✓'} Genius ${flapPct(info.creatorPayoutBps)}`;
+  }
+
+  function geniusTooltipText(info) {
+    const zh = settings.priorityStrategyLanguageV1 === 'zh';
+    const lines = ['Genius.fun · BSC',
+      `${zh ? '总交易费率' : 'Total trading fee'}: ${flapPct(info.totalBps)}`];
+    if (info.toFoundation) lines.push(`${zh ? '基金会累积' : 'Foundation accumulation'}: ${flapPct(info.destinationBps)}`);
+    lines.push(`Creator payout: ${flapPct(info.creatorPayoutBps)}`,
+      `Genius platform: ${flapPct(info.platformBps)}`,
+      `${zh ? '代币回购销毁' : 'Meme buyback and burn'}: ${flapPct(info.buybackBps)}`,
+      `${zh ? '额外分成去向' : 'Destination'}: ${info.toFoundation ? 'Foundation' : 'Creator'}`,
+      `Creator: ${info.creator}`);
+    if (info.toFoundation) lines.push(`Foundation vault: ${info.foundationVault}`);
+    lines.push('', info.creatorPayoutBps > 25
+      ? (zh ? '⚠ Creator payout 超过 0.25%' : '⚠ Creator payout exceeds 0.25%')
+      : (zh ? '✓ Creator payout 不超过 0.25%' : '✓ Creator payout is at most 0.25%'),
+    zh ? '仅费率标记，不代表代币安全。数据直读链上。' : 'Fee indicator only, not a token safety rating. Read on-chain.',
+    zh ? '点击打开 Genius 官方详情' : 'Click to open Genius token details');
+    return lines.join('\n');
+  }
+
   function ensureFlapBadge(host, token, native) {
     const info = flapInfoCache.get(token);
+    const genius = info?.kind === 'genius';
+    const compact = genius && host.classList.contains('gdh-flap-row--trench');
     let badge = host.querySelector(':scope > .gdh-flap');
     if (!info || info.ok === false) {
       if (info && info.ok === false) {
@@ -1229,7 +1306,8 @@
     }
     delete host.dataset.gdhFlapFail;
     // 信息比原生的全，藏掉原生税标避免重复（读不到数据时上面已还原）
-    if (native?.isConnected && !native.hasAttribute('data-gdh-flap-native')) native.setAttribute('data-gdh-flap-native', '1');
+    if (compact && native?.hasAttribute('data-gdh-flap-native')) restoreFlapNative(native);
+    if (!compact && native?.isConnected && !native.hasAttribute('data-gdh-flap-native')) native.setAttribute('data-gdh-flap-native', '1');
     if (!badge) {
       badge = document.createElement('span');
       badge.className = 'gdh-flap';
@@ -1240,7 +1318,9 @@
       const go = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const url = flapTaxUrl(badge.dataset.gdhFlapToken || '');
+        const token = badge.dataset.gdhFlapToken || '';
+        const url = badge.dataset.gdhFeeKind === 'genius' && /^0x[a-f0-9]{40}$/.test(token)
+          ? `https://genius.fun/token/${token}` : flapTaxUrl(token);
         if (url) window.open(url, '_blank', 'noopener,noreferrer');
       };
       badge.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -1250,13 +1330,22 @@
       });
       host.appendChild(badge);
     }
-    const mode = flapMode(info.dist);
+    if (genius && (!Number.isInteger(info.creatorPayoutBps) || info.creatorPayoutBps < 0)) {
+      badge.remove();
+      if (native?.hasAttribute('data-gdh-flap-native')) restoreFlapNative(native);
+      return;
+    }
+    const kind = genius ? 'genius' : 'flap';
+    if (badge.dataset.gdhFeeKind !== kind) badge.dataset.gdhFeeKind = kind;
+    const mode = genius ? { cls: info.creatorPayoutBps > 25 ? 'genius-warning' : 'genius-check' } : flapMode(info.dist);
     const className = `gdh-flap is-${mode.cls}`;
     if (badge.className !== className) badge.className = className;
     if (badge.dataset.gdhFlapToken !== token) badge.dataset.gdhFlapToken = token;
-    const text = flapBadgeText(info);
+    const text = compact ? (info.creatorPayoutBps > 25 ? '⚠' : '✓') : genius ? geniusBadgeText(info) : flapBadgeText(info);
     if (badge.textContent !== text) badge.textContent = text;
-    const title = `${mode.name}
+    const label = genius ? geniusBadgeText(info) : text;
+    if (badge.getAttribute('aria-label') !== label) badge.setAttribute('aria-label', label);
+    const title = genius ? geniusTooltipText(info) : `${mode.name}
 ${flapTooltipText(info)}
 
 点击打开 flap 税收详情页`;
@@ -1281,15 +1370,16 @@ ${flapTooltipText(info)}
         // 刷新失败仍展示旧值，并冷却五分钟后再试，避免页面扫描持续打节点。
         if (last && Date.now() - last.at < FLAP_SUCCESS_TTL) return;
       } else {
-        if (!last || last.tries >= FLAP_RETRY_MAX) return;
+        if (!last) return;
         // 指数退避，别拿一堆失败的币去连打节点
-        if (Date.now() - last.at < FLAP_RETRY_BASE * 2 ** (last.tries - 1)) return;
+        const delay = last.tries >= FLAP_RETRY_MAX ? FLAP_SUCCESS_TTL : FLAP_RETRY_BASE * 2 ** (last.tries - 1);
+        if (Date.now() - last.at < delay) return;
       }
     }
     if (flapPending.size >= 4) return;
     flapPending.add(token);
     chrome.runtime.sendMessage({
-      type: 'flap-token-info',
+      type: 'token-fee-info',
       payload: { token, rpc: String(settings.flapRpc || '').trim() },
     }).then((res) => {
       // sendMessage 在 SW 被挂起时会拿到 undefined，那也是暂时的，同样要能重试
@@ -1300,13 +1390,13 @@ ${flapTooltipText(info)}
         setBoundedMap(flapInfoCache, token, res, FLAP_CACHE_MAX);
         flapRetry.delete(token);
       } else {
-        if (!cached?.ok) {
+        if (!cached?.ok || cached.kind === 'genius') {
           setBoundedMap(flapInfoCache, token, res || { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
         }
         setBoundedMap(flapRetry, token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 }, FLAP_CACHE_MAX);
       }
     }).catch(() => {
-      if (!cached?.ok) setBoundedMap(flapInfoCache, token, { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
+      if (!cached?.ok || cached.kind === 'genius') setBoundedMap(flapInfoCache, token, { ok: false, reason: 'no-response' }, FLAP_CACHE_MAX);
       setBoundedMap(flapRetry, token, { at: Date.now(), tries: (flapRetry.get(token)?.tries || 0) + 1 }, FLAP_CACHE_MAX);
     }).finally(() => {
       flapPending.delete(token);
@@ -1339,9 +1429,12 @@ ${flapTooltipText(info)}
     // 这一套合约 selector 与 RPC 只适用于 BSC。Robinhood 的 Flap 虽也以
     // 7777 结尾，但直接拿 BSC 节点查询会得到错误的 not-flap 结论。
     if (settings.enableFlapTax === false || currentChain() !== 'bsc') return void clearFlapBadges();
+    const route = currentTokenRoute();
+    const detailToken = route?.chain === 'bsc' && /^0x[a-fA-F0-9]{40}$/.test(route.address) ? route.address.toLowerCase() : '';
+    if (detailToken) requestFlapInfo(detailToken);
     const seen = new Set();
     const put = (host, token, native) => {
-      if (!FLAP_ADDR_RE.test(token)) return;
+      if (!/^0x[a-fA-F0-9]{40}$/.test(token)) return;
       const key = token.toLowerCase();
       seen.add(key);
       // requestFlapInfo 自己判断要不要真发（首次、或退避到点的重试），这里无条件叫一声。
@@ -1351,7 +1444,10 @@ ${flapTooltipText(info)}
     };
 
     // 战壕只使用原生税标槽位。税标/数据未就绪时保留原样，禁止猜层级或塞进整卡。
-    document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
+    // Prioritize Genius cards already identified by GMGN's platform link, still verify on-chain.
+    const cards = [...document.querySelectorAll(CARD_SELECTOR)];
+    cards.sort((a, b) => Number(!!b.querySelector('a[href*="genius.fun/token/"]')) - Number(!!a.querySelector('a[href*="genius.fun/token/"]')));
+    cards.forEach((card) => {
       const token = String(card.getAttribute('href') || '').match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1]?.toLowerCase();
       if (!token) return void clearFlapCard(card);
       if (card.dataset.gdhFlapKey && card.dataset.gdhFlapKey !== token) clearFlapCard(card);
@@ -1362,7 +1458,8 @@ ${flapTooltipText(info)}
       }
       // 优先语义槽位/自有标记，不在每轮遍历整卡后代。
       const native = card.querySelector('.trenches-tax-badge, [data-gdh-flap-native]') || findNativeTaxChip(card);
-      const row = flapTrenchOwnRow(card, native);
+      const row = flapInfoCache.get(token).kind === 'genius'
+        ? geniusTrenchOwnRow(card, native, token) : flapTrenchOwnRow(card, native);
       if (!row) return;
       if (card.dataset.gdhFlapKey !== token) card.dataset.gdhFlapKey = token;
       ensureFlapBadge(row, token, native);
@@ -1374,41 +1471,41 @@ ${flapTooltipText(info)}
     // 搜索弹层：以搜索框为锚圈定范围，再给里面的代币链接挂徽章。
     // 不全站扫 a[href*="/token/"]——那会扩散到持仓、喊单等一堆别处。
     searchScopes().forEach((scope) => {
-      scope.querySelectorAll('a[href*="/token/0x"]').forEach((link) => {
-        const token = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/)?.[1];
+      scope.querySelectorAll('[data-gdh-flap-key]').forEach(link => {
+        if (!/\/bsc\/token\/0x[a-fA-F0-9]{40}/.test(link.getAttribute('href') || '')) clearFlapCard(link);
+      });
+      scope.querySelectorAll('a[href*="/bsc/token/0x"]').forEach((link) => {
+        const token = link.getAttribute('href')?.match(/\/bsc\/token\/(0x[a-fA-F0-9]{40})/)?.[1]?.toLowerCase();
         if (!token) return;
+        if (link.dataset.gdhFlapKey && link.dataset.gdhFlapKey !== token) clearFlapCard(link);
+        requestFlapInfo(token);
+        if (!flapInfoCache.get(token)?.ok) return void clearFlapCard(link);
         const native = findNativeTaxChip(link);
+        if (link.dataset.gdhFlapKey !== token) link.dataset.gdhFlapKey = token;
         put(flapOwnRow(link, native) || link, token, native);
       });
     });
 
     // 代币页：标题那一行是横向 flex（名称+价格+市值），塞进去会被 ellipsis 裁掉。
     // 越过横向 flex 行、插到它外面，让徽章独立成一整行（纵向流的下一行）。
-    const route = currentTokenRoute();
-    if (route && FLAP_ADDR_RE.test(route.address)) {
-      const title = document.querySelector('h1, [class*="text-[20px]"], [class*="text-2xl"]');
-      if (title) {
-        let row = document.querySelector('.gdh-flap-row--detail');
+    tokenDetailBadgeRow(false);
+    document.querySelectorAll('.gdh-flap-row--detail').forEach(row => {
+      if (!detailToken || !flapInfoCache.get(detailToken)?.ok
+        || row.querySelector('.gdh-flap')?.dataset.gdhFlapToken !== detailToken) row.remove();
+    });
+    if (detailToken && flapInfoCache.get(detailToken)?.ok) {
+      const detail = tokenDetailBadgeRow();
+      if (detail) {
+        let row = detail.querySelector('.gdh-flap-row--detail');
         if (!row) {
-          // 从标题往上越过横向排列的 flex 容器，落到最外层横向行
-          let anchor = title;
-          let el = title.parentElement;
-          for (let level = 0; level < 4 && el instanceof HTMLElement; level += 1) {
-            const cs = getComputedStyle(el);
-            if (cs.display.includes('flex') && !cs.flexDirection.includes('column')) {
-              anchor = el;
-              el = el.parentElement;
-            } else break;
-          }
-          if (anchor.parentElement) {
-            row = document.createElement('div');
-            row.className = 'gdh-flap-row gdh-flap-row--detail';
-            anchor.insertAdjacentElement('afterend', row);
-          }
+          row = document.createElement('span');
+          row.className = 'gdh-flap-row gdh-flap-row--detail';
+          detail.prepend(row);
         }
-        put(row || title, route.address);
+        put(row, detailToken);
       }
     }
+    document.querySelectorAll('.gdh-token-detail-badges:empty').forEach(el => el.remove());
   }
 
   // ---- Robinhood 搜索结果：底池资产 / 持币分红徽章 ----
@@ -2102,7 +2199,8 @@ ${flapTooltipText(info)}
     }
     const summary = markedHoldingSummary(holdings);
     const share = holdingShareText(summary.pct, summary.lowerBound);
-    badge.textContent = `👤${summary.names.length}${share ? ` · ${share}` : ''}`;
+    const text = `👤${summary.names.length}${share ? ` · ${share}` : ''}`;
+    if (badge.textContent !== text) badge.textContent = text;
     const details = summary.entries.map((item) => {
       const itemShare = Number(item?.supply) > 0
         ? holdingShareText((Number(item?.amount) / Number(item.supply)) * 100)
@@ -2110,10 +2208,11 @@ ${flapTooltipText(info)}
       const usd = Number(item?.usd) > 0 ? fomoUsd(item.usd) : '';
       return `${item.name}${itemShare ? ` ${itemShare}` : ''}${usd ? ` (${usd})` : ''}`;
     });
-    badge.title = [
+    const title = [
       share ? `标注人物合计持仓占比：${share}` : '标注人物合计持仓占比：数据同步中',
       `持有人：${details.join('、')}`,
     ].join('\n');
+    if (badge.title !== title) badge.title = title;
   }
 
   function scanMarkedBadges() {
@@ -2441,7 +2540,7 @@ ${flapTooltipText(info)}
   const TRACKER_DATA_SELECTOR = '[data-gdh-track-addr][data-gdh-track-ts]';
   const TRACKER_SYMBOL_CELL = '[data-testid="follow-tracking-row-symbol"]';
   const TRACKER_MAKER_CELL = '[data-testid="follow-tracking-row-maker"]';
-  const TRACKER_PERSON_CONTROL_SELECTOR = '.gdh-star-button, .gdh-color-button, .gdh-tokenblock';
+  const TRACKER_PERSON_CONTROL_SELECTOR = '.gdh-star-button, .gdh-color-button, .gdh-tokenblock, .gdh-wallet-follow-settings';
   let trackerCardsScanCache = null;
   let trackerCardsScanCacheActive = false;
   // 追踪流有卡片/表格两种布局，GMGN 自己带了切换按钮的 testid，用表头是否存在判断当前模式。
@@ -3351,7 +3450,7 @@ ${flapTooltipText(info)}
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
   }
 
-  function persistSpecialWallets(next) {
+  function persistSpecialWallets(next, done) {
     const previous = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
     settings.specialWallets = next;
     rebuildSpecialWalletSet();
@@ -3363,6 +3462,7 @@ ${flapTooltipText(info)}
         rebuildSpecialWalletSet();
         scanSpecialWallets();
       }
+      done?.(!error);
     });
   }
 
@@ -3426,6 +3526,105 @@ ${flapTooltipText(info)}
   function closeColorPalette() {
     colorPaletteEl?.remove();
     colorPaletteEl = null;
+  }
+
+  function openWalletFollowSettings(rawAddress, anchorRect, suggestedLabel = '') {
+    const address = normalizeWalletAddress(rawAddress);
+    if (!address) return;
+    closeColorPalette();
+    const old = (Array.isArray(settings.specialWallets) ? settings.specialWallets : []).find(p => normalizeWalletAddress(p.address) === address);
+    const panel = document.createElement('div'); panel.className = 'gdh-color-palette gdh-wallet-settings';
+    panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Special attention / 特别关注');
+    let language = 'en', chosen = false, saving = false;
+    const bindings = [];
+    const label = (el, en, zh, attr) => {
+      const text = attr ? null : document.createTextNode(''); if (text) el.append(text);
+      bindings.push(() => { const value = language === 'zh' ? zh : en; if (attr) el.setAttribute(attr, value); else text.textContent = value; }); return el;
+    };
+    const header = document.createElement('div'); header.className = 'gdh-wallet-settings-header';
+    const title = label(document.createElement('strong'), 'Special attention', '特别关注');
+    const fresh = document.createElement('em'); fresh.className = 'gdh-manager-new'; fresh.textContent = 'NEW'; title.append(fresh);
+    const lang = document.createElement('select'); lang.setAttribute('aria-label', 'Language / 语言'); lang.append(new Option('English','en'), new Option('中文','zh'));
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×'; label(close, 'Close', '关闭', 'aria-label'); close.addEventListener('click', closeColorPalette);
+    header.append(title, lang, close); panel.append(header);
+    const identity = document.createElement('code'); identity.className = 'gdh-wallet-settings-address'; identity.textContent = address; panel.append(identity);
+    const fields = {};
+    const check = (key, en, zh, value) => {
+      const row = document.createElement('label'); row.className = 'gdh-color-palette__pin';
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = value; input.dataset.special = key; fields[key] = input;
+      row.append(input); label(row, en, zh); panel.append(row);
+    };
+    check('enabled', 'Special attention', '特别关注', !!old);
+    const nameLabel = label(document.createElement('label'), 'Note', '备注'); nameLabel.className = 'gdh-wallet-settings-field';
+    const name = document.createElement('input'); name.type = 'text'; name.maxLength = 32; name.value = old?.label || suggestedLabel; name.dataset.special = 'label'; nameLabel.append(name); panel.append(nameLabel);
+    const colorLabel = label(document.createElement('label'), 'Highlight color', '高亮颜色'); colorLabel.className = 'gdh-wallet-settings-field';
+    const color = document.createElement('input'); color.type = 'color'; color.value = old?.color === 'rainbow' ? SPECIAL_COLOR_PALETTE[0] : normalizeSpecialColor(old?.color); color.dataset.special = 'color'; colorLabel.append(color); panel.append(colorLabel);
+    check('rainbow', 'Rainbow highlight', '炫彩高亮', old?.color === 'rainbow');
+    check('pin', 'Pin new pushes for 10 seconds', '新推送置顶 10 秒', old?.pin === true);
+    check('persistentPin', 'Priority alert: pin until dismissed', '重点提醒：手动关闭前持续置顶', old?.persistentPin === true);
+    const hint = label(document.createElement('p'), 'Local plugin settings only. Does not change GMGN tracking or place trades.', '仅保存插件本地设置，不改变 GMGN 原生追踪，不执行交易。'); panel.append(hint);
+    const status = document.createElement('div'); status.setAttribute('role', 'status'); status.className = 'gdh-wallet-settings-status';
+    const save = label(document.createElement('button'), 'Save settings', '保存设置'); save.type = 'button'; save.className = 'gdh-wallet-settings-save';
+    save.addEventListener('click', () => {
+      if (saving) return;
+      saving = true; save.disabled = true;
+      const current = Array.isArray(settings.specialWallets) ? settings.specialWallets : [];
+      const index = current.findIndex(p => normalizeWalletAddress(p.address) === address);
+      let next = [...current];
+      if (fields.enabled.checked) {
+        const entry = { ...(current[index] || {}), address, label: name.value.trim().slice(0,32), color: fields.rainbow.checked ? 'rainbow' : normalizeSpecialColor(color.value), pin: fields.pin.checked, persistentPin: fields.persistentPin.checked };
+        if (index < 0) next.push(entry); else next[index] = entry;
+      } else next = next.filter(p => normalizeWalletAddress(p.address) !== address);
+      persistSpecialWallets(next, ok => {
+        saving = false; save.disabled = false;
+        if (ok) { if (colorPaletteEl === panel) closeColorPalette(); }
+        else status.textContent = language === 'zh' ? '保存失败，输入已保留，请重试。' : 'Save failed. Your input is preserved; please retry.';
+      });
+    });
+    panel.append(save, status);
+    const translate = value => { language = value === 'zh' ? 'zh' : 'en'; lang.value = language; bindings.forEach(paint => paint()); };
+    lang.addEventListener('change', () => { chosen = true; translate(lang.value); chrome.storage.local.set({ priorityStrategyLanguageV1: language }); });
+    translate('en');
+    Promise.resolve().then(() => chrome.storage.local.get({ priorityStrategyLanguageV1: 'en' })).then(s => { if (!chosen) translate(s.priorityStrategyLanguageV1); }).catch(() => {});
+    for (const type of ['pointerdown','mousedown','click','keydown']) panel.addEventListener(type, e => { e.stopPropagation(); if (type === 'keydown' && e.key === 'Escape') closeColorPalette(); });
+    document.body.append(panel); colorPaletteEl = panel;
+    const rect = panel.getBoundingClientRect();
+    panel.style.left = `${Math.max(8, Math.min(innerWidth - rect.width - 8, anchorRect.left))}px`;
+    panel.style.top = `${Math.max(8, Math.min(innerHeight - rect.height - 8, anchorRect.bottom + 6))}px`;
+    fields.enabled.focus();
+  }
+
+  const walletFollowButtons = new Map();
+  function scanWalletFollowSettings() {
+    for (const [follow, button] of walletFollowButtons) {
+      if (!follow.isConnected || !follow.hasAttribute('data-gdh-follow-address') || settings.enableSpecialWallet === false) { button.remove(); walletFollowButtons.delete(follow); }
+    }
+    if (settings.enableSpecialWallet === false) return;
+    for (const follow of document.querySelectorAll('[data-gdh-follow-address]')) {
+      if (!normalizeWalletAddress(follow.dataset.gdhFollowAddress)) continue;
+      let button = walletFollowButtons.get(follow);
+      if (!button || !button.isConnected) {
+        button = document.createElement('button'); button.type = 'button'; button.className = 'gdh-wallet-follow-settings';
+        for (const type of ['pointerdown','mousedown']) button.addEventListener(type, e => e.stopPropagation());
+        button.addEventListener('click', e => {
+          e.preventDefault(); e.stopPropagation();
+          document.dispatchEvent(new Event('gdh-refresh-follow-wallets'));
+          const address = normalizeWalletAddress(follow.dataset.gdhFollowAddress);
+          if (!address || !follow.isConnected) return;
+          const link = [...(follow.parentElement?.querySelectorAll('a[href*="/address/"]') || [])].find(a => walletAddressFromHref(a.getAttribute('href')) === address);
+          openWalletFollowSettings(address, button.getBoundingClientRect(), String(link?.textContent || '').trim().slice(0,32));
+        });
+        // Outside the native follow target: opening settings never clicks the original heart.
+        const anchor = follow.closest('[data-sentry-component="UserFollow"]') || follow.closest('button,[role="button"]') || follow.parentElement;
+        anchor.insertAdjacentElement('afterend', button); walletFollowButtons.set(follow, button);
+      }
+      const address = normalizeWalletAddress(follow.dataset.gdhFollowAddress), on = isSpecialWallet(address), text = on ? '★' : '☆';
+      if (button.textContent !== text) button.textContent = text;
+      if (button.dataset.address !== address) button.dataset.address = address;
+      const title = 'Special attention settings / 特别关注设置';
+      if (button.title !== title) { button.title = title; button.setAttribute('aria-label', title); }
+      if (button.classList.contains('is-starred') !== on) button.classList.toggle('is-starred', on);
+    }
   }
 
   function openColorPalette(address, anchorRect) {
@@ -3636,6 +3835,7 @@ ${flapTooltipText(info)}
   }
 
   function scanSpecialWallets() {
+    scanWalletFollowSettings();
     if (settings.enableSpecialWallet === false) {
       scanPinnedPush();
       closeColorPalette();
@@ -3700,7 +3900,7 @@ ${flapTooltipText(info)}
     const pageAddress = walletAddressFromHref(location.pathname);
     const follow = document.querySelector('[data-sentry-component="UserFollow"]');
     const existing = document.querySelector('.gdh-star-button--address');
-    if (!pageAddress || !(follow instanceof HTMLElement) || !follow.parentElement) {
+    if (!pageAddress || !(follow instanceof HTMLElement) || !follow.parentElement || follow.dataset.gdhFollowAddress) {
       existing?.remove();
       document.querySelector('.gdh-color-button--address')?.remove();
       return;
@@ -6067,7 +6267,27 @@ ${flapTooltipText(info)}
     return block instanceof HTMLElement && block.querySelector('#token-base-address[data-addr]') ? block : null;
   }
 
+  function renderTokenMarkedBadge() {
+    const route = currentTokenRoute();
+    let row = tokenDetailBadgeRow(false);
+    document.querySelectorAll('.gdh-token-header-badges > .gdh-marked').forEach(el => el.remove());
+    if (settings.enableMarkedHolders !== false && route && markedMap.get(route.address.toLowerCase())?.length) {
+      row ||= tokenDetailBadgeRow();
+      if (row) {
+        let host = row.querySelector('.gdh-token-marked-badges');
+        if (!host) {
+          host = document.createElement('span');
+          host.className = 'gdh-token-marked-badges';
+          row.appendChild(host);
+        }
+        ensureMarkedBadge(host, route.address);
+      }
+    } else row?.querySelector('.gdh-token-marked-badges')?.remove();
+    if (row && !row.children.length) row.remove();
+  }
+
   function renderTokenHeaderBadges() {
+    renderTokenMarkedBadge();
     const route = currentTokenRoute();
     const block = tokenHeaderBlock();
     document.querySelectorAll('.gdh-token-header-badges').forEach((node) => {
@@ -6079,36 +6299,31 @@ ${flapTooltipText(info)}
     const row = address?.parentElement?.parentElement;
     if (!(row instanceof HTMLElement)) return;
     let host = row.querySelector(':scope > .gdh-token-header-badges');
+    const statKey = `${route.chain}|${route.address}`;
+    const summary = fomoStats.key === statKey ? fomoHoldingSummary() : null;
+    const fomoShare = settings.enableFomoPanel !== false && summary
+      ? holdingShareText(summary.pct, summary.lowerBound) : '';
+    if (!fomoShare) return void host?.remove();
     if (!host) {
       host = document.createElement('span');
       host.className = 'gdh-token-header-badges';
       address.parentElement.insertAdjacentElement('afterend', host);
     }
 
-    const statKey = `${route.chain}|${route.address}`;
-    const summary = fomoStats.key === statKey ? fomoHoldingSummary() : null;
     let fomoBadge = host.querySelector(':scope > .gdh-token-header-fomo');
-    const fomoShare = settings.enableFomoPanel !== false && summary
-      ? holdingShareText(summary.pct, summary.lowerBound) : '';
-    if (!fomoShare) {
-      fomoBadge?.remove();
-    } else {
-      if (!fomoBadge) {
-        fomoBadge = document.createElement('span');
-        fomoBadge.className = 'gdh-token-header-stat gdh-token-header-fomo';
-        host.prepend(fomoBadge);
-      }
-      fomoBadge.textContent = `fomo ${fomoShare}`;
-      fomoBadge.title = [
-        `Fomo 持仓占比：${fomoShare}`,
-        `已加载 ${summary.loaded}/${summary.total} 位持仓者，合计 ${fomoUsd(summary.sumUsd) || '$0'}`,
-        summary.lowerBound ? '当前只取得前排持仓者，因此该值是下界。' : '',
-      ].filter(Boolean).join('\n');
+    if (!fomoBadge) {
+      fomoBadge = document.createElement('span');
+      fomoBadge.className = 'gdh-token-header-stat gdh-token-header-fomo';
+      host.prepend(fomoBadge);
     }
-
-    if (settings.enableMarkedHolders === false) host.querySelector(':scope > .gdh-marked')?.remove();
-    else ensureMarkedBadge(host, route.address);
-    if (!host.children.length) host.remove();
+    const text = `fomo ${fomoShare}`;
+    if (fomoBadge.textContent !== text) fomoBadge.textContent = text;
+    const title = [
+      `Fomo 持仓占比：${fomoShare}`,
+      `已加载 ${summary.loaded}/${summary.total} 位持仓者，合计 ${fomoUsd(summary.sumUsd) || '$0'}`,
+      summary.lowerBound ? '当前只取得前排持仓者，因此该值是下界。' : '',
+    ].filter(Boolean).join('\n');
+    if (fomoBadge.title !== title) fomoBadge.title = title;
   }
 
   async function loadFomoHeaderStats(route) {
@@ -6145,6 +6360,7 @@ ${flapTooltipText(info)}
     const route = currentTokenRoute();
     if (!route) {
       document.querySelectorAll('.gdh-token-header-badges').forEach((node) => node.remove());
+      tokenDetailBadgeRow(false);
       return;
     }
     renderTokenHeaderBadges();
@@ -9057,7 +9273,7 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-token-detail-badges, .gdh-token-marked-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
@@ -9090,6 +9306,7 @@ ${flapTooltipText(info)}
     subtree: true,
     attributes: true,
     attributeFilter: [
+      'data-gdh-follow-address',
       'data-gdh-track-mc',
       'data-gdh-track-addr', 'data-gdh-track-chain', 'data-gdh-track-maker',
       'data-gdh-track-side', 'data-gdh-track-ts', 'data-gdh-track-tx', 'data-gdh-track-usd',

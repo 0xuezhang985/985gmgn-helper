@@ -92,14 +92,14 @@ try {
   }, { evm, sol });
   const wallet2 = '0x' + '2'.repeat(40), wallet3 = '0x' + '3'.repeat(40);
   await writeMarks({ [wallet2]: { mark: 'ed', image: '/remark-avatar.png' }, [wallet3]: { mark: 'ed新' } });
-  assert.deepEqual(await page.locator('.gdh-buy-people span').allTextContents(), ['ed', 'ed新', '人物4']);
+  assert.deepEqual(await page.locator('.gdh-buy-people > div > span').allTextContents(), ['ed', 'ed新', '人物4']);
   assert.ok((await page.locator('.gdh-buy-person').first().getAttribute('title')).startsWith('ed ·'));
   assert.equal(await page.locator('.gdh-buy-person img').first().getAttribute('src'), 'https://gmgn.ai/remark-avatar.png');
   assert.equal(await page.locator('.gdh-buy-count').first().innerText(), '♙ 3');
   pass('读取 GMGN 本地 IndexedDB 备注，备注优先于昵称；头像提示同步，买家数不变');
   await writeMarks({ [wallet2]: { mark: '更新后的备注' }, [wallet3]: { mark: '<img src=x onerror="window.xss=true">' } });
-  assert.equal(await page.locator('.gdh-buy-people span').first().innerText(), '更新后的备注');
-  assert.equal(await page.locator('.gdh-buy-people span').nth(1).innerText(), '<img src=x onerror="window.xss=true">');
+  assert.equal(await page.locator('.gdh-buy-people > div > span').first().innerText(), '更新后的备注');
+  assert.equal(await page.locator('.gdh-buy-people > div > span').nth(1).innerText(), '<img src=x onerror="window.xss=true">');
   assert.equal(await page.locator('.gdh-buy-people img').count(), 0);
   assert.equal(await page.evaluate(() => window.xss), undefined);
   await page.evaluate(async () => {
@@ -107,9 +107,9 @@ try {
     try { indexedDB.open = () => { throw new Error('fixture unavailable'); }; await testAggregate.refreshMarks(); }
     finally { indexedDB.open = open; }
   });
-  assert.equal(await page.locator('.gdh-buy-people span').first().innerText(), '更新后的备注');
+  assert.equal(await page.locator('.gdh-buy-people > div > span').first().innerText(), '更新后的备注');
   await writeMarks({});
-  assert.deepEqual(await page.locator('.gdh-buy-people span').allTextContents(), ['人物2', '人物3', '人物4']);
+  assert.deepEqual(await page.locator('.gdh-buy-people > div > span').allTextContents(), ['人物2', '人物3', '人物4']);
   pass('备注修改和删除即时反映；读取失败保留缓存，备注作为纯文本而非 HTML');
   await page.locator('[data-filter=sort]').selectOption('buyUsd');
   assert.ok((await page.locator('.gdh-buy-row a strong').first().innerText()).includes('<img'));
@@ -180,7 +180,7 @@ try {
   }))), { solA, solB, solToken });
   const solRow = page.locator(`.gdh-buy-list article:has(a[href="/sol/token/${solToken}"])`);
   await solRow.locator('.gdh-buy-count').click();
-  assert.deepEqual(await solRow.locator('.gdh-buy-people span').allTextContents(), ['SOL 备注 A', 'SOL 备注 B']);
+  assert.deepEqual(await solRow.locator('.gdh-buy-people > div > span').allTextContents(), ['SOL 备注 A', 'SOL 备注 B']);
   assert.equal(await solRow.locator('.gdh-buy-count').innerText(), '♙ 2');
   pass('SOL 备注独立于 EVM，大小写不同的钱包不串备注或合并人数');
   assert.deepEqual(errors, []);

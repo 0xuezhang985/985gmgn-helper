@@ -764,9 +764,44 @@
   let scanDelayTimer = 0;
   let scrollingUntil = 0;
 
+  const FOLLOW_WALLET_SELECTOR = '[data-sentry-component="UserFollow"], svg[data-icon="IconGmgnfollowwallet16px"]';
+  function readFollowWallet(element) {
+    const fiberKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
+    let fiber = fiberKey && element[fiberKey];
+    if (!fiber) return '';
+    // React can leave a DOM node pointing at the previous alternate after recycling a row.
+    let top = fiber;
+    while (top.return) top = top.return;
+    if (top.stateNode?.current && top.stateNode.current !== top) fiber = fiber.alternate;
+    const marked = element.matches('[data-sentry-component="UserFollow"]');
+    for (let depth = 0; fiber && depth < 14; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps || {};
+      if (!marked && !String(fiber.type || '').includes('filterFollowWallet')) continue;
+      const a = props.address;
+      if (typeof a === 'string' && (/^0x[a-fA-F0-9]{40}$/.test(a) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a))) return /^0x/i.test(a) ? a.toLowerCase() : a;
+      // UserFollow passes its wallet directly, never search arbitrary nested token data.
+      if (marked && (depth >= 3 || typeof fiber.type !== 'string')) return '';
+    }
+    return '';
+  }
+  function scanWalletFollowControls() {
+    const seen = new Set();
+    for (const candidate of document.querySelectorAll(FOLLOW_WALLET_SELECTOR)) {
+      const element = candidate.closest('[data-sentry-component="UserFollow"]') || candidate;
+      if (seen.has(element)) continue;
+      seen.add(element);
+      const address = readFollowWallet(element);
+      if (address) setAttribute(element, 'data-gdh-follow-address', address);
+      else element.removeAttribute('data-gdh-follow-address');
+    }
+    for (const element of document.querySelectorAll('[data-gdh-follow-address]')) if (!seen.has(element)) element.removeAttribute('data-gdh-follow-address');
+  }
+  document.addEventListener('gdh-refresh-follow-wallets', scanWalletFollowControls);
+
   function scanCards() {
     scanScheduled = false;
     scanRafId = 0;
+    scanWalletFollowControls();
     const holdingRows = new Set(document.querySelectorAll(HOLDING_ROW_SELECTOR));
     // 兜底：持仓面板里指向代币页的链接，往上找到能读出 {chain,address,symbol} 的那层。
     // fiber 读不到就不标记，不会误伤别处（战壕/搜索的链接读不出这三件套）。
