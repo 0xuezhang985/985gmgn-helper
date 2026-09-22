@@ -8424,6 +8424,9 @@ ${flapTooltipText(info)}
     if (settings.enablePumpFeed !== false) {
       for (const ev of pumpFeedEvents) {
         if (!ev?.key || !ev.ts || !pumpFeedEventAllowed(ev)) continue;
+        // Pump 这一路以前漏了链过滤（DeBot 那份一直有），开着「只看当前链」
+        // 仍会冒出别的链的成交。
+        if (chain && ev.chain && ev.chain !== chain) continue;
         out.push(ev);
       }
     }

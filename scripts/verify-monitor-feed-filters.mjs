@@ -62,6 +62,19 @@ function fixture(source) {
 for (const [name, source] of [['GMGN', content], ['DeBot', debot]]) {
   const t = fixture(source);
   assert.equal(t.visible().length, 2);
+  // 「推送只看当前链」必须同时管住 fomo 与 Pump 两路。
+  // GMGN 侧曾经只过滤了 fomo，Pump 那个循环漏了链判断，开着开关照样冒出别的链。
+  const onChain = (slug) => { t.c.currentChainSlug = () => slug; t.c.currentTrackChain = () => slug; };
+  t.c.settings.fomoFeedChainOnly = true;
+  onChain('bsc');
+  assert.deepEqual(t.visible().map(ev => ev.source), [], '页面在别的链时两路推送都要隐藏');
+  onChain('sol');
+  assert.deepEqual(t.visible().map(ev => ev.source).sort(), ['fomo', 'pump'], '当前链的事件照常显示');
+  t.c.settings.fomoFeedChainOnly = false;
+  onChain('bsc');
+  assert.equal(t.visible().length, 2, '关掉开关就回到全链');
+  onChain('');
+  pass(`${name} 「只看当前链」同时约束 fomo 与 Pump 两路推送`);
   t.c.monitor985ChannelPrefs = solBlocked;
   assert.equal(t.visible().length, 0, 'cached rows must be filtered again without receiving new events');
   assert.equal(t.f({ ...fomo, chain: 'bsc' }), true);
