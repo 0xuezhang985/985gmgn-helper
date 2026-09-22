@@ -9402,6 +9402,20 @@ ${flapTooltipText(info)}
     return `$${n.toFixed(0)}`;
   }
 
+  /**
+   * 底池对面那个币在 GMGN 上的页面。v4 的原生 ETH 池对面地址是 0x000…000，
+   * 那不是代币、GMGN 没有对应页面，返回空串让调用方退回 DexScreener。
+   */
+  function poolTokenHref(chain, address) {
+    const raw = String(address || '').trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(raw)) {
+      return /^0x0{40}$/.test(raw) ? '' : `/${chain}/token/${raw.toLowerCase()}`;
+    }
+    // Solana 地址区分大小写，原样保留
+    if (chain === 'sol' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) return `/sol/token/${raw}`;
+    return '';
+  }
+
   function buildPoolsPanel(anchor, route, data) {
     let panel = document.querySelector('.gdh-pools');
     if (!panel) {
@@ -9436,9 +9450,22 @@ ${flapTooltipText(info)}
     for (const pool of shown) {
       const row = document.createElement('a');
       row.className = 'gdh-pools__row';
-      row.href = pool.url || '#';
-      row.target = '_blank';
-      row.rel = 'noreferrer';
+      const gmgnHref = poolTokenHref(route.chain, pool.quoteAddress);
+      if (gmgnHref) {
+        // href 用真实站内路径，Ctrl/中键等带修饰的点击交给浏览器开新标签；
+        // 普通左键走站内无刷新路由，和原生底池徽章一个做法。
+        row.href = gmgnHref;
+        row.addEventListener('click', (event) => {
+          if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          event.stopPropagation();
+          gdhSpaNavigate(gmgnHref);
+        });
+      } else {
+        row.href = pool.url || '#';
+        row.target = '_blank';
+        row.rel = 'noreferrer';
+      }
       const pair = document.createElement('span');
       pair.className = 'gdh-pools__pair';
       pair.textContent = pool.quote || '?';
@@ -9449,7 +9476,10 @@ ${flapTooltipText(info)}
       liq.className = 'gdh-pools__liq';
       liq.textContent = poolLiqText(pool.liq);
       row.append(pair, dex, liq);
-      row.title = `24h 成交额 ${poolLiqText(pool.vol24h)}　点击在 DexScreener 打开`;
+      const volume = `24h 成交额 ${poolLiqText(pool.vol24h)}`;
+      row.title = gmgnHref ? `${volume}　点击打开 ${pool.quote || '该币'} 的 GMGN 代币页`
+        : /^0x0{40}$/.test(String(pool.quoteAddress || '')) ? `${volume}　原生币没有 GMGN 代币页，点击在 DexScreener 打开`
+          : `${volume}　点击在 DexScreener 打开`;
       list.appendChild(row);
     }
     panel.append(head, sum, list);

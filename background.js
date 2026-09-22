@@ -1730,6 +1730,8 @@ async function dexScreenerDirect(chain, address) {
       rows.push({
         pair: String(p.pairAddress || '').slice(0, 80),
         quote: String(other?.symbol || '').slice(0, 16),
+        // 点底池跳到对面那个币的 GMGN 页要用。保留原始大小写：Solana 地址区分大小写。
+        quoteAddress: String(other?.address || '').slice(0, 64),
         dex: [String(p.dexId || '')].concat(Array.isArray(p.labels) ? p.labels : []).filter(Boolean).join(' ').slice(0, 24),
         liq: Number(p?.liquidity?.usd) || 0,
         vol24h: Number(p?.volume?.h24) || 0,
