@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import GdhMonitorFeedFilters from '../monitor-feed-filters.js';
 const content = fs.readFileSync(new URL('../content.js', import.meta.url), 'utf8');
 const background = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
 const audit = fs.readFileSync(new URL('./verify-audit-fixes.mjs', import.meta.url), 'utf8');
@@ -28,7 +29,7 @@ function fixture(stored = {}) {
   }
   state.coordinator = coordinator;
   state.open = (id, host = '985monitor.xyz', auth = true, alive = true) => {
-    const page = { timers: [], messages: [] };
+    const page = { timers: [], messages: [], events: {}, values: {} };
     const chrome = { storage: { local: { ...local, set: (v, cb) => local.set(v).then(() => cb?.()) } },
       runtime: { id: alive ? 'fixture-extension' : undefined, lastError: null, onMessage: { addListener: f => page.messages.push(f) },
         sendMessage: (m, cb) => {
@@ -37,10 +38,10 @@ function fixture(stored = {}) {
           if (m.type === '985-monitor-sync-release') value = coordinator.releaseMonitor985SyncLease(m, sender(id));
           cb?.(value); return Promise.resolve(value);
         } } };
-    const w = { localStorage: { getItem: k => auth ? ({ xMonitorWalletAddress: 'fixture-user', xMonitorWalletToken: 'page-only' })[k] || null : null },
-      setInterval: f => page.timers.push(f), addEventListener: () => {} };
+    const w = { localStorage: { getItem: k => page.values[k] ?? (auth ? ({ xMonitorWalletAddress: 'fixture-user', xMonitorWalletToken: 'page-only' })[k] || null : null) },
+      setInterval: f => page.timers.push(f), addEventListener: (name, fn) => { page.events[name] = fn; } };
     vm.runInNewContext(bridge, { window: w, location: { hostname: host }, document: { addEventListener: () => {} },
-      chrome, crypto: { randomUUID: () => 'fixture-client' }, AbortSignal, Date, setTimeout, clearTimeout,
+      chrome, GdhMonitorFeedFilters, crypto: { randomUUID: () => 'fixture-client' }, AbortSignal, Date, setTimeout, clearTimeout,
       fetch: async (path, options) => {
         state.requests.push({ path, body: JSON.parse(options.body) });
         await new Promise(r => setTimeout(r, 10));
@@ -68,6 +69,34 @@ for (const p of many.pages) p.timers[0]();
 await many.settle();
 assert.equal(many.requests.filter(r => r.path.endsWith('/session')).length, 1);
 pass('随后同步复用会话，不重复签发');
+
+const channels = fixture();
+const channelPage = channels.open(1);
+await channels.settle();
+const initialRequests = channels.requests.length;
+channelPage.values.xMonitorPushChannelsV1 = JSON.stringify({ chainFilters: { fomo: { solana: false }, pump: { solana: false } } });
+channelPage.events['xmonitor:preferences-status']();
+await new Promise(r => setTimeout(r, 350));
+assert.deepEqual(channels.stored.monitor985ChannelPrefsV1.fomo.blockedChains, ['solana']);
+assert.deepEqual(channels.stored.monitor985ChannelPrefsV1.pump.blockedChains, ['solana']);
+assert.equal(channels.requests.length, initialRequests, 'channel edits should not issue an extra HTTP request');
+assert.equal(channels.stored.monitor985ChannelPrefsV1.accountId, 'fixture-user');
+pass('网页同页修改链屏蔽自动同步，两路独立配置，不增加 HTTP 请求');
+channelPage.values.xMonitorPushChannelsV1 = JSON.stringify({ 'pump-trade': false, chainFilters: {} });
+channelPage.events['xmonitor:preferences-applied']();
+await new Promise(r => setTimeout(r, 350));
+assert.deepEqual(channels.stored.monitor985ChannelPrefsV1.fomo.blockedChains, []);
+assert.equal(channels.stored.monitor985ChannelPrefsV1.pump.enabled, false);
+const channelWrites = channels.writes.length;
+channelPage.events['xmonitor:preferences-status']();
+await new Promise(r => setTimeout(r, 350));
+assert.equal(channels.writes.length, channelWrites, 'unchanged preferences must not rewrite extension storage');
+pass('取消屏蔽及来源开关可同步，不变配置不重复写入');
+channelPage.values.xMonitorUiOwnerV1 = 'another-account';
+channelPage.values.xMonitorPushChannelsV1 = JSON.stringify({ fomo: false });
+channelPage.timers[0](); await channels.settle();
+assert.equal(channels.stored.monitor985ChannelPrefsV1.fomo.enabled, true);
+pass('账号偏好恢复未完成时，不把另一账号的页面镜像写入当前账号');
 
 const c = many.coordinator;
 const lock = c.acquireMonitor985SyncLease(sender(10));

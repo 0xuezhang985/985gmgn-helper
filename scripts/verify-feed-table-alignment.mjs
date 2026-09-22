@@ -31,12 +31,21 @@ try {
     <a id="native" href="/bsc/token/fixture"><div class="native"><div>5m</div><div data-testid="follow-tracking-row-maker">原生交易员</div><div data-testid="follow-tracking-row-symbol">TOKEN 2d</div><div data-testid="follow-tracking-row-amount">0.128</div><div>$1.2M</div><button class="gdh-star-button">★</button></div></a>
     <div id="feed"></div></section>`);
   await page.addStyleTag({ content: css });
+  // 声音入口和方向着色都挂在同一行上，必须用真实实现参与测量：
+  // 多一个 🔔 会不会把五列挤歪，正是这个测试该回答的问题。
   const names = ['trackingFeedProfileMeta', 'fomoFeedRelTime', 'fomoUsd', 'buildFomoFeedTableRow', 'fomoFeedCardFor',
-    'resetFomoFeedTableLayout', 'syncFomoFeedTableLayout', 'applyFomoFeedTableLayout'];
+    'resetFomoFeedTableLayout', 'syncFomoFeedTableLayout', 'applyFomoFeedTableLayout',
+    'chipText', 'trackerRowSide', 'applyTrackerSideColor',
+    'outermostSameText', 'keepColorNodes', 'markKeepColorNodes', 'clearKeepColorNodes',
+    'feedSoundPersonKey', 'feedSoundFor', 'syncFeedSoundButton', 'attachFeedSoundButton'];
   await page.addScriptTag({ content: `
     const TRACKER_TABLE_HEADER='[data-testid="follow-tracking-table-header"]',TRACKER_SYMBOL_CELL='[data-testid="follow-tracking-row-symbol"]';
     let fomoFeedTableLayout=null,fomoFeedTableObserver=null,fomoFeedTableNodes=[];
     const fomoFeedCards=new Map();const applyTrackerTokenRelation=()=>{};const queueFomoTranslate=()=>{};
+    const TRACK_BUY_RE=/^(买入|建仓|加仓|转入|buy|add|open)/i,TRACK_SELL_RE=/^(卖出|清仓|减仓|转出|sell|reduce|close)/i;
+    const DEFAULTS={feedSound:{on:false,kind:'beep',volume:70}};
+    const settings={feedSound:{on:false,kind:'beep',volume:70},feedSoundPeople:{},enableTrackerSideColor:true};
+    const FEED_SOUND_PATTERNS={beep:1};const openFeedSoundSettings=()=>{};
     const attachFomoFeedRank=who=>{who.classList.add('has-rank');const r=document.createElement('span');r.className='gdh-fomofeed__rank';r.textContent='总榜10';who.append(r);};
     window.scheduled=0;let pending=false;
     function scheduleScan(){scheduled++;if(pending)return;pending=true;requestAnimationFrame(()=>{pending=false;runLayout();});}

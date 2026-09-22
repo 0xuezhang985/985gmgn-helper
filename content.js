@@ -87,6 +87,7 @@
     });
     let syncInflight = null;
     let lastPrefsStamp = '';
+    let lastChannelsStamp = '';
     let lastFullSyncAt = 0;
     const syncAccount = async (force = false) => {
       if (!chrome.runtime?.id) return;
@@ -113,6 +114,18 @@
             await storageSet({ monitor985SyncStateV1: { connected: false, reason: 'login-required', checkedAt: Date.now() } });
           }
           return;
+        }
+        // Chain/channel choices live in the website's wallet-synced UI prefs,
+        // not /api/extension/config. Keep this small, account-scoped snapshot
+        // separate so periodic server config refreshes cannot erase it.
+        const owner = window.localStorage.getItem('xMonitorUiOwnerV1') || '';
+        if (!owner || accountKey(owner) === accountKey(auth.wallet)) {
+          const channels = GdhMonitorFeedFilters.captureChannels(readJson('xMonitorPushChannelsV1', '{}'), auth.wallet);
+          const stamp = JSON.stringify(channels);
+          if (stamp !== lastChannelsStamp) {
+            await storageSet({ monitor985ChannelPrefsV1: channels });
+            lastChannelsStamp = stamp;
+          }
         }
         const prefs = pagePrefs();
         const prefsStamp = JSON.stringify(prefs);
@@ -184,6 +197,15 @@
     window.setInterval(() => syncAccount(false), 15000);
     window.addEventListener('focus', () => syncAccount(true));
     window.addEventListener('storage', () => syncAccount(false));
+    let preferenceSyncTimer = 0;
+    const schedulePreferenceSync = () => {
+      clearTimeout(preferenceSyncTimer);
+      preferenceSyncTimer = setTimeout(() => syncAccount(false), 250);
+    };
+    // Same-tab localStorage writes do not emit "storage". The website emits
+    // these events for both local edits and restored cross-device preferences.
+    window.addEventListener('xmonitor:preferences-applied', schedulePreferenceSync);
+    window.addEventListener('xmonitor:preferences-status', schedulePreferenceSync);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') syncAccount(false);
     });
@@ -234,6 +256,17 @@
     ],
     enableMarkedHolders: true,
     enableFlapTax: true,
+    // 徽章总开关下面的分项。总开关关掉=全关；开着时这几项各管各的那一种徽章。
+    enableFlapTaxBadge: true,
+    enableGeniusBadge: true,
+    enableRhPoolBadge: true,
+    enableRhDividendBadge: true,
+    enableFomoShareBadge: true,
+    enableNativePoolBadge: true,
+    enableTrackerSideColor: true,
+    // 声音默认全关：没人希望装上插件就开始响。
+    feedSound: { on: false, kind: 'beep', volume: 70 },
+    feedSoundPeople: {},
     priorityStrategyLanguageV1: 'en',
     enableAllPools: true,
     flapRpc: '',
@@ -1114,11 +1147,30 @@
     return lines.join('\n');
   }
 
+  /**
+   * GMGN 的图标是 <svg><text> + 图标字体，textContent 里会混进一个私用区码点
+   * （实测搜索结果的税标是 "Tax 1.25%"），trim 去不掉。比对前先把这类
+   * 不可见装饰字符剥掉，否则 ^Tax 永远匹配不上。
+   */
+  function chipText(el) {
+    return (el.textContent || '').replace(/[-​-‍﻿️]/g, '').trim();
+  }
+
   /** GMGN 原生的税率小标签：文案形如 Tax 2% / Tax 2%/5%。 */
   function findNativeTaxChip(card) {
+    const re = /^Tax\s*[\d.]+%(\s*\/\s*[\d.]+%)?$/i;
+    // 取最内层那个：外层容器的文本同样含 Tax x%，挂到外层会连累同行别的内容。
+    // 旧规则要求「没有子元素」，而现在税标里有一个图标 <svg>，于是一个也认不出来。
     return [...card.querySelectorAll('div,span')].find((el) => (
-      el.children.length === 0 && /^Tax\s*[\d.]+%(\s*\/\s*[\d.]+%)?$/i.test((el.textContent || '').trim())
+      re.test(chipText(el)) && ![...el.children].some((kid) => re.test(chipText(kid)))
     )) || null;
+  }
+
+  /** 竖排容器：往里插一个兄弟节点等于「另起一行」，不会挤掉同一行的别的列。 */
+  function isColumnFlow(el) {
+    const { display, flexDirection } = getComputedStyle(el);
+    if (display === 'block' || display === 'flow-root' || display === 'list-item') return true;
+    return (display === 'flex' || display === 'inline-flex') && flexDirection.startsWith('column');
   }
 
   /** 在币名那一行下面开一行专门放徽章；这一行由插件自己创建和维护。 */
@@ -1130,17 +1182,18 @@
     // 多出这一行会顶到下面 GMGN 的定高指标行（Dev 战绩挂在那儿，
     // `h-[24px] overflow-hidden`），所以给卡片打上标记，由 CSS 放开
     // 卡片与指标行的高度限制——不是互相挤，而是把卡片撑高、都完整显示。
+    //
+    // 必须停在「竖排容器里的那一行」。搜索结果整行是横向 flex、每一列宽度写死
+    // （市值列 w-[88px]），往横向容器里插一行 width:100% 的兄弟就会把市值挤出去
+    // ——0.46.106 之前「搜索结果徽章盖住市值」正是这么来的。找不到竖排落点就
+    // 干脆不挂：宁可少一个徽章，也不能把 GMGN 自己的列顶跑。
     let anchor = native;
-    if (anchor) {
-      const cardWidth = card.getBoundingClientRect().width || 1;
-      for (let level = 0; level < 4 && anchor.parentElement && anchor.parentElement !== card; level += 1) {
-        anchor = anchor.parentElement;
-        if (anchor.getBoundingClientRect().width > cardWidth * 0.6) break;
-      }
-    } else {
-      anchor = card.children[1]?.firstElementChild?.firstElementChild || null;
+    if (!anchor) return null;
+    for (let level = 0; level < 6 && anchor.parentElement && anchor.parentElement !== card; level += 1) {
+      if (isColumnFlow(anchor.parentElement)) break;
+      anchor = anchor.parentElement;
     }
-    if (!anchor || !anchor.parentElement) return null;
+    if (!anchor.parentElement || !isColumnFlow(anchor.parentElement)) return null;
 
     card.dataset[roomKey] = '1';
     const line = document.createElement('div');
@@ -1287,6 +1340,19 @@
     zh ? '仅费率标记，不代表代币安全。数据直读链上。' : 'Fee indicator only, not a token safety rating. Read on-chain.',
     zh ? '点击打开 Genius 官方详情' : 'Click to open Genius token details');
     return lines.join('\n');
+  }
+
+  /**
+   * 分项开关：Flap 税收徽章与 Genius 创作者分成徽章各管各的。
+   * 判断放在这里而不是 ensureFlapBadge 里，是为了让关掉的那一种连自有徽章行
+   * 都不会创建——空行虽然看不见，但会占掉卡片的一行高度。
+   */
+  function flapBadgeEnabled(token) {
+    const info = flapInfoCache.get(token);
+    if (!info?.ok) return false;
+    return info.kind === 'genius'
+      ? settings.enableGeniusBadge !== false
+      : settings.enableFlapTaxBadge !== false;
   }
 
   function ensureFlapBadge(host, token, native) {
@@ -1452,7 +1518,7 @@ ${flapTooltipText(info)}
       if (!token) return void clearFlapCard(card);
       if (card.dataset.gdhFlapKey && card.dataset.gdhFlapKey !== token) clearFlapCard(card);
       requestFlapInfo(token);
-      if (!flapInfoCache.get(token)?.ok) {
+      if (!flapBadgeEnabled(token)) {
         if (card.querySelector('.gdh-flap-row, [data-gdh-flap-native]')) clearFlapCard(card);
         return;
       }
@@ -1479,10 +1545,13 @@ ${flapTooltipText(info)}
         if (!token) return;
         if (link.dataset.gdhFlapKey && link.dataset.gdhFlapKey !== token) clearFlapCard(link);
         requestFlapInfo(token);
-        if (!flapInfoCache.get(token)?.ok) return void clearFlapCard(link);
-        const native = findNativeTaxChip(link);
+        if (!flapBadgeEnabled(token)) return void clearFlapCard(link);
+        const row = flapOwnRow(link, findNativeTaxChip(link));
+        // 挂不上自有行就不挂：直接塞进这一行会顶掉 GMGN 写死宽度的市值列。
+        if (!row) return void clearFlapCard(link);
         if (link.dataset.gdhFlapKey !== token) link.dataset.gdhFlapKey = token;
-        put(flapOwnRow(link, native) || link, token, native);
+        // 搜索结果保留原生 Tax x%：我们的徽章只写底池与税收去向、不含税率，藏掉会丢信息。
+        put(row, token, null);
       });
     });
 
@@ -1490,10 +1559,10 @@ ${flapTooltipText(info)}
     // 越过横向 flex 行、插到它外面，让徽章独立成一整行（纵向流的下一行）。
     tokenDetailBadgeRow(false);
     document.querySelectorAll('.gdh-flap-row--detail').forEach(row => {
-      if (!detailToken || !flapInfoCache.get(detailToken)?.ok
+      if (!detailToken || !flapBadgeEnabled(detailToken)
         || row.querySelector('.gdh-flap')?.dataset.gdhFlapToken !== detailToken) row.remove();
     });
-    if (detailToken && flapInfoCache.get(detailToken)?.ok) {
+    if (detailToken && flapBadgeEnabled(detailToken)) {
       const detail = tokenDetailBadgeRow();
       if (detail) {
         let row = detail.querySelector('.gdh-flap-row--detail');
@@ -1629,7 +1698,7 @@ ${flapTooltipText(info)}
   function ensureRobinhoodSearchBadges(host, token, info) {
     let pool = host.querySelector(':scope > .gdh-robinhood-pool');
     let dividend = host.querySelector(':scope > .gdh-robinhood-dividend');
-    if (info.poolSymbol) {
+    if (info.poolSymbol && settings.enableRhPoolBadge !== false) {
       if (!pool) {
         pool = document.createElement('span');
         pool.className = 'gdh-robinhood-chip gdh-robinhood-pool';
@@ -1640,7 +1709,7 @@ ${flapTooltipText(info)}
       pool.dataset.gdhRobinhoodToken = token;
     } else pool?.remove();
 
-    if (info.dividend) {
+    if (info.dividend && settings.enableRhDividendBadge !== false) {
       if (!dividend) {
         dividend = document.createElement('span');
         dividend.className = 'gdh-robinhood-chip gdh-robinhood-dividend';
@@ -1662,7 +1731,8 @@ ${flapTooltipText(info)}
   }
 
   function scanRobinhoodSearchBadges() {
-    if (settings.enableFlapTax === false || currentChain() !== 'robinhood') {
+    const anyBadge = settings.enableRhPoolBadge !== false || settings.enableRhDividendBadge !== false;
+    if (settings.enableFlapTax === false || !anyBadge || currentChain() !== 'robinhood') {
       return void clearRobinhoodSearchBadges();
     }
     searchScopes().forEach((scope) => {
@@ -2740,6 +2810,104 @@ ${flapTooltipText(info)}
         context,
       );
     });
+  }
+
+  // ---- 追踪列表：买入整行绿、卖出整行红 ----
+  // 方向词与 debot-content.js 里那份判定保持一致（转入算买、清仓/减仓算卖），
+  // 免得同一条成交在两个站被涂成两种颜色。
+  const TRACK_BUY_RE = /^(买入|建仓|加仓|转入|buy|add|open)/i;
+  const TRACK_SELL_RE = /^(卖出|清仓|减仓|转出|sell|reduce|close)/i;
+
+  /** 行里那个动作词。先信 page-bridge 从 Fiber 读到的 side，读不到才翻 DOM。 */
+  function trackerRowSide(card) {
+    const known = String(card.dataset?.gdhTrackSide || '').trim().toLowerCase();
+    if (known === 'buy' || known === 'sell') return known;
+    if (card.classList.contains('gdh-fomofeed')) {
+      if (card.classList.contains('is-buy') || card.classList.contains('is-transfer')) return 'buy';
+      if (card.classList.contains('is-sell')) return 'sell';
+      return '';
+    }
+    // 只认叶子节点：整行的 textContent 里可能混进叫「加仓」之类名字的币。
+    const word = [...card.querySelectorAll('span,div')]
+      .map((el) => (el.children.length === 0 ? chipText(el) : ''))
+      .find((text) => text && (TRACK_BUY_RE.test(text) || TRACK_SELL_RE.test(text)));
+    if (!word) return '';
+    return TRACK_BUY_RE.test(word) ? 'buy' : 'sell';
+  }
+
+  /** 着色靠一个属性 + 一条 CSS 规则；关掉开关时属性清空，页面立刻恢复原样。 */
+  /**
+   * 颜色不一定写在文字所在的那个节点上——市值就是例子：数字那一格自己没有颜色，
+   * 灰色来自上面一层。只标记最内层会被外层的 color:inherit 带走，所以向上走到
+   * 「文本仍然只有它自己」的最外层为止，整块一起保留。
+   */
+  function outermostSameText(el, root) {
+    const text = chipText(el);
+    let node = el;
+    while (node.parentElement && node.parentElement !== root
+      && chipText(node.parentElement) === text) node = node.parentElement;
+    return node;
+  }
+
+  /**
+   * 币名、底池名、市值保持原色：这三样是扫行时的识别锚点，跟着方向变色反而难认。
+   * 币龄和其余文字照常着色。GMGN 自己给了 testid，不靠类名猜。
+   */
+  function keepColorNodes(card) {
+    const keep = new Set();
+    const cell = card.querySelector('[data-testid="follow-tracking-row-symbol"]');
+    if (cell) {
+      // 币名是这一格里第一个有文字的叶子；后面依次是币龄、发射台徽章、底池标签。
+      const symbol = [...cell.querySelectorAll('span,div')]
+        .find((el) => !el.children.length && chipText(el));
+      if (symbol) keep.add(outermostSameText(symbol, cell));
+    }
+    card.querySelectorAll('[data-testid="quote-token-tag"]')
+      .forEach((tag) => keep.add(outermostSameText(tag, card)));
+    // 市值：取最内层那个写着 MC: 的节点，再往上并到自带颜色的那一层。
+    const mc = [...card.querySelectorAll('span,div')].find((el) => (
+      /^MC\s*[:：]/.test(chipText(el))
+      && ![...el.children].some((kid) => /^MC\s*[:：]/.test(chipText(kid)))
+    ));
+    if (mc) keep.add(outermostSameText(mc, card));
+    // 插件自己的卡片没有 testid，直接按类名收；子节点由 CSS 的子树规则覆盖。
+    card.querySelectorAll('.gdh-fomofeed__sym, .gdh-fomofeed__symtext, .gdh-fomofeed__mc, .gdh-fomofeed__tmc')
+      .forEach((el) => keep.add(el));
+    return keep;
+  }
+
+  /** 标记保持幂等：稳定扫描一轮不产生任何 DOM 变更，免得和 MutationObserver 互相触发。 */
+  function markKeepColorNodes(card) {
+    const keep = keepColorNodes(card);
+    card.querySelectorAll('[data-gdh-keep-color]').forEach((el) => {
+      if (!keep.has(el)) delete el.dataset.gdhKeepColor;
+    });
+    keep.forEach((el) => { if (el.dataset.gdhKeepColor !== '1') el.dataset.gdhKeepColor = '1'; });
+  }
+
+  function clearKeepColorNodes(card) {
+    card.querySelectorAll('[data-gdh-keep-color]').forEach((el) => { delete el.dataset.gdhKeepColor; });
+  }
+
+  function applyTrackerSideColor(card, side) {
+    if (!side) {
+      if (card.dataset.gdhSide !== undefined) {
+        delete card.dataset.gdhSide;
+        clearKeepColorNodes(card);
+      }
+      return;
+    }
+    if (card.dataset.gdhSide !== side) card.dataset.gdhSide = side;
+    markKeepColorNodes(card);
+  }
+
+  function scanTrackerSideColors() {
+    if (settings.enableTrackerSideColor === false) {
+      document.querySelectorAll('[data-gdh-side]').forEach((card) => { delete card.dataset.gdhSide; });
+      document.querySelectorAll('[data-gdh-keep-color]').forEach((el) => { delete el.dataset.gdhKeepColor; });
+      return;
+    }
+    trackerCards().forEach((card) => applyTrackerSideColor(card, trackerRowSide(card)));
   }
 
   // ---- 追踪列表：当前币的同名 / 九成相似币浮窗 ----
@@ -4533,8 +4701,15 @@ ${flapTooltipText(info)}
       rememberPinSeen(sig);
       const meta = specialWalletMap.get(address);
       if (meta?.persistentPin === true) {
-        const href = card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
-        const chain = String(card.dataset.gdhTrackChain || href.split('/')[1] || '');
+        // 卡片显示的币名和去重签名都取自 data-gdh-track-*（bridge 从这笔成交记录读出的
+        // 同一份快照），而 href 以前取自 DOM 上的链接。追踪流的行会被虚拟列表回收复用，
+        // React 改 href 和 bridge 改 data-* 是两条独立的更新路径，中间那一瞬捕获下来就是
+        // 「卡片显示 A 币、点进去却是 B 币」。所以链接也改成从同一份快照拼，缺字段才退回 DOM。
+        const domHref = card.getAttribute('href') || card.querySelector('a[href*="/token/"]')?.getAttribute('href') || '';
+        const trackChain = String(card.dataset.gdhTrackChain || '').trim();
+        const trackAddr = String(card.dataset.gdhTrackAddr || '').trim();
+        const href = trackChain && trackAddr ? `/${trackChain}/token/${trackAddr}` : domHref;
+        const chain = trackChain || domHref.split('/')[1] || '';
         priorityPush?.capture(`${chain}|${sig}`, { wallet: address, href,
           name: meta.label || extractRowWalletLabel(card), detail: globalThis.GdhPriorityPush.snapshot(card), visual: globalThis.GdhPriorityPush.describe(card) });
       } else if (pinnedActive && meta?.pin === true) {
@@ -6286,28 +6461,93 @@ ${flapTooltipText(info)}
     if (row && !row.children.length) row.remove();
   }
 
+  /**
+   * GMGN 原生的底池徽章：地址（Copy 组件）后面那个 <a>，指向底池的计价代币，
+   * 里面是代币图标 + 符号。它既没有 sentry 标记也没有 testid，所以按结构认：
+   * 紧跟 Copy、标签是 A、链接指向本链「另一个」代币页（指向自己的就不是底池）。
+   */
+  function nativePoolBadge(row, route) {
+    const copy = row.querySelector(':scope > [data-sentry-component="Copy"]');
+    const el = copy?.nextElementSibling;
+    if (!(el instanceof HTMLElement) || el.tagName !== 'A') return null;
+    const target = (el.getAttribute('href') || '')
+      .match(/\/token\/(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})/)?.[1];
+    if (!target || target.toLowerCase() === route.address.toLowerCase()) return null;
+    return el;
+  }
+
+  function clearNativePoolBadge() {
+    document.querySelectorAll('[data-gdh-native-pool-hidden]').forEach((el) => {
+      el.style.removeProperty('display');
+      delete el.dataset.gdhNativePoolHidden;
+    });
+    document.querySelectorAll('.gdh-native-pool').forEach((el) => el.remove());
+  }
+
+  /**
+   * 把原生底池徽章挪到底池徽章那一行。不物理搬动原件——它归 React 管，搬走之后
+   * React 下次渲染 removeChild 会直接抛错。改成：藏掉原件 + 在目标行放一份克隆
+   * （克隆已脱离 React，随便摆），跳转仍走站内路由。
+   */
+  function renderNativePoolBadge(route) {
+    if (settings.enableFlapTax === false || settings.enableNativePoolBadge === false) {
+      return void clearNativePoolBadge();
+    }
+    const block = tokenHeaderBlock();
+    const address = block?.querySelector('#token-base-address[data-addr]');
+    const row = address?.parentElement?.parentElement;
+    const native = row instanceof HTMLElement ? nativePoolBadge(row, route) : null;
+    if (!native) return void clearNativePoolBadge();
+    const detail = tokenDetailBadgeRow();
+    if (!detail) return void clearNativePoolBadge();
+
+    const href = native.getAttribute('href') || '';
+    let clone = detail.querySelector(':scope > .gdh-native-pool');
+    if (clone && clone.dataset.gdhNativePool !== href) { clone.remove(); clone = null; }
+    if (!clone) {
+      clone = native.cloneNode(true);
+      clone.classList.add('gdh-native-pool');
+      clone.dataset.gdhNativePool = href;
+      clone.removeAttribute('id');
+      clone.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+      clone.title = `底池计价资产：${(native.textContent || '').trim()}`;
+      clone.addEventListener('click', (event) => {
+        if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        gdhSpaNavigate(href);
+      });
+      detail.appendChild(clone);
+    }
+    if (native.dataset.gdhNativePoolHidden !== '1') {
+      native.dataset.gdhNativePoolHidden = '1';
+      native.style.setProperty('display', 'none', 'important');
+    }
+  }
+
   function renderTokenHeaderBadges() {
     renderTokenMarkedBadge();
     const route = currentTokenRoute();
-    const block = tokenHeaderBlock();
+    // fomo 占比徽章改挂到底池徽章那一行（BaseInfoBar 下面那条 .gdh-token-detail-badges），
+    // 不再塞进标题行——标题行是横向 flex，徽章一多就把币名挤没了。
+    let detail = tokenDetailBadgeRow(false);
     document.querySelectorAll('.gdh-token-header-badges').forEach((node) => {
-      if (!block || !block.contains(node)) node.remove();
+      if (node.parentElement !== detail) node.remove();
     });
-    if (!route || !block) return;
+    if (!route) return;
 
-    const address = block.querySelector('#token-base-address[data-addr]');
-    const row = address?.parentElement?.parentElement;
-    if (!(row instanceof HTMLElement)) return;
-    let host = row.querySelector(':scope > .gdh-token-header-badges');
     const statKey = `${route.chain}|${route.address}`;
     const summary = fomoStats.key === statKey ? fomoHoldingSummary() : null;
-    const fomoShare = settings.enableFomoPanel !== false && summary
+    const fomoShare = settings.enableFomoPanel !== false && settings.enableFomoShareBadge !== false && summary
       ? holdingShareText(summary.pct, summary.lowerBound) : '';
-    if (!fomoShare) return void host?.remove();
+    if (!fomoShare) return void detail?.querySelector(':scope > .gdh-token-header-badges')?.remove();
+    detail ||= tokenDetailBadgeRow();
+    if (!detail) return;
+    let host = detail.querySelector(':scope > .gdh-token-header-badges');
     if (!host) {
       host = document.createElement('span');
       host.className = 'gdh-token-header-badges';
-      address.parentElement.insertAdjacentElement('afterend', host);
+      detail.appendChild(host);
     }
 
     let fomoBadge = host.querySelector(':scope > .gdh-token-header-fomo');
@@ -6360,10 +6600,12 @@ ${flapTooltipText(info)}
     const route = currentTokenRoute();
     if (!route) {
       document.querySelectorAll('.gdh-token-header-badges').forEach((node) => node.remove());
+      clearNativePoolBadge();
       tokenDetailBadgeRow(false);
       return;
     }
     renderTokenHeaderBadges();
+    renderNativePoolBadge(route);
     loadFomoHeaderStats(route);
   }
 
@@ -7927,6 +8169,7 @@ ${flapTooltipText(info)}
   let fomoFeedLastPollAt = 0;
   let pumpFeedLastPollAt = 0;
   let pumpDefaultWallets = new Set();
+  let monitor985ChannelPrefs = null;
   let monitorFomoCfg = {
     connected: false, muted: new Set(), prefs: {}, watch: new Set(), filters: {},
     tokenFilters: new Set(PUMP_FEED_DEFAULT_TOKEN_FILTERS), globalTradeMinUsd: 10,
@@ -7935,7 +8178,7 @@ ${flapTooltipText(info)}
   let monitorPumpCfg = {
     connected: false, muted: new Set(), prefs: {}, watch: new Set(), filters: {},
     tokenFilters: new Set(PUMP_FEED_DEFAULT_TOKEN_FILTERS), onlyMine: true,
-    globalTradeMinUsd: 10, at: 0,
+    globalTradeMinUsd: 10, wallet: '', at: 0,
   };
 
   // New native panel consumes the existing local feed snapshots; no new request loop.
@@ -8013,6 +8256,7 @@ ${flapTooltipText(info)}
     const globalTradeMinUsd = Number(raw?.globalTradeMinUsd);
     monitorPumpCfg = {
       connected: raw?.connected === true,
+      wallet: String(raw?.wallet || ''),
       muted,
       prefs,
       watch,
@@ -8033,6 +8277,7 @@ ${flapTooltipText(info)}
 
   function fomoFeedEventAllowed(ev) {
     if (!monitorFomoCfg.connected) return false;
+    if (!GdhMonitorFeedFilters.allowed(ev, 'fomo', monitor985ChannelPrefs, monitorFomoCfg)) return false;
     const types = settings.fomoFeedTypes || DEFAULTS.fomoFeedTypes;
     if (types[ev.type] === false) return false;
     if (!monitorFomoCfg.watch.has(ev.handle)) return false;
@@ -8057,6 +8302,7 @@ ${flapTooltipText(info)}
 
   function pumpFeedEventAllowed(ev) {
     if (!monitorPumpCfg.connected) return false;
+    if (!GdhMonitorFeedFilters.allowed(ev, 'pump', monitor985ChannelPrefs, monitorPumpCfg)) return false;
     const wallet = String(ev?.pumpWallet || '');
     if (!wallet || monitorPumpCfg.muted.has(wallet)) return false;
     if (monitorPumpCfg.prefs?.[wallet]?.types?.[ev.type] === false) return false;
@@ -8354,6 +8600,7 @@ ${flapTooltipText(info)}
     src.className = 'gdh-fomofeed__src';
     src.textContent = profile.source;
     who.append(av, name);
+    attachFeedSoundButton(who, ev);
     if (ev.source !== 'pump') attachFomoFeedRank(who, ev);
     who.appendChild(src);
 
@@ -8468,6 +8715,7 @@ ${flapTooltipText(info)}
     time.textContent = fomoFeedRelTime(ev.ts);
 
     r1.append(av, name);
+    attachFeedSoundButton(r1, ev);
     if (ev.source !== 'pump') attachFomoFeedRank(r1, ev);
     r1.append(tagEl, src, time);
     card.appendChild(r1);
@@ -8538,7 +8786,223 @@ ${flapTooltipText(info)}
     if (!fomoFeedSeen.has(ev.key)) {
       rememberBoundedSet(fomoFeedSeen, ev.key, FOMO_FEED_SEEN_MAX);
       card.classList.add('is-new');
+      // 声音出错绝不能拖垮这条卡片的渲染。
+      try { announceFeedEvent(ev); } catch { /* 音频不可用 */ }
     }
+  }
+
+  // ---- 追踪流声音提醒（fomo / pump）----
+  // 与聚合监控面板同一套合成音，不下载任何音频文件、不用 chrome.tts。
+  // 浏览器要求先有一次用户手势才允许出声，所以 AudioContext 等到首次交互再建。
+  const FEED_SOUND_PATTERNS = {
+    beep: { wave: 'sine', notes: [880], duration: 0.28, hold: 0.12, gain: 1 },
+    bell: { wave: 'triangle', notes: [1568], duration: 0.36, hold: 0.025, gain: 1 },
+    chime: { wave: 'sine', notes: [880, 1174], duration: 0.20, hold: 0.08, gain: 1 },
+    rise: { wave: 'triangle', notes: [523, 659, 784], duration: 0.10, hold: 0.04, gain: 1 },
+    radar: { wave: 'sine', notes: [1250], duration: 0.35, hold: 0.10, gain: 1, sweep: 450 },
+    alarm: { wave: 'square', notes: [880, 660], duration: 0.22, hold: 0.12, gain: 0.65 },
+  };
+  const FEED_SOUND_CHOICES = [
+    ['beep', '清脆提示'], ['bell', '铃声'], ['chime', '双音门铃'],
+    ['rise', '上扬音阶'], ['radar', '雷达'], ['alarm', '警报'],
+  ];
+  // 页面加载前就发生的成交不出声：首屏那一批几十条历史记录会连成一片噪音。
+  const feedSoundSince = Date.now();
+  let feedAudio = null;
+  let feedSoundBusyUntil = 0;
+
+  function feedSoundUnlock() {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return;
+    try {
+      feedAudio ||= new Context();
+      if (feedAudio.state !== 'running') feedAudio.resume().catch(() => {});
+    } catch { feedAudio = null; }
+  }
+  for (const type of ['pointerdown', 'keydown']) {
+    document.addEventListener(type, feedSoundUnlock, { capture: true, passive: true });
+  }
+
+  function playFeedSound(kind) {
+    const pattern = FEED_SOUND_PATTERNS[kind];
+    const volume = Number(settings.feedSound?.volume ?? DEFAULTS.feedSound.volume);
+    if (!pattern || !(volume > 0) || feedAudio?.state !== 'running') return false;
+    // 同一秒内只响一次：一批事件同时到货时连成一片，比没有声音还糟。
+    if (feedAudio.currentTime < feedSoundBusyUntil) return false;
+    const start = feedAudio.currentTime + 0.01;
+    const peak = 0.5 * (Math.min(volume, 100) / 100) * pattern.gain;
+    pattern.notes.forEach((note, index) => {
+      const osc = feedAudio.createOscillator();
+      const gain = feedAudio.createGain();
+      const at = start + index * pattern.duration;
+      osc.type = pattern.wave;
+      osc.frequency.value = note;
+      if (pattern.sweep) {
+        osc.frequency.setValueAtTime(note, at);
+        osc.frequency.exponentialRampToValueAtTime(pattern.sweep, at + pattern.duration);
+      }
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(peak, at + 0.015);
+      gain.gain.setValueAtTime(peak, at + pattern.hold);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + pattern.duration - 0.015);
+      osc.connect(gain);
+      gain.connect(feedAudio.destination);
+      osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+      osc.start(at);
+      osc.stop(at + pattern.duration);
+    });
+    feedSoundBusyUntil = start + pattern.notes.length * pattern.duration + 0.6;
+    return true;
+  }
+
+  /** 个人设置的存储键。fomo 认推特 handle，pump 认钱包，与两条推送流的过滤口径一致。 */
+  function feedSoundPersonKey(ev) {
+    if (!ev) return '';
+    return ev.source === 'pump'
+      ? `pump:${String(ev.pumpWallet || '')}`
+      : `fomo:${String(ev.handle || '')}`;
+  }
+
+  /**
+   * 这条事件该用哪种声音。个人设置优先，而且可以反过来——全局静音时仍然只给
+   * 某几个人开声音，这正是「和特别关注一样」的那个用法。'off' 表示这个人静音。
+   */
+  function feedSoundFor(ev) {
+    const personal = (settings.feedSoundPeople || {})[feedSoundPersonKey(ev)];
+    if (personal === 'off') return '';
+    if (personal && FEED_SOUND_PATTERNS[personal]) return personal;
+    const global = settings.feedSound || DEFAULTS.feedSound;
+    return global.on === true && FEED_SOUND_PATTERNS[global.kind] ? global.kind : '';
+  }
+
+  /** 新到的事件才出声：首屏的历史记录、以及重复渲染的同一条都不响。 */
+  function announceFeedEvent(ev) {
+    if (!(Number(ev?.ts) > feedSoundSince)) return false;
+    return playFeedSound(feedSoundFor(ev));
+  }
+
+  function persistFeedSoundPeople(next, done) {
+    const previous = settings.feedSoundPeople || {};
+    settings.feedSoundPeople = next;
+    chrome.storage.local.set({ feedSoundPeople: next }, () => {
+      const error = chrome.runtime?.lastError;
+      if (error) settings.feedSoundPeople = previous;
+      done?.(!error);
+    });
+  }
+
+  /** 某个人的声音设置浮层：跟随全局 / 静音 / 指定音效，样式与特别关注那张一致。 */
+  function openFeedSoundSettings(ev, anchorRect) {
+    const key = feedSoundPersonKey(ev);
+    if (!key || key.endsWith(':')) return;
+    closeColorPalette();
+    const panel = document.createElement('div');
+    panel.className = 'gdh-color-palette gdh-wallet-settings gdh-feed-sound-settings';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '声音提醒');
+
+    const header = document.createElement('div');
+    header.className = 'gdh-wallet-settings-header';
+    const title = document.createElement('strong');
+    title.textContent = '声音提醒';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', '关闭');
+    close.addEventListener('click', closeColorPalette);
+    header.append(title, close);
+
+    const who = document.createElement('code');
+    who.className = 'gdh-wallet-settings-address';
+    who.textContent = `${ev.name || ev.handle || ev.pumpWallet || ''}（${key}）`;
+
+    const field = document.createElement('label');
+    field.className = 'gdh-wallet-settings-field';
+    field.append('这个人的提示音');
+    const select = document.createElement('select');
+    select.append(new Option('跟随全局设置', ''), new Option('静音', 'off'));
+    FEED_SOUND_CHOICES.forEach(([value, label]) => select.append(new Option(label, value)));
+    select.value = (settings.feedSoundPeople || {})[key] || '';
+    field.append(select);
+
+    const status = document.createElement('div');
+    status.className = 'gdh-wallet-settings-status';
+    status.setAttribute('role', 'status');
+
+    const buttons = document.createElement('div');
+    buttons.className = 'gdh-wallet-settings-field';
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.textContent = '试听';
+    preview.addEventListener('click', () => {
+      feedSoundUnlock();
+      const kind = select.value && select.value !== 'off'
+        ? select.value : (settings.feedSound?.kind || DEFAULTS.feedSound.kind);
+      // 试听要能听见：全局关着、或这个人选了静音时也照放一次。
+      feedSoundBusyUntil = 0;
+      status.textContent = playFeedSound(kind) ? '' : '浏览器还没允许出声，点一下页面任意处再试。';
+    });
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'gdh-wallet-settings-save';
+    save.textContent = '保存设置';
+    save.addEventListener('click', () => {
+      save.disabled = true;
+      const next = { ...(settings.feedSoundPeople || {}) };
+      if (select.value) next[key] = select.value;
+      else delete next[key];
+      persistFeedSoundPeople(next, (ok) => {
+        save.disabled = false;
+        if (ok) closeColorPalette();
+        else status.textContent = '保存失败，请重试。';
+      });
+    });
+    buttons.append(preview, save);
+
+    const hint = document.createElement('p');
+    hint.textContent = '全局静音时，这里单独选的音效照样会响。默认全部无声。';
+
+    panel.append(header, who, field, buttons, hint, status);
+    for (const type of ['pointerdown', 'mousedown', 'click', 'keydown']) {
+      panel.addEventListener(type, (event) => {
+        event.stopPropagation();
+        if (type === 'keydown' && event.key === 'Escape') closeColorPalette();
+      });
+    }
+    document.body.append(panel);
+    colorPaletteEl = panel;
+    const rect = panel.getBoundingClientRect();
+    panel.style.left = `${Math.max(8, Math.min(innerWidth - rect.width - 8, anchorRect.left))}px`;
+    panel.style.top = `${Math.max(8, Math.min(innerHeight - rect.height - 8, anchorRect.bottom + 6))}px`;
+    select.focus();
+  }
+
+  function syncFeedSoundButton(button, ev) {
+    const personal = (settings.feedSoundPeople || {})[feedSoundPersonKey(ev)];
+    const on = !!feedSoundFor(ev);
+    const text = on ? '🔔' : '🔕';
+    if (button.textContent !== text) button.textContent = text;
+    button.classList.toggle('is-on', on);
+    button.classList.toggle('is-custom', !!personal);
+  }
+
+  /** 卡片上那个 🔔：和 ☆ 一样一人一个入口，点开设置这个人的提示音。 */
+  function attachFeedSoundButton(host, ev) {
+    let button = host.querySelector(':scope > .gdh-feed-sound-button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'gdh-feed-sound-button';
+      button.title = '设置这个人的声音提醒';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openFeedSoundSettings(ev, button.getBoundingClientRect());
+      });
+      host.appendChild(button);
+    }
+    syncFeedSoundButton(button, ev);
   }
 
   function fomoFeedCardFor(ev) {
@@ -8554,6 +9018,10 @@ ${flapTooltipText(info)}
     const next = fomoFeedRelTime(ev.ts);
     if (timeEl && timeEl.textContent !== next) timeEl.textContent = next;
     applyTrackerTokenRelation(el, ev.addr, ev.symbol, ev.chain, el.classList.contains('is-table'));
+    applyTrackerSideColor(el, settings.enableTrackerSideColor === false ? '' : trackerRowSide(el));
+    // 卡片是缓存复用的，铃铛状态要跟着设置变化重新画。
+    const bell = el.querySelector('.gdh-feed-sound-button');
+    if (bell) syncFeedSoundButton(bell, ev);
     return el;
   }
 
@@ -9069,6 +9537,7 @@ ${flapTooltipText(info)}
       timed('mani', () => { scanManifestoToasts(); ensureManifestoTab(); });
       timed('special', scanSpecialWallets);
       timed('token-relation', scanTrackerTokenRelations);
+      timed('side-color', scanTrackerSideColors);
       timed('similar-token-panel', scanSimilarTokenPanel);
       // 这两个各自是独立功能、各自有独立开关，必须挂在主循环上。
       // 以前它们写在 scanSpecialWallets 函数体末尾——而那个函数开头有
@@ -9335,7 +9804,8 @@ ${flapTooltipText(info)}
     scheduleScan();
   });
 
-  chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null }, (stored) => {
+  chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null, monitor985ChannelPrefsV1: null }, (stored) => {
+    monitor985ChannelPrefs = stored?.monitor985ChannelPrefsV1 || null;
     if (stored?.monitorFomoConfig) loadMonitorFomoCfg(stored.monitorFomoConfig);
     if (stored?.monitorPumpConfig) loadMonitorPumpCfg(stored.monitorPumpConfig);
   });
@@ -9400,6 +9870,10 @@ ${flapTooltipText(info)}
         continue;
       }
       // 985monitor 的 fomo 配置不是设置项；到了就立刻按新名单重摆
+      if (key === 'monitor985ChannelPrefsV1') {
+        monitor985ChannelPrefs = change.newValue || null;
+        continue;
+      }
       if (key === 'monitorFomoConfig') {
         loadMonitorFomoCfg(change.newValue);
         continue;
@@ -9447,6 +9921,7 @@ ${flapTooltipText(info)}
       const name = source === 'fomo' ? 'Fomo' : 'Pump';
       const config = changes[`monitor${name}Config`];
       return Object.hasOwn(changes, `enable${name}Feed`) || Object.hasOwn(changes, 'blockedTokens')
+        || Object.hasOwn(changes, 'monitor985ChannelPrefsV1')
         || source === 'fomo' && Object.hasOwn(changes, 'fomoFeedTypes')
         || config && buyAggregateConfigSignature(config.oldValue) !== buyAggregateConfigSignature(config.newValue);
     });

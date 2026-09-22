@@ -65,7 +65,9 @@
   let fomoEvents = [];
   let pumpEvents = [];
   let pumpDefaultWallets = new Set();
-  let monitorFomo = { muted: new Set(), prefs: {} };
+  let monitor985ChannelPrefs = null;
+  let monitorFomo = { connected: false, wallet: '', watch: new Set(), muted: new Set(), prefs: {},
+    filters: {}, tokenFilters: new Set(), globalTradeMinUsd: 10 };
   let monitorPump = {
     muted: new Set(), prefs: {}, watch: new Set(), filters: {},
     tokenFilters: new Set(PUMP_DEFAULT_TOKEN_FILTERS), onlyMine: true, globalTradeMinUsd: 10,
@@ -494,10 +496,18 @@
   }
 
   function loadMonitorFomo(raw) {
+    const tokenValues = Array.isArray(raw?.tokenFilters) ? raw.tokenFilters : PUMP_DEFAULT_TOKEN_FILTERS;
+    const globalMin = Number(raw?.globalTradeMinUsd);
     monitorFomo = {
+      connected: raw?.connected === true,
+      wallet: String(raw?.wallet || ''),
+      watch: new Set((Array.isArray(raw?.watch) ? raw.watch : []).map(value => String(value || '').toLowerCase()).filter(Boolean)),
       muted: new Set((Array.isArray(raw?.muted) ? raw.muted : [])
         .map((value) => safeText(value, 80).toLowerCase()).filter(Boolean)),
       prefs: raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {},
+      filters: raw?.filters && typeof raw.filters === 'object' && !Array.isArray(raw.filters) ? raw.filters : {},
+      tokenFilters: new Set(tokenValues.map(pumpTokenKey).filter(Boolean)),
+      globalTradeMinUsd: Number.isFinite(globalMin) && globalMin >= 0 ? globalMin : 10,
     };
   }
 
@@ -505,6 +515,8 @@
     const tokenValues = Array.isArray(raw?.tokenFilters) ? raw.tokenFilters : PUMP_DEFAULT_TOKEN_FILTERS;
     const globalMin = Number(raw?.globalTradeMinUsd);
     monitorPump = {
+      connected: raw?.connected === true,
+      wallet: String(raw?.wallet || ''),
       muted: new Set((Array.isArray(raw?.muted) ? raw.muted : []).map(String).filter(Boolean)),
       prefs: raw?.prefs && typeof raw.prefs === 'object' && !Array.isArray(raw.prefs) ? raw.prefs : {},
       watch: new Set((Array.isArray(raw?.watch) ? raw.watch : []).map(String).filter(Boolean)),
@@ -523,13 +535,21 @@
   }
 
   function fomoAllowed(event, blocked) {
+    if (!GdhMonitorFeedFilters.allowed(event, 'fomo', monitor985ChannelPrefs, monitorFomo)) return false;
     if (settings.fomoFeedTypes?.[event.type] === false) return false;
+    if (!monitorFomo.watch.has(safeText(event.handle, 80).toLowerCase())) return false;
     if (monitorFomo.muted.has(safeText(event.handle, 80).toLowerCase())) return false;
     if (monitorFomo.prefs?.[event.handle]?.types?.[event.type] === false) return false;
-    return !blocked.has(normalizeAddress(event.addr));
+    if (blocked.has(normalizeAddress(event.addr))) return false;
+    if (monitorFomo.tokenFilters.has(pumpTokenKey(event.symbol))
+      || monitorFomo.tokenFilters.has(pumpTokenKey(event.addr))) return false;
+    const personal = Number(monitorFomo.filters?.[event.handle]?.minTradeUsd ?? monitorFomo.filters?.[event.handle]);
+    const minimum = Math.max(monitorFomo.globalTradeMinUsd, Number.isFinite(personal) && personal > 0 ? personal : 0);
+    return !(minimum > 0 && Number(event.usd) > 0 && Number(event.usd) < minimum);
   }
 
   function pumpAllowed(event, blocked) {
+    if (!GdhMonitorFeedFilters.allowed(event, 'pump', monitor985ChannelPrefs, monitorPump)) return false;
     const wallet = safeText(event.pumpWallet, 96);
     if (!wallet || monitorPump.muted.has(wallet)) return false;
     if (monitorPump.prefs?.[wallet]?.types?.[event.type] === false) return false;
@@ -2885,7 +2905,8 @@
       rebuildSpecialWalletMap();
       syncRoute();
     });
-    chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null }, (stored) => {
+    chrome.storage.local.get({ monitorFomoConfig: null, monitorPumpConfig: null, monitor985ChannelPrefsV1: null }, (stored) => {
+      monitor985ChannelPrefs = stored.monitor985ChannelPrefsV1 || null;
       loadMonitorFomo(stored.monitorFomoConfig);
       loadMonitorPump(stored.monitorPumpConfig);
       scheduleFeedLayout();
@@ -2896,7 +2917,8 @@
         && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution' && key !== 'fomoSessionRecoveryV1'));
       if (!Object.keys(changes).length) return;
       for (const [key, change] of Object.entries(changes)) {
-        if (key === 'monitorFomoConfig') loadMonitorFomo(change.newValue);
+        if (key === 'monitor985ChannelPrefsV1') monitor985ChannelPrefs = change.newValue || null;
+        else if (key === 'monitorFomoConfig') loadMonitorFomo(change.newValue);
         else if (key === 'monitorPumpConfig') loadMonitorPump(change.newValue);
         else if (key === 'fomoToken') panelLoadedKey = '';
         else settings[key] = change.newValue;

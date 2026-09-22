@@ -99,7 +99,7 @@ pass('同一 FOMO 链映射用于热门列表，Arc 条目不再被当作未知�
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
-  await page.route('**/*', r => r.fulfill({ contentType: 'text/html', body: '<main id="header"><div><div><div><span id="token-base-symbol" data-symbol="ARC">ARC</span></div></div></div><div><span><span id="token-base-address" data-addr="fixture">address</span></span></div></main>' }));
+  await page.route('**/*', r => r.fulfill({ contentType: 'text/html', body: '<main id="header"><div><div><div><span id="token-base-symbol" data-symbol="ARC">ARC</span></div></div></div><div><span><span id="token-base-address" data-addr="fixture">address</span></span></div><h1>ARC</h1></main>' }));
   await page.goto(`https://gmgn.ai/arc/token/${address}`);
   await page.addScriptTag({ content: maps + `
     let settings = { enableMarkedHolders: false, fomoPanelOpen: false };

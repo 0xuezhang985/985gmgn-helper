@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import GdhMonitorFeedFilters from '../monitor-feed-filters.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8').replace(/\r\n/g, '\n');
@@ -70,7 +71,7 @@ function extractFunction(source, name) {
 }
 
 function evaluate(functions, expression, extras = {}) {
-  const context = vm.createContext({ ...extras });
+  const context = vm.createContext({ GdhMonitorFeedFilters, monitor985ChannelPrefs: null, ...extras });
   return vm.runInContext(`${functions.join('\n')}\n(${expression})`, context);
 }
 
@@ -1156,7 +1157,7 @@ await test('DeBot 只注入追踪、FOMO 与独立 Brew 浮窗模块', () => {
   const main = debotScripts.find((entry) => entry.world === 'MAIN');
   const isolated = debotScripts.find((entry) => entry.world !== 'MAIN');
   assert.deepEqual(main.js, ['debot-bridge.js']);
-  assert.deepEqual(isolated.js, ['buy-strategies.js', 'priority-push.js', 'debot-content.js', 'brew-content.js']);
+  assert.deepEqual(isolated.js, ['monitor-feed-filters.js', 'buy-strategies.js', 'priority-push.js', 'debot-content.js', 'brew-content.js']);
   assert.deepEqual(isolated.css, ['debot-styles.css', 'brew-styles.css']);
   assert.ok(!isolated.js.includes('content.js'));
   for (const file of ['buy-strategies.js', 'debot-bridge.js', 'debot-content.js', 'debot-styles.css']) {
@@ -1656,7 +1657,7 @@ await test('已打开的 985monitor 页面无需刷新即可恢复会话同步',
       },
     },
     scripting: {
-      executeScript: async (options) => calls.push(['inject', options.target.tabId, options.files?.[0] || 'reset']),
+      executeScript: async (options) => calls.push(['inject', options.target.tabId, options.files?.join(',') || 'reset']),
     },
   };
   const fn = extractFunction(background, 'wakeOpenMonitor985Tabs');
@@ -1665,7 +1666,7 @@ await test('已打开的 985monitor 页面无需刷新即可恢复会话同步',
   assert.deepEqual(calls.filter((call) => call[0] === 'ping').map((call) => call[1]), [11, 22]);
   assert.deepEqual(calls.filter((call) => call[0] === 'inject'), [
     ['inject', 22, 'reset'],
-    ['inject', 22, 'content.js'],
+    ['inject', 22, 'monitor-feed-filters.js,content.js'],
   ]);
   assert.ok(manifest.permissions.includes('scripting'));
   assert.ok(content.includes("message?.type !== '985-monitor-sync-now'"));
@@ -1909,9 +1910,12 @@ await test('FOMO 持仓占比以独立徽章显示在 GMGN 代币表头', () => 
   const scan = extractFunction(content, 'scanTokenHeaderBadges');
   const render = extractFunction(content, 'renderTokenHeaderBadges');
   const load = extractFunction(content, 'loadFomoHeaderStats');
+  // 原生底池徽章搬到底池徽章那一行后，GMGN 自己的地址锚点改由这个函数持有。
+  const nativePool = extractFunction(content, 'renderNativePoolBadge');
   assert.ok(scan.includes('renderTokenHeaderBadges()'));
   assert.ok(scan.includes('loadFomoHeaderStats(route)'));
-  assert.ok(render.includes("#token-base-address[data-addr]"));
+  assert.ok(scan.includes('renderNativePoolBadge(route)'));
+  assert.ok(nativePool.includes("#token-base-address[data-addr]"));
   assert.ok(render.includes('`fomo ${fomoShare}`'));
   assert.ok(load.includes("kind: 'holders'"));
   assert.ok(load.includes('FOMO_REFRESH_MS'));
@@ -2862,7 +2866,10 @@ await test('战壕 Flap 税标只使用原生槽位，不额外插行或回退�
   const scan = extractFunction(content, 'scanFlapBadges');
   const trench = scan.slice(scan.indexOf('document.querySelectorAll(CARD_SELECTOR)'), scan.indexOf('// 追踪流'));
   assert.ok(trench.includes('flapTrenchOwnRow(card, native)'));
-  assert.ok(trench.includes('if (!flapInfoCache.get(token)?.ok)'));
+  // flapBadgeEnabled 既判「链上数据取到了没有」，也判这一种徽章的分项开关。
+  assert.ok(trench.includes('if (!flapBadgeEnabled(token))'));
+  const enabled = extractFunction(content, 'flapBadgeEnabled');
+  assert.ok(enabled.includes('if (!info?.ok) return false;'));
   assert.ok(trench.includes('card.dataset.gdhFlapKey !== token'));
   assert.ok(!trench.includes('row || card'));
   assert.ok(!trench.includes('flapOwnRow(card, native)'));
@@ -2927,7 +2934,7 @@ await test('独立扫描异常不再阻断 FOMO/Pump 等后续模块', () => {
   const calls = [];
   const extras = { lastFullScanAt: 0, scanCostEma: 0, trackerCardsScanCache: null, trackerCardsScanCacheActive: false,
     CARD_SELECTOR: '.card', performance: { now: () => 1 }, document: { querySelectorAll: () => [], documentElement: { getAttribute() {}, setAttribute() {} } } };
-  for (const name of ['applyCardState','scanCalloutBlacklist','scanManifestoToasts','ensureManifestoTab','scanSpecialWallets','scanTrackerTokenRelations','scanMarkedBadges','scanTokenHeaderBadges','scanFlapBadges','scanRobinhoodSearchBadges','scanRobinhoodRwaPoolLinks','scanFrontrunLightning','scanRemindToasts','scanHoldingSurge','scanFomoPanel','scanFomoTrendingTab','scanFomoFeed','scanAllPools']) extras[name] = () => calls.push(name);
+  for (const name of ['applyCardState','scanCalloutBlacklist','scanManifestoToasts','ensureManifestoTab','scanSpecialWallets','scanTrackerTokenRelations','scanTrackerSideColors','scanMarkedBadges','scanTokenHeaderBadges','scanFlapBadges','scanRobinhoodSearchBadges','scanRobinhoodRwaPoolLinks','scanFrontrunLightning','scanRemindToasts','scanHoldingSurge','scanFomoPanel','scanFomoTrendingTab','scanFomoFeed','scanAllPools']) extras[name] = () => calls.push(name);
   extras.scanSimilarTokenPanel = () => { throw new Error('simulated DOM replacement'); };
   evaluate([extractFunction(content, 'scanVisibleCards')], 'scanVisibleCards()', extras);
   assert.ok(calls.includes('scanFomoFeed') && calls.includes('scanAllPools'));

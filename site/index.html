@@ -1,10 +1,12 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>better gmgn — 给 GMGN 与 DeBot 加一层交易辅助</title>
-<meta name="description" content="better gmgn：Chrome 扩展。fomo 与 Pump 买卖事件秒级混排进 GMGN / DeBot 追踪流，并提供 FOMO 小窗、重点 Dev 高亮与持仓异动提醒。">
+<title>better gmgn — Wallet tracking, token context &amp; alerts</title>
+<link rel="canonical" href="https://bettergmgn.com/">
+<meta name="description" content="Bring FOMO and Pump activity into GMGN and DeBot. Explore aggregate monitoring, priority alerts, similar tokens, holder insights and fee badges.">
+<meta name="site-version" content="2026.09.20.2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -35,7 +37,7 @@ a:hover{text-decoration:underline;text-underline-offset:3px}
 .wrap{max-width:1060px;margin:0 auto;padding:0 clamp(20px,4vw,48px)}
 
 /* ── hero ─────────────────────────── */
-header{padding:clamp(64px,12vh,140px) 0 clamp(48px,8vh,96px);border-bottom:1px solid var(--line)}
+header{padding:clamp(40px,7vh,80px) 0 clamp(48px,8vh,96px);border-bottom:1px solid var(--line)}
 .logo{display:block;width:64px;height:64px;image-rendering:pixelated;margin-bottom:22px;filter:drop-shadow(0 4px 14px oklch(70% .15 145 / .28))}
 .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--gold-deep);margin-bottom:20px}
 h1{font-size:clamp(52px,9vw,108px);font-weight:900;letter-spacing:-.035em;line-height:1.02;color:var(--gold)}
@@ -128,193 +130,144 @@ footer{padding:56px 0 72px;color:var(--ink-faint);font-size:14px;display:flex;ga
 footer .sp{flex:1}
 
 /* 入场 */
-.rv{opacity:0;transform:translateY(14px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
-.rv.in{opacity:1;transform:none}
+.rv{opacity:1;transform:none;transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+.reveal-ready .rv{opacity:0;transform:translateY(14px)}
+.reveal-ready .rv.in{opacity:1;transform:none}
 @media (max-width:760px){
   .feat,.feat.flip{grid-template-columns:1fr}
   .feat.flip .demo{order:0}
   .step{grid-template-columns:44px 1fr;gap:12px}
 }
+.site-nav{display:flex;justify-content:space-between;align-items:center;gap:24px;padding-top:22px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.nav-links{display:flex;gap:22px;align-items:center;font-size:14px;flex-wrap:wrap}
+.nav-links a{color:var(--ink-dim)}
+.language-switch{display:flex;gap:4px;flex:none;padding:4px;border:1px solid var(--line);border-radius:8px}
+.language-switch[hidden]{display:none}
+.language-switch button{border:0;background:transparent;color:var(--ink-dim);font:inherit;font-size:13px;cursor:pointer;padding:7px 12px;border-radius:5px}
+.language-switch button[aria-pressed="true"]{background:var(--gold);color:oklch(20% .04 80);font-weight:700}
+:where(a,button,summary):focus-visible{outline:2px solid var(--gold);outline-offset:4px}
+.demo .g-line{flex-wrap:wrap;white-space:normal}
+.demo .g-row:last-child{border-bottom:0}
+.demo .g-current{background:oklch(50% .12 152 / .16)}
+.scope{color:var(--gold-deep);font-family:var(--mono);font-size:12px}
+footer .site-revision{width:100%;font-family:var(--mono);font-size:11px}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important}.btn:hover{transform:none}}
 </style>
 </head>
 <body>
-
+<nav class="wrap site-nav" aria-label="Website navigation">
+ <div class="nav-links"><a href="#features"><span data-zh="功能">Features</span></a><a href="#install"><span data-zh="安装">Install</span></a><a href="#faq"><span data-zh="常见问题">FAQ</span></a></div>
+ <div class="language-switch" role="group" aria-label="Language / 语言" hidden><button type="button" data-language="en" lang="en" aria-pressed="true">English</button><button type="button" data-language="zh" lang="zh-CN" aria-pressed="false">中文</button></div>
+</nav>
 <header class="wrap">
-  <img class="logo" src="icon128.png" alt="better gmgn 图标" width="64" height="64">
-  <div class="kicker">CHROME / EDGE 扩展 · 985monitor 出品</div>
-  <h1>better gmgn</h1>
-  <p class="tagline">给 GMGN 与 DeBot 加一层交易辅助。<b>fomo 与 Pump 买卖秒级混进追踪流</b>；GMGN 继续提供标注人物持仓、重点 Dev 与持仓提醒。</p>
-  <p class="sub">FOMO 登录令牌不上传；版本区保留简短说明，确认后仅上传公开榜单。代码开源。</p>
-  <div class="dl">
-          <a class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.99.exe" download>下载安装器 (.exe)</a>
-          <a class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.99.zip" download>zip 手动安装</a>
-    <span class="ver" id="ver">最新版本 <b>v0.46.99</b></span>
-  </div>
-  <p class="env">支持 Chrome 与 Edge。观点翻译需要 Chrome 138+ 或较新 Edge（本机翻译，内容不出浏览器）。</p>
+ <img class="logo" src="icon128.png" alt="better gmgn" width="64" height="64">
+ <div data-zh="CHROME / EDGE 扩展 · 985monitor 出品" class="kicker">CHROME / EDGE EXTENSION · BY 985MONITOR</div>
+ <h1>better gmgn</h1>
+ <p data-zh="钱包动态、代币信息与重点提醒，直接融入 GMGN 和 DeBot。" class="tagline">Wallet activity, token context, and alerts. Right inside GMGN and DeBot.</p>
+ <p data-zh="把 FOMO / Pump 买卖带进追踪流，聚合买入动向、对比相似币，让重要交易持续可见；不自动执行交易。" class="sub">Bring FOMO and Pump into tracking. Compare similar tokens. Keep important buys in view—without automatic trading.</p>
+ <div class="dl">
+ <a data-zh="下载 Windows 安装器 (.exe)" class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.99.exe" download>Download for Windows (.exe)</a>
+ <a data-zh="手动安装 (.zip)" class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.99.zip" download>Manual install (.zip)</a>
+ <span class="ver" id="ver"><span data-zh="最新版本">Latest release</span> <b id="release-version">v0.46.99</b></span>
+ </div>
+ <p data-zh="Windows 安装器 · 支持 Chrome / Edge · 代码开源。插件内观点翻译需浏览器支持并下载本地语言包。" class="env">Windows installer · Chrome and Edge · Open source. In-extension translation requires a supported browser and a local language pack.</p>
 </header>
-
 <section class="wrap" id="features">
-  <div class="sec-head rv"><span class="sec-no">01</span><h2>它做什么</h2></div>
-  <p class="sec-lede rv">下面的示意图就是插件在 GMGN 页面上实际的样子。</p>
+ <div class="sec-head rv"><span class="sec-no">01</span><h2 data-zh="不只看推送，更看懂追踪。">Your tracking, with more context.</h2></div>
+ <p data-zh="以下介绍以当前公开版为准，GMGN 专属功能会单独标明；界面示意使用演示数据。" class="sec-lede rv">Features below are available in the public release. GMGN-only tools are marked; interface previews use illustrative data.</p>
 
-  <div class="feat rv">
-    <div>
-      <h3>fomo 与 Pump 买卖，<em>秒级</em>混进追踪流</h3>
-      <ul>
-        <li><b>按真实时间戳</b>插在 GMGN / DeBot 的钱包追踪推送之间，贴合各站原生行高，用 <b>[fomo]</b> / <b>[Pump]</b> 小标区分来源</li>
-        <li>走 985monitor 的 SSE 实时通道，事件发生到上屏<b>秒级</b></li>
-        <li>观点卡完整显示正文，非中文<b>自动补本机译文</b>（原文保留）</li>
-        <li>左缘链条色与 GMGN Fusion 一致：BSC 黄、Solana 紫、Robinhood 绿，你自定义过的链色自动跟随</li>
-        <li>点卡片站内无刷新跳代币页；屏蔽的人、关掉的事件类型，直接沿用你在 985monitor 网页上的配置</li>
-        <li>当前页面同链同合约显示绿色 <b>当前币</b>；同名异链/异合约显示红色 <b>同名币</b>，卡片和列表都支持</li>
-        <li>同一来源、钱包、链、合约和方向的近额买卖在 20 秒内重复到达时只保留更新的一条</li>
-      </ul>
-      <p class="how">DeBot 只启用追踪插卡与 FOMO 小窗，不注入 GMGN 专属的其它功能。</p>
-    </div>
-    <div class="demo" aria-hidden="true">
-      <div class="demo-cap">追踪流 · 混排实景</div>
-      <div class="g-row"><span class="stripe" style="background:#eab204"></span>
-        <div class="g-line"><span class="g-av"></span><span class="g-name">学长刮刀</span><span class="g-act-buy">✨建仓</span><span class="g-star">★</span><span class="g-time">1m</span></div>
-        <div class="g-line"><span style="color:var(--green)">0.068</span><span class="g-av"></span><span class="g-sym">CLIPPY</span><span class="g-mc">MC:$42.7K</span></div>
-      </div>
-      <div class="g-row hl"><span class="stripe" style="background:#9fc700"></span>
-        <div class="g-line"><span class="g-av"></span><span class="g-name">frank</span><span class="g-act-sell">卖出</span><span class="g-fomo">fomo</span><span class="g-time">1m</span></div>
-        <div class="g-line"><span class="g-usd-s">$1.8K</span><span class="g-av"></span><span class="g-sym">ROBIN</span><span class="g-mc">MC:$257.1K</span></div>
-      </div>
-      <div class="g-row" style="border-bottom:none"><span class="stripe" style="background:#eab204"></span>
-        <div class="g-line"><span class="g-av"></span><span class="g-name">牛来吃百倍</span><span class="g-act-sell">清仓 -64%</span><span class="g-time">2m</span></div>
-        <div class="g-line"><span style="color:var(--red)">0.224</span><span class="g-av"></span><span class="g-sym">PAPERCLIPS</span><span class="g-mc">MC:$20.1K</span></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="feat flip rv">
-    <div>
-      <h3>标注人物<em>完整持仓</em>徽章</h3>
-      <ul>
-        <li>战壕、搜索、追踪里的每个币旁标 <b>👤N</b>：几个被标注的人正持有它，悬停看人名和金额</li>
-        <li>默认人物由 985 服务器用 <b>GMGN 官方 API 全量采集</b>；你自己添加的人只在本机直查 GMGN，不上传公共名单</li>
-        <li>默认名单：奶牛、阿峰四个号、枯坐；<b>你自己加的人只对你显示</b>，由插件在 GMGN 站内查询</li>
-        <li>$30 以下灰尘仓不算持有，不会满屏误标</li>
-      </ul>
-    </div>
-    <div class="demo" aria-hidden="true">
-      <div class="demo-cap">搜索结果 · 悬停徽章</div>
-      <div class="g-row" style="border-bottom:none">
-        <div class="g-line"><span class="g-av"></span><span class="g-sym" style="font-weight:700;color:var(--ink)">memestock</span><span class="g-badge">👤3</span><span class="g-mc">MC:$1.2M</span></div>
-        <div class="g-tip">持有这个币的标注人物：奶牛($28.1K)、阿峰大号1($3.4K)、枯坐($890)</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="feat rv">
-    <div>
-      <h3>fomo 浮窗：<em>谁在持有，他最近行不行</em></h3>
-      <ul>
-        <li>GMGN / DeBot 代币页右下角 <b>fomo</b> 按钮：该币在 fomo 上的持仓者、盈亏、平均入场、观点、成交流水</li>
-        <li>每个人带 <b>7 天盈亏标记</b>（🔥顶级 / 🟢盈利 / 🔴亏损 / 💀重亏），金额和收益率取低档，大户小赚不算高手</li>
-        <li>标出他按持仓量在<b>链上持有者表排第几</b>；榜上的人带 🏆 名次与 🧠聪明钱 / ⭐KOL 标</li>
-        <li>英文观点自动翻中文，原文保留；顶部 fomo 持有人数与持仓占比统计</li>
-        <li>登录一次 fomo.family，之后令牌<b>自动续期永续</b>，不用再管</li>
-      </ul>
-    </div>
-    <div class="demo" aria-hidden="true">
-      <div class="demo-cap">fomo 浮窗 · 持仓者</div>
-      <div class="g-row">
-        <div class="g-line"><span class="g-av"></span><span class="g-name">SnekCalls</span><span class="g-pnl-fire">🔥+$20.4K</span><span class="g-time">14.4时</span></div>
-        <div class="g-line"><span style="color:var(--ink)">$98</span><span style="color:var(--red);font-size:11.5px">-$82 (-45.5%)</span><span class="g-mc">链上#7</span></div>
-      </div>
-      <div class="g-row" style="border-bottom:none">
-        <div class="g-line"><span class="g-av"></span><span class="g-name">iamnotlosing</span><span style="font-size:10px">🟢+$13.5K</span><span class="g-time">4.1时</span></div>
-        <div class="g-line" style="white-space:normal;color:var(--ink-dim);font-size:12px">this one has legs, adding on dips</div>
-        <div class="g-zh">这个还有空间，逢低加仓</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="feat flip rv">
-    <div>
-      <h3>追踪流<em>降噪</em>与重点盯防</h3>
-      <ul>
-        <li><b>特别关注</b>：追踪卡和钱包列表上点 ☆，该钱包的推送高亮显示，每个钱包可单独设色，可置顶 10 秒</li>
-        <li><b>屏蔽某个币</b>：币名旁长按 🚫 一秒，这个币的全部推送从追踪里消失，随时恢复</li>
-        <li><b>重点 Dev 高亮</b>：自己维护 Dev 名单，这些 Dev 发的币在战壕里带醒目边框；每张战壕卡常显 Dev 战绩（迁移数 / 发币数 / 峰值市值）</li>
-        <li><b>喊单黑名单</b>：一键屏蔽喊单人；新宣言画面正中大卡片弹出</li>
-        <li><b>持仓暴涨提醒</b>：同步同一账号的 GMGN App 开关；成本收益达标、最近 5 分钟上涨且当前余额大于 0 时才弹 🚀 大卡片</li>
-        <li><b>Flap 底池与分红</b>：完整显示底池计价币；💎 持币分红、🎁 真实金库、👨‍🍳 创作者收款由浏览器直读链上区分，点徽章跳官方税收详情页</li>
-      </ul>
-    </div>
-    <div class="demo" aria-hidden="true">
-      <div class="demo-cap">战壕卡 · Dev 战绩 + Flap 徽章</div>
-      <div class="g-row" style="border-bottom:none">
-        <div class="g-line"><span class="g-av"></span><span class="g-sym" style="font-weight:700;color:var(--ink)">HODL</span><span class="g-badge">🪙GMEB | 💎→GMEB</span><span class="g-mc">MC $34.6K</span></div>
-        <div class="g-line"><span style="font-family:var(--mono);font-size:11px;color:var(--gold)">迁3发7·43%·峰$2.1M</span><span class="g-mc">V $8.1K</span></div>
-      </div>
-    </div>
-  </div>
+<div class="feat rv">
+  <div><h3 data-zh="FOMO / Pump，融入原生追踪流。">One feed. Multiple sources.</h3><ul><li data-zh="在 GMGN / DeBot 钱包追踪中，按时间混排 FOMO 和 Pump 成交；来源标签与链色细条帮助区分推送。">Mix FOMO and Pump trades with wallet activity in timestamp order on GMGN and DeBot. Source labels and chain-color strips keep each event recognizable.</li>
+<li data-zh="沿用已连接的 985monitor 账号关注人物、屏蔽名单、事件类型、金额门槛与代币过滤。">Use your connected 985monitor account’s followed people, blocked accounts, event types, amount thresholds and token filters.</li>
+<li data-zh="点击代币无刷新跳转；列表模式用紧凑符号区分当前币与同名币，不遮挡币名。">Open tokens without a full-page reload. Compact current-token and same-name markers avoid covering token names in list mode.</li></ul><p data-zh="GMGN + DeBot · FOMO/Pump 推送需有效的 985monitor 账号连接。" class="how">GMGN + DeBot · FOMO/Pump feeds require a valid 985monitor connection.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="追踪流 · 多源混排" class="demo-cap">TRACKING · MIXED SOURCES</div><div class="g-row"><span class="stripe" style="background:#eab204"></span><div class="g-line"><span class="g-av">A</span><span class="g-name">Alex</span><span class="g-fomo">GMGN</span><span class="g-mc">$3.2K</span></div><div class="g-line"><span data-zh="买入 · BSC · 12秒" class="g-act-buy">Buy · BSC · 12s</span></div></div><div class="g-row"><span class="stripe" style="background:#32b781"></span><div class="g-line"><span class="g-av">M</span><span class="g-name">Mira</span><span class="g-fomo">FOMO</span><span class="g-mc">$1.8K</span></div><div class="g-line"><span data-zh="买入 · Robinhood · 28秒" class="g-act-buy">Buy · Robinhood · 28s</span></div></div><div class="g-row"><span class="stripe" style="background:#a78bfa"></span><div class="g-line"><span class="g-av">S</span><span class="g-name">SolWatch</span><span class="g-fomo">Pump</span><span class="g-mc">$940</span></div><div class="g-line"><span data-zh="卖出 · Solana · 41秒" class="g-act-sell">Sell · Solana · 41s</span></div></div></div>
+</div>
+<div class="feat flip rv">
+  <div><h3 data-zh="聚合监控，找到共同买入。">See who is buying together.</h3><ul><li data-zh="GMGN 底部原生风格「聚合监控」，按链与合约汇总用户追踪、FOMO 和 Pump 成交。">A native-style Aggregate Monitor panel in GMGN combines tracked wallets, FOMO and Pump by chain and contract.</li>
+<li data-zh="按买入人数或金额筛选排序，展示买家小头像、市值，展开可查看对应人物明细。">Filter and sort by buyer count or buy amount. Buyer avatars, market cap and expandable details keep the people behind each token visible.</li>
+<li data-zh="同时统计买入额、卖出额、净买入与明确清仓人数；缺少金额或清仓标记时显示未知，不猜测。">See buy volume, sell volume, net buying and confirmed full exits. Missing amounts or exit markers are shown as unknown—not guessed.</li>
+<li data-zh="分级声音默认关闭，可设置时间窗口、金额或人数门槛，选择六种音色并调节音量；同币每个等级仅提醒一次。">Optional tiered audio alerts use your time window, amount and buyer-count thresholds, with six sounds and adjustable volume. Each token alerts once per tier.</li></ul><p data-zh="GMGN 专属 · 仅统计本页已接收事件，并非全链成交。净买入是买入减卖出，不等于利润。" class="how">GMGN · Based on events received by this page, not all on-chain trades. Net buying is buys minus sells, not profit.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="聚合监控 · 5 分钟" class="demo-cap">AGGREGATE MONITOR · 5 MIN</div><div class="g-row"><span class="stripe" style="background:#eab204"></span><div class="g-line"><span class="g-av">O</span><span class="g-name">ORBIT</span><span class="g-mc">MC $620K</span></div><div class="g-line"><span data-zh="6 人买入 · 3 个来源" class="g-act-buy">6 buyers · 3 sources</span></div></div><div class="g-row"><div class="g-line"><span data-zh="买入 $18.4K · 卖出 $3.1K">Buys $18.4K · Sells $3.1K</span></div><div class="g-line"><span data-zh="净买入 +$15.3K · 1 人明确清仓" class="g-act-buy">Net +$15.3K · 1 confirmed exit</span></div></div></div>
+</div>
+<div class="feat rv">
+  <div><h3 data-zh="指定人物，设定重点提醒。">Your people. Your alert rules.</h3><ul><li data-zh="特别关注人物可单独设置备注和颜色；GMGN 原生追踪心形旁的星标可直接进入详细设置。">Highlight selected wallets and set individual notes and colors. In GMGN, the star beside native follow controls opens detailed settings.</li>
+<li data-zh="重点提醒使用黄色原生风格卡片，持续置顶到手动关闭；支持跳转代币和一键全清。">Keep priority alerts pinned until you close them. Yellow, native-style cards support token navigation and clearing all alerts.</li>
+<li data-zh="策略可多组保存、独立开关，按地址或备注搜索人物；支持指定人物中至少 X 人共同买入同一币。">Save multiple strategy groups and switch each on or off. Search people by wallet address or note; require at least X selected people to buy the same token.</li>
+<li data-zh="可选全局规则支持单笔买入或窗口累计，设置金额、人数、链与来源条件；全局策略与声音警报分别设置。">Optional global rules cover a single buy or time-window totals, with amount, buyer-count, chain and source conditions. Global strategy and audio settings are separate.</li></ul><p data-zh="重点人物追踪支持 GMGN + DeBot，策略在 GMGN 配置。策略只提醒，不代下单。" class="how">Priority tracking supports GMGN + DeBot; configure strategies in GMGN. Rules notify you—they do not place orders.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="重点提醒 · 持续置顶" class="demo-cap">PRIORITY ALERT · PINNED</div><div class="g-row hl"><div class="g-line"><span class="g-star">★</span><strong data-zh="指定 5 人中已有 3 人买入">3 of 5 selected buyers</strong><span class="g-time">×</span></div><div class="g-line"><span class="g-sym">ORBIT</span><span class="g-usd-b">$12.6K</span></div><div class="g-tip"><span data-zh="Alex · Mira · SolWatch">Alex · Mira · SolWatch</span></div><p data-zh="保留到你手动关闭。" class="how">Stays here until dismissed.</p></div></div>
+</div>
+<div class="feat flip rv">
+  <div><h3 data-zh="同名相似币，放在一起比较。">Same name. Different token.</h3><ul><li data-zh="默认关闭。追踪中出现与当前币同名，或名称 / ticker 相似度至少 90% 的币时，显示可拖动、可关闭的浮窗。">Opt in to a movable, closable panel when tracked tokens share a name or at least 90% name/ticker similarity with the current token.</li>
+<li data-zh="当前币与匹配币统一按市值排序，高亮当前币，并展示币名、ticker、链和对应底池徽章。">Compare the current token and similar matches in one market-cap ranking, with the current token highlighted and pool badges beside each entry.</li>
+<li data-zh="保留近期匹配缓存，避免追踪行消失后浮窗立刻丢失；市值随新收到的追踪数据更新。">Use recent cached matches instead of losing the panel when a row disappears. Market caps follow newly received tracking data.</li>
+<li data-zh="点击无刷新跳转，用户可拖动或关闭；自动定位也会避让原生 X / 推文浮窗。">Click for in-page token navigation. Drag it away from content or close it; automatic placement also avoids native X previews.</li></ul><p data-zh="GMGN + DeBot · 名称相似不代表同一合约、团队或资产。" class="how">GMGN + DeBot · Similar names do not mean the same contract, team or asset.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="相似币 · 按市值排序" class="demo-cap">SIMILAR TOKENS · MARKET CAP</div><div class="g-row"><span class="stripe" style="background:#eab204"></span><div class="g-line"><span class="g-av">O</span><span class="g-name">ORBIT</span><span class="g-mc">$620K</span></div><div class="g-line"><span class="g-fomo">BSC</span><span class="g-badge">WBNB</span><span data-zh="当前币" class="g-act-buy">Current</span></div></div><div class="g-row"><span class="stripe" style="background:#6aa5ce"></span><div class="g-line"><span class="g-av">O</span><span class="g-name">Orbit</span><span class="g-mc">$280K</span></div><div class="g-line"><span class="g-fomo">ETH</span><span class="g-badge">WETH</span></div></div><div class="g-row"><span class="stripe" style="background:#a78bfa"></span><div class="g-line"><span class="g-av">O</span><span class="g-name">ORBIT</span><span class="g-mc">$94K</span></div><div class="g-line"><span class="g-fomo">SOL</span><span data-zh="缓存" class="g-time">Cached</span></div></div></div>
+</div>
+<div class="feat rv">
+  <div><h3 data-zh="不只看成交，也看谁还在持有。">Look beyond the latest trade.</h3><ul><li data-zh="在 GMGN / DeBot 代币页打开 FOMO 小窗，查看 FOMO 支持代币的持有人、仓位、盈亏、观点与成交。">Open the FOMO panel on GMGN or DeBot token pages for holders, positions, P&amp;L, theses and trades, where supported by FOMO.</li>
+<li data-zh="持有人可显示 7 天表现标签和已有排名；支持的浏览器可本地补充中文观点翻译，并保留原文。">Holder context includes seven-day performance labels and available rankings. Supported browsers can add a local Chinese translation while keeping the original thesis.</li>
+<li data-zh="GMGN 标注人物徽章展示持有人数与合计持仓占比；自定义标注钱包不发布到公共名单。">GMGN marked-holder badges show how many selected people hold a token and their combined share. Add your own marked wallets without publishing them.</li>
+<li data-zh="在 FOMO 允许时自动续期；会话过期或被撤销时，小窗会引导重新登录。">Sessions renew when FOMO permits. If a session expires or is revoked, the panel guides you to sign in again.</li></ul><p data-zh="FOMO 小窗：GMGN + DeBot；标注人物徽章：GMGN。盈亏标签仅描述历史表现。" class="how">FOMO panel: GMGN + DeBot. Marked-holder badges: GMGN. P&amp;L labels describe past results, not future performance.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="持仓信息 · 示例" class="demo-cap">HOLDER CONTEXT · EXAMPLE</div><div class="g-row"><span class="stripe" style="background:#eab204"></span><div class="g-line"><span class="g-av">M</span><span class="g-name">Mira</span><span class="g-mc">$28.1K</span></div><div class="g-line"><span data-zh="持仓占比 1.45% · 盈亏 +$7.8K" class="g-act-buy">Holding 1.45% · P&amp;L +$7.8K</span></div></div><div class="g-row"><span class="stripe" style="background:#eab204"></span><div class="g-line"><span class="g-av">A</span><span class="g-name">Alex</span><span class="g-mc">$6.9K</span></div><div class="g-line"><span data-zh="持仓占比 0.45% · 盈亏 +$2.4K" class="g-act-buy">Holding 0.45% · P&amp;L +$2.4K</span></div></div><div class="g-tip"><span data-zh="标注持有人 · 2 人 · 合计 1.90%">Marked holders · 2 people · 1.90% combined</span></div></div>
+</div>
+<div class="feat flip rv">
+  <div><h3 data-zh="开发者、底池与分成，一眼可查。">More context before you act.</h3><ul><li data-zh="在 GMGN 战壕高亮重点 Dev，查看发币与迁移历史；按需设置黑名单和持仓异动提醒，减少干扰。">On GMGN, highlight selected developers and inspect launch and migration history on trench cards. Configure blocklists and position alerts to reduce noise.</li>
+<li data-zh="Flap 徽章展示底池资产和税收分配；Genius 的 Creator payout 超过 0.25% 时红色警示，悬停查看分成明细。">Flap badges show pool assets and fee distribution. Genius badges flag Creator payout above 0.25% in red; hover for the fee breakdown.</li>
+<li data-zh="Genius 战壕徽章使用紧凑勾选 / 警告符号；代币页的标注人物持仓占比与 Genius / Flap 徽章同排。">Genius trench badges use compact check/warning symbols. On token pages, marked-holder shares sit alongside Genius and Flap badges.</li>
+<li data-zh="GMGN / DeBot 的 Brew 浮窗提供新创建、按成交额排列的热门、市值排名和底池信息。">Brew’s floating panel on GMGN and DeBot offers newly launched, volume-ranked and market-cap-ranked tokens with pool context.</li></ul><p data-zh="Genius 仅覆盖已支持的 BSC 工厂。勾选只代表费率条件，不代表代币安全；读取失败不显示肯定徽章。" class="how">Genius: supported BSC factory only. A checkmark describes a fee threshold—not token safety. Unavailable data is not a green light.</p></div>
+  <div class="demo" aria-hidden="true"><div data-zh="代币信息 · 紧凑徽章" class="demo-cap">TOKEN CONTEXT · COMPACT BADGES</div><div class="g-row"><div class="g-line"><span class="g-sym">EXAMPLE</span><span class="g-badge">✓ Genius 0.25%</span><span class="g-badge">👤 2 · 1.90%</span></div><p data-zh="悬停查看完整分成。" class="how">Hover for the fee breakdown.</p></div><div class="g-row"><div class="g-line"><span class="g-sym">EXAMPLE B</span><span class="g-act-sell">⚠ Genius 0.50%</span></div><p data-zh="Creator payout 超过 0.25%。" class="how">Creator payout exceeds 0.25%.</p></div></div>
+</div>
 </section>
-
-<section class="wrap" id="install">
-  <div class="sec-head rv"><span class="sec-no">02</span><h2>安装</h2></div>
-  <p class="sec-lede rv">推荐用安装器：装完带自动升级，插件发现新版会在图标上亮绿色 UP 角标，点一下完成升级（升级前自动备份，失败回滚）。</p>
-  <div class="steps rv">
-    <div class="step"><div><h4>下载并运行安装器</h4><p>点上面的金色按钮下载 <span class="path" id="exe-name">985gmgn-helper-setup.exe</span>，双击运行，点「安装 / 修复」。安装器不常驻后台。</p></div></div>
-    <div class="step"><div><h4>打开浏览器扩展页</h4><p>安装器会自动打开扩展程序页并把插件路径复制到剪贴板。打开右上角<b>「开发者模式」</b>开关。</p></div></div>
-    <div class="step"><div><h4>加载已解压的扩展程序</h4><p>点左上角「加载已解压的扩展程序」，在文件夹选择框按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴路径并回车。</p></div></div>
-    <div class="step"><div><h4>选中 Extension 文件夹</h4><p>点「选择文件夹」完成。图标出现在工具栏即安装成功。</p></div></div>
-  </div>
-  <div class="alt rv"><b>不想跑 exe？</b>下载 zip 解压，<code style="font-family:var(--mono);font-size:13px">chrome://extensions</code> 开启开发者模式，加载已解压的扩展程序，选解压出来的文件夹。这样装不带自动升级，更新要手动重复一遍。</div>
-</section>
-
-<section class="wrap" id="setup">
-  <div class="sec-head rv"><span class="sec-no">03</span><h2>初次配置</h2></div>
-  <p class="sec-lede rv">装好后把下面三个网页各打开一次就行。</p>
-  <div class="steps rv">
-    <div class="step"><div><h4>打开 gmgn.ai 或 debot.ai</h4><p>GMGN 保留全部功能；DeBot 进入追踪记录页可用 FOMO/Pump 插卡，进入代币页可用 FOMO 小窗。</p></div></div>
-    <div class="step"><div><h4>登录一次 fomo.family</h4><p>fomo 浮窗和混排需要你自己的 fomo 登录态。登录后插件自动接管令牌并<b>永续续期</b>（含页面加载抢跑同步，不会再反复要求重登）。没账号也不影响其它功能。</p></div></div>
-    <div class="step"><div><h4>打开一次 985monitor</h4><p>你在 <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a> 网页上的 fomo/Pump 屏蔽名单、每个人的事件开关和 Pump 过滤，自动同步给插件。之后每次改动都会跟过来。</p></div></div>
-  </div>
-  <p class="rv" style="margin-top:28px;color:var(--ink-faint);font-size:14px">所有开关在插件图标的配置页里：混排事件类型、只看当前链、标注名单、提醒阈值与冷却、各功能独立开关。</p>
-</section>
-
-<section class="wrap" id="privacy">
-  <div class="sec-head rv"><span class="sec-no">04</span><h2>数据边界</h2></div>
-  <p class="sec-lede rv">数据存在哪、发给谁，一条条说清。</p>
-  <div class="priv rv">
-    <div><b>配置存哪</b><span>名单、开关、登录令牌全部在浏览器本地 chrome.storage，不上传任何服务器。</span></div>
-    <div><b>fomo 令牌</b><span>只从 fomo.family 页面读取，只发给 fomo 官方 API 与 privy 官方续期接口。</span></div>
-    <div><b>GMGN 数据</b><span>行情流不复制登录态；读取持仓和 App 通知开关时，站点 Bearer 只发回 gmgn.ai，不写入扩展存储。</span></div>
-    <div><b>翻译</b><span>浏览器内置本地模型，内容不出你的电脑。</span></div>
-    <div><b>开源</b><span>代码全部公开：<a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub 仓库</a>，逐版本 CHANGELOG 与 <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私说明</a>。</span></div>
-    <div><b>隐私边界</b><span>DeBot 适配不读取登录凭据、不接管 WebSocket、不执行交易；你添加的标注人物仍只在 GMGN 站内查询。</span></div>
-  </div>
-</section>
-
-<section class="wrap" id="faq">
-  <div class="sec-head rv"><span class="sec-no">05</span><h2>常见问题</h2></div>
-  <div class="rv">
-    <details><summary>装好了但页面上什么都没出现</summary><div class="a">先刷新 GMGN 页面。仍没有就到 <code>chrome://extensions</code> 确认插件已启用，点一下刷新按钮 ⟳ 再回来。</div></details>
-    <details><summary>fomo 浮窗提示登录态过期</summary><div class="a">按浮窗里的引导去 fomo.family 登录一次即可。v0.46.72 起使用真正加载登录 SDK 的 FOMO 应用页，主动调用官方 SDK，失败冷却，避免反复开关守护页；服务端主动撤销会话时仍需重新登录。</div></details>
-    <details><summary>混排里怎么没有 fomo 卡片</summary><div class="a">混排只在追踪流所在页面工作：GMGN 打开追踪流，DeBot 打开「追踪记录」（URL 中为 <code>tab=track</code>）。还要确保 985monitor 数据源可达且插件里的「fomo 推送混排」已开启；比当前可见推送更老的事件会随滚动补位。</div></details>
-    <details><summary>👤 徽章不显示</summary><div class="a">确认浏览器已登录 GMGN。持仓数据 2~3 分钟一轮更新；$30 以下的灰尘仓不计为持有。</div></details>
-    <details><summary>升级会丢配置吗</summary><div class="a">不会。扩展 ID 固定，名单与配置都在原地；安装器升级前自动备份，失败回滚，保留最近 3 份备份。</div></details>
-    <details><summary>和 985monitor 是什么关系</summary><div class="a">同一个作者的两件东西：985monitor 是网页端多源监控台，插件把其中 fomo/Pump 数据流和你的配置接进 GMGN 页面内。插件可独立使用，配置同步是可选增强。</div></details>
-  </div>
-</section>
-
+<section class="wrap" id="install"><div class="sec-head rv"><span class="sec-no">02</span><h2 data-zh="一次安装，配置持续保留。">Install once. Keep your settings.</h2></div><p data-zh="Windows 安装器同时安装本地更新器。后续版本可在插件版本区查看简短说明、升级、跳过或回退。" class="sec-lede rv">The Windows installer adds the local updater. Future releases appear in the extension’s version section, with release notes, skip and rollback controls.</p>
+<div class="steps rv"><div class="step"><div><h4 data-zh="运行 Windows 安装器">Run the Windows installer</h4><p data-zh="下载上方 .exe，运行后选择「安装 / 修复」。更新器只在需要时运行，不常驻后台。">Download the .exe above and choose Install / Repair (安装 / 修复). The updater only runs when needed; it does not stay resident.</p></div></div><div class="step"><div><h4 data-zh="开启开发者模式">Enable Developer mode</h4><p data-zh="安装器会打开浏览器扩展页，并把扩展目录复制到剪贴板；开启「开发者模式」。">The installer opens the browser’s extensions page and copies the extension folder path. Turn on Developer mode.</p></div></div><div class="step"><div><h4 data-zh="加载已解压的扩展程序">Load the unpacked extension</h4><p data-zh="点击「加载已解压的扩展程序」，用 Ctrl+V 粘贴路径，选择 Extension 文件夹；可把插件图标固定到工具栏。">Choose Load unpacked, paste the copied path with Ctrl+V, and select the Extension folder. Pin the extension icon for easy access.</p></div></div></div>
+<div class="alt rv"><b data-zh="想手动安装？">Prefer manual installation?</b><p data-zh="解压 ZIP，在 chrome://extensions 或 edge://extensions 开启开发者模式，加载解压目录。仅用 ZIP 安装不包含本地一键更新器。">Extract the ZIP, open chrome://extensions or edge://extensions, enable Developer mode, and load the extracted folder. ZIP-only installation does not include the native one-click updater.</p><p class="env"><span data-zh="当前安装器文件：">Current installer file:</span> <span class="path" id="exe-name">985gmgn-helper-setup-v0.46.99.exe</span></p></div></section>
+<section class="wrap" id="setup"><div class="sec-head rv"><span class="sec-no">03</span><h2 data-zh="按需连接，按需开启。">Connect only what you need.</h2></div><p data-zh="各项功能独立开关；相似币浮窗、策略与声音提醒需要按需开启。" class="sec-lede rv">Most tools have separate switches. Similar-token panels, strategies and audio alerts are opt-in.</p>
+<div class="steps rv"><div class="step"><div><h4 data-zh="打开 GMGN 或 DeBot">Open GMGN or DeBot</h4><p data-zh="追踪页查看混排动态，代币页使用 FOMO 小窗；聚合监控与战壕增强为 GMGN 专属。">Use a tracking page for mixed activity, or a token page for the FOMO panel. Aggregate Monitor and trench enhancements are GMGN-specific.</p></div></div><div class="step"><div><h4 data-zh="连接 985monitor 账号">Connect your 985monitor account</h4><p data-zh="在同一浏览器配置文件中登录 985monitor，连接 FOMO/Pump 推送和账号过滤规则。账号会话失效时停止推送，不回退到公共全量源。">Sign in to 985monitor in the same browser profile to connect FOMO/Pump feeds and your account filters. If that session becomes invalid, the feeds pause rather than falling back to a public feed.</p></div></div><div class="step"><div><h4 data-zh="登录 FOMO 以使用小窗">Sign in to FOMO for its panel</h4><p data-zh="查看 FOMO 持有人和观点需登录自己的 fomo.family 账号；无法续期时，小窗会提供重新登录指引。">For FOMO holders and theses, sign in to fomo.family with your own account. The panel provides a sign-in guide when renewal is no longer possible.</p></div></div></div></section>
+<section class="wrap" id="privacy"><div class="sec-head rv"><span class="sec-no">04</span><h2 data-zh="数据边界，清楚可查。">Clear data boundaries.</h2></div><p data-zh="不索取私钥或助记词；提醒和浮窗不代用户执行交易。" class="sec-lede rv">No private keys or seed phrases are requested. Alerts and overlays do not place trades for you.</p>
+<div class="priv rv"><div><b data-zh="插件本地设置">Local extension settings</b><span data-zh="插件名单、颜色、策略和提醒历史保存在浏览器。985monitor 账号偏好仍属于该服务，插件保存本地缓存。">Extension watchlists, colors, strategy rules and alert history stay in browser storage. 985monitor account preferences remain with that service, with a local cache in the extension.</span></div><div><b data-zh="FOMO 会话">FOMO session</b><span data-zh="FOMO 凭据仅用于 FOMO 身份验证和受支持的续期，不上传至 985monitor。过滤后的推送使用独立的 985monitor 只读会话。">FOMO credentials are used for FOMO authentication and supported renewal. They are not uploaded to 985monitor. A separate read-only 985monitor session supplies filtered feeds.</span></div><div><b data-zh="公开榜单更新">Public leaderboard contribution</b><span data-zh="同意更新说明后，符合条件的在线用户可能被选中，将 FOMO 公开榜单上传至 985monitor；不含令牌、Cookie、私人交易或个人关注名单。">After accepting the update notice, eligible online users may be selected to submit public FOMO leaderboard data to 985monitor. Tokens, cookies, private trades and personal follow lists are excluded.</span></div><div><b data-zh="本地翻译">Local translation</b><span data-zh="观点翻译在受支持浏览器的本地模型中完成，保留原文；与本网站的语言切换独立。">Thesis translation uses the browser’s built-in model where supported. Original text remains visible; the website language switch is independent.</span></div></div>
+<p class="how" style="margin-top:24px"><span data-zh="查看完整说明：">Read the complete details:</span> <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener"><span data-zh="隐私说明">Privacy policy</span></a> · <a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub</a></p></section>
+<section class="wrap" id="faq"><div class="sec-head rv"><span class="sec-no">05</span><h2 data-zh="常见问题。">A few practical answers.</h2></div><p data-zh="安装、连接与功能范围。" class="sec-lede rv">Installation, connection and feature availability.</p>
+<div class="rv"><details><summary data-zh="DeBot 支持哪些功能？">Which features work on DeBot?</summary><div data-zh="DeBot 支持 FOMO/Pump 追踪插卡、FOMO 小窗、相似币浮窗、重点人物提醒和 Brew。聚合监控、原生追踪心形快捷设置及战壕费率徽章为 GMGN 专属。" class="a">DeBot supports FOMO/Pump tracking cards, the FOMO panel, similar-token panels, priority-person alerts and Brew. Aggregate Monitor, GMGN follow-control shortcuts and trench fee badges are GMGN-specific.</div></details><details><summary data-zh="为什么没有 FOMO/Pump 插卡？">Why are no FOMO/Pump cards appearing?</summary><div data-zh="打开 GMGN 追踪或 DeBot 追踪记录页，并开启对应混排开关；检查 985monitor 连接和账号过滤，会话缺失或过期会停止推送。" class="a">Open GMGN tracking or DeBot tracking records and enable the relevant feed in the extension. Check your 985monitor connection and account filters; a missing or expired session stops the feed.</div></details><details><summary data-zh="FOMO 会一直保持登录吗？">Does FOMO stay signed in forever?</summary><div data-zh="不会保证永不过期。插件会尝试受支持的续期，但 FOMO 可以撤销或终止会话；出现提示时按小窗指引登录，反复重试不能绕过限流。" class="a">No. The extension attempts supported renewal, but FOMO can expire or revoke a session. Follow the panel’s login guide when asked; repeatedly retrying will not bypass rate limits.</div></details><details><summary data-zh="聚合统计是全市场数据吗？">Are aggregate totals the whole market?</summary><div data-zh="不是。聚合统计只汇总当前页面在所选窗口内收到的动态，在可核验范围内去重买家；未知美元金额和清仓状态不会凭空补齐。" class="a">No. They summarize activity received by the current page within your selected window. Buyer identities are deduplicated where verifiable. Unknown USD amounts or full-exit status are not invented.</div></details><details><summary data-zh="升级会删除我的设置吗？">Will upgrading remove my settings?</summary><div data-zh="官方扩展 ID 保持固定，浏览器内配置原地保留；安装器升级前备份运行文件，并支持回退至符合条件的官方版本。" class="a">The official extension keeps a fixed ID so browser settings remain in place. The installer backs up runtime files before an update, and offers rollback for supported official versions.</div></details><details><summary data-zh="费率徽章打勾就代表安全吗？">Do fee checkmarks mean a token is safe?</summary><div data-zh="不代表。Genius 勾选仅说明受支持数据中的 Creator payout 不超过 0.25%，不是合约审计、项目背书或收益预测。" class="a">No. A Genius checkmark only indicates that the supported fee data is at or below the 0.25% Creator payout threshold. It is not a contract audit, endorsement or prediction of returns.</div></details></div></section>
 <footer class="wrap">
-  <span>better gmgn · 985monitor 出品</span>
-  <span class="sp"></span>
-  <a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub</a>
-  <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/CHANGELOG.md" target="_blank" rel="noopener">更新日志</a>
-  <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a>
+ <span data-zh="better gmgn · 985monitor 出品">better gmgn · by 985monitor</span>
+ <span class="sp"></span>
+ <a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub</a>
+ <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span data-zh="更新日志">Changelog</span></a>
+ <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a>
+ <span data-zh="网站版本 2026.09.20.2 · 此开关仅切换官网语言。" class="site-revision">Website revision 2026.09.20.2 · This switch changes the website language.</span>
 </footer>
-
 <script>
 (() => {
   'use strict';
-  // 版本与直链:读本站 version.json（下载全部走 985monitor，不经 GitHub）。
-  // HTML 里已硬编码了当前版本的直链作兜底，version.json 只负责在发新版时更新。
+  const languageKey = 'betterGmgnSiteLanguageV1';
+  const translations = Array.from(document.querySelectorAll('[data-zh]'), (el) => ({
+    el, en: el.textContent, zh: el.dataset.zh,
+  }));
+  const metadata = {
+    en: { title: 'better gmgn — Wallet tracking, token context & alerts', description: 'Bring FOMO and Pump activity into GMGN and DeBot. Explore aggregate monitoring, priority alerts, similar tokens, holder insights and fee badges.' },
+    zh: { title: 'better gmgn — 钱包追踪、聚合监控与重点提醒', description: '把 FOMO / Pump 动态融入 GMGN 和 DeBot，提供聚合监控、策略提醒、相似币浮窗、持仓信息与底池费率徽章。' },
+  };
+  function setLanguage(value, persist = false) {
+    const language = value === 'zh' ? 'zh' : 'en';
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+    translations.forEach(({ el, en, zh }) => { el.textContent = language === 'zh' ? zh : en; });
+    document.title = metadata[language].title;
+    document.querySelector('meta[name="description"]').content = metadata[language].description;
+    document.querySelector('.site-nav').setAttribute('aria-label', language === 'zh' ? '网站导航' : 'Website navigation');
+    document.querySelectorAll('[data-language]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.language === language));
+    });
+    if (persist) { try { localStorage.setItem(languageKey, language); } catch {} }
+  }
+  let savedLanguage = 'en';
+  try { savedLanguage = localStorage.getItem(languageKey) || 'en'; } catch {}
+  setLanguage(savedLanguage);
+  document.querySelectorAll('[data-language]').forEach((button) => {
+    button.addEventListener('click', () => setLanguage(button.dataset.language, true));
+  });
+  document.querySelector('.language-switch').hidden = false;
+
+  // Public Release assets only; changing language never changes or refetches downloads.
   fetch('version.json?t=' + Date.now())
     .then((r) => (r.ok ? r.json() : null))
     .then((v) => {
@@ -324,27 +277,27 @@ footer .sp{flex:1}
       const zip = String(v?.zip || '');
       const expectedExe = `dl/985gmgn-helper-setup-v${version}.exe`;
       const expectedZip = `dl/985gmgn-helper-v${version}.zip`;
-      if (exe === expectedExe) {
-        document.getElementById('dl-exe').href = exe;
-        document.getElementById('exe-name').textContent = exe.split('/').pop();
-      }
-      if (zip === expectedZip) document.getElementById('dl-zip').href = zip;
-      const strong = document.createElement('b');
-      strong.textContent = `v${version}`;
-      document.getElementById('ver').replaceChildren('最新版本 ', strong);
+      if (!(exe === expectedExe && zip === expectedZip)) return;
+      document.getElementById('dl-exe').href = exe;
+      document.getElementById('exe-name').textContent = exe.split('/').pop();
+      document.getElementById('dl-zip').href = zip;
+      document.getElementById('release-version').textContent = `v${version}`;
     })
     .catch(() => {});
 
-  // 入场:交错淡入
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) { entry.target.classList.add('in'); io.unobserve(entry.target); }
+  // Keep content visible without JS, IntersectionObserver, or when reduced motion is requested.
+  if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.classList.add('reveal-ready');
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) { entry.target.classList.add('in'); io.unobserve(entry.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px' });
+    document.querySelectorAll('.rv').forEach((el, i) => {
+      el.style.transitionDelay = Math.min(i % 4 * 60, 180) + 'ms';
+      io.observe(el);
     });
-  }, { rootMargin: '0px 0px -8% 0px' });
-  document.querySelectorAll('.rv').forEach((el, i) => {
-    el.style.transitionDelay = Math.min(i % 4 * 60, 180) + 'ms';
-    io.observe(el);
-  });
+  }
 })();
 </script>
 </body>

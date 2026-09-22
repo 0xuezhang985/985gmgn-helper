@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "better gmgn",
-  "version": "0.46.99",
+  "version": "0.46.107",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAotBvFq65NLPkl/sfJPAOUsAY3wrS4I0WOVQ4K8D6Vy9tZyNnRoDrntLCxiJnlJQ88+jPsBmpgL3/Km3dqUFzJnmPqlgbCFrzCWXi6YaX6lqYFAip0MUOPnNogNkY6flkwP+NurfV8Hf5ZlXnN/moR9DmdN15M9Qg390yqIhQFapxozPGZUbj1vHyCiJJ6fHo48DLfJHNhixAa/LLUF6msICVgDyfU/Rnj7RWEWbpUhA0CcQzUa5MY14IcS4Ktkegb6FGNgUa2p/g2+OjIBGIvAYvVGNgYuwN9GGdA5mx+PPxRwKegne0tFrX7Irzk4xG9A2LiTIkzaWjcptRrP+01QIDAQAB",
   "description": "给 GMGN.ai 与 DeBot 加一层交易辅助：重点 Dev 高亮、fomo 观点与持仓者、Pump 推送混排、Brew 战壕与持仓异动提醒。",
-  "homepage_url": "https://github.com/0xuezhang985/985gmgn-helper",
+  "homepage_url": "https://bettergmgn.com/",
   "minimum_chrome_version": "111",
   "permissions": [
     "storage",
@@ -74,6 +74,7 @@
         "aggregate-monitor.css"
       ],
       "js": [
+        "monitor-feed-filters.js",
         "buy-strategies.js",
         "priority-push.js",
         "content.js",
@@ -100,6 +101,7 @@
         "brew-styles.css"
       ],
       "js": [
+        "monitor-feed-filters.js",
         "buy-strategies.js",
         "priority-push.js",
         "debot-content.js",
@@ -131,6 +133,7 @@
         "https://*.985monitor.xyz/*"
       ],
       "js": [
+        "monitor-feed-filters.js",
         "content.js"
       ],
       "run_at": "document_idle"

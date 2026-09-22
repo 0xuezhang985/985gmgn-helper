@@ -28,7 +28,7 @@
           <li><b>Brew 战壕</b>：GMGN / DeBot 的 fomo 按钮下方点 Brew，查看新创建、热门、市值与官方底池。</li>
           <li><b>持仓暴涨提醒</b>：先打开一次 GMGN 持仓面板，切链后也各打开一次。</li>
         </ul>
-        <a class="gdh-howto-link" href="https://github.com/0xuezhang985/985gmgn-helper#功能" target="_blank" rel="noreferrer">完整功能说明 →</a>
+        <a class="gdh-howto-link" href="https://bettergmgn.com/#features" target="_blank" rel="noreferrer">完整功能说明 →</a>
       </details>
 
       <section class="settings-section">
@@ -74,12 +74,18 @@
             <div class="check-grid two"><label><input id="special-wallet-default-highlight" type="checkbox" />高亮</label><label><input id="special-wallet-default-pin" type="checkbox" />置顶</label></div>
             <label class="control-row" for="special-wallet-default-color"><span>默认高亮颜色</span><input id="special-wallet-default-color" type="color" value="#f5b83d" /></label>
           </div>
-          <label class="switch-row"><span><strong>fomo 推送混排</strong><small>按 985monitor 账号的关注、屏蔽和类型配置插入追踪流</small></span><input id="enable-fomo-feed" type="checkbox" /></label>
-          <label class="switch-row"><span><strong>Pump 推送混排</strong><small>按 985monitor 账号配置插入 GMGN / DeBot 追踪流</small><small id="monitor-985-sync-status" class="sync-status">尚未连接 985monitor 账号配置</small></span><input id="enable-pump-feed" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>fomo 推送混排</strong><small>NEW：跟随 985monitor 的链屏蔽与来源开关，并沿用账号、事件、币种及金额过滤</small></span><input id="enable-fomo-feed" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>Pump 推送混排</strong><small>NEW：GMGN / DeBot 共用 985monitor 屏蔽规则；网页改动后自动同步，声音静音不等于屏蔽</small><small id="monitor-985-sync-status" class="sync-status">尚未连接 985monitor 账号配置</small></span><input id="enable-pump-feed" type="checkbox" /></label>
           <label class="switch-row"><span><strong>推送只看当前链</strong><small>关闭时与原生追踪流一致，显示全链事件</small></span><input id="fomo-feed-chain-only" type="checkbox" /></label>
           <div class="sub-settings compact">
             <div class="option-row"><span><strong>fomo 事件类型</strong><small>每一种都可独立开关</small></span></div>
             <div class="check-grid"><label><input id="fomo-feed-buy" type="checkbox" />买入</label><label><input id="fomo-feed-sell" type="checkbox" />卖出</label><label><input id="fomo-feed-swap" type="checkbox" />换仓</label><label><input id="fomo-feed-thesis" type="checkbox" />观点</label><label><input id="fomo-feed-transfer-in" type="checkbox" />转入</label><label><input id="fomo-feed-refund" type="checkbox" />退款/失败</label></div>
+          </div>
+          <label class="switch-row"><span><strong>买入绿 / 卖出红 <em class="new-badge">NEW</em></strong><small>追踪流整行按方向着色：人名、建仓/加仓、金额、市值全变色，只留币名本色便于识别；fomo / Pump 卡片同样适用</small></span><input id="enable-tracker-side-color" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>推送声音提醒 <em class="new-badge">NEW</em></strong><small>fomo / Pump 新事件出声，默认关闭。浏览器要求先点一下页面才允许出声；单个人的提示音点卡片上的 🔔 单独设置，可以在这里全局关着的情况下只给某几个人开</small></span><input id="feed-sound-on" type="checkbox" /></label>
+          <div class="sub-settings compact control-grid">
+            <label class="control-row" for="feed-sound-kind"><span>提示音</span><select id="feed-sound-kind"><option value="beep">清脆提示</option><option value="bell">铃声</option><option value="chime">双音门铃</option><option value="rise">上扬音阶</option><option value="radar">雷达</option><option value="alarm">警报</option></select></label>
+            <label class="control-row" for="feed-sound-volume"><span>音量</span><select id="feed-sound-volume"><option value="30">30%</option><option value="50">50%</option><option value="70">70%</option><option value="100">100%</option></select></label>
           </div>
         </div>
       </section>
@@ -103,6 +109,10 @@
           </div>
           <label class="switch-row"><span><strong>fomo 持仓者链上名次</strong><small>按 GMGN 已加载持有者数据标出“链上 #N”</small></span><input id="enable-merge-fomo-holders" type="checkbox" /></label>
           <label class="switch-row"><span><strong>底池 / 分红徽章 <em class="new-badge">NEW</em></strong><small>BSC：Flap 税收分配 / Genius Creator payout；Robinhood：底池资产与分红</small></span><input id="enable-flap-tax" type="checkbox" /></label>
+          <div class="sub-settings compact">
+            <div class="option-row"><span><strong>每种徽章单独开关 <em class="new-badge">NEW</em></strong><small>上面那个是总开关；关掉总开关这里全部失效</small></span></div>
+            <div class="check-grid"><label><input id="enable-flap-tax-badge" type="checkbox" />Flap 税收</label><label><input id="enable-genius-badge" type="checkbox" />Genius 分成</label><label><input id="enable-rh-pool-badge" type="checkbox" />RH 底池资产</label><label><input id="enable-rh-dividend-badge" type="checkbox" />RH 持币分红</label><label><input id="enable-fomo-share-badge" type="checkbox" />fomo 占比</label><label><input id="enable-native-pool-badge" type="checkbox" />原生底池</label></div>
+          </div>
           <details class="sub-settings compact"><summary><strong>Genius fee badge <em class="new-badge">NEW</em></strong></summary><small>Creator payout &gt; 0.25%: red warning; ≤ 0.25%: checkmark. Trenches show only ✓ / ⚠ beside the native tax chip; hover for on-chain details. Token pages place marked-holder share beside the fee badge. A checkmark is not a token safety rating. Uses the badge switch above.</small><details><summary>中文说明</summary><small>Creator payout 大于 0.25% 红色警示，不超过则打勾；战壕在原生税标旁只显示 ✓ / ⚠，悬停看明细，原税标未加载时显示在 Genius 平台图标旁。代币页的标注人物占比与费率徽章并排，开关独立；勾选不代表代币安全。</small></details></details>
            <label class="switch-row"><span><strong>全部底池</strong><small>在主池下补完整底池清单，按流动性排序</small></span><input id="enable-all-pools" type="checkbox" /></label>
           <label class="switch-row"><span><strong>Brew 战壕浮窗</strong><small>在 GMGN / DeBot 的 fomo 按钮下方显示入口，不注入 Brew 页面</small></span><input id="enable-brew-panel" type="checkbox" /></label>
@@ -132,7 +142,7 @@
         <details id="update-history"><summary>一键回退历史版本 <span class="update-new">NEW</span></summary>
           <p class="update-hint">仅提供官方正式版；安装前校验并备份。保留设置，回退后跳过刚撤回的版本。</p>
           <p id="history-status" class="update-hint" role="status"></p>
-          <a id="updater-setup" href="https://985monitor.xyz/bgm/" target="_blank" rel="noopener noreferrer" hidden>下载新版安装器，运行一次“安装 / 修复”</a>
+          <a id="updater-setup" href="https://bettergmgn.com/" target="_blank" rel="noopener noreferrer" hidden>下载新版安装器，运行一次“安装 / 修复”</a>
           <label for="rollback-version">选择版本</label><div class="update-actions"><select id="rollback-version"><option value="">展开后加载历史版本</option></select><button id="rollback-update" type="button" disabled>回退此版本</button></div>
           <p id="rollback-summary" class="update-summary" hidden></p>
         </details>

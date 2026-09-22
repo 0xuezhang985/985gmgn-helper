@@ -672,7 +672,7 @@ async function wakeOpenMonitor985Tabs() {
         target: { tabId: tab.id },
         func: () => { window.__gdhContentStarted = false; },
       });
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['monitor-feed-filters.js', 'content.js'] });
     }));
   } catch {
     // 没有打开 985monitor、页面正在关闭或浏览器尚未恢复标签时无需打扰其它功能。
@@ -962,7 +962,7 @@ async function fomoSelectSdkOwner() {
     checked.add(tab.id);
     if (wasKeeper) owned.add(tab.id);
   }
-  const save = () => chrome.storage.session.set({ [FOMO_KEEPER_STATE_KEY]: { owned: [...owned], checked: [...checked] } });
+  const save = () => chrome.storage.session.set({ [FOMO_KEEPER_STATE_KEY]: { ...saved, owned: [...owned], checked: [...checked] } });
   await save();
   const isApp = tab => /^\/(token|tokens|profile)(?:\/|$)/.test(fomoTabUrl(tab)?.pathname || '');
   const keepers = tabs.filter(tab => owned.has(tab.id));
@@ -1005,6 +1005,44 @@ async function fomoSelectSdkOwner() {
     await save();
   }
   return owner;
+}
+
+/**
+ * keeper 页可能停在 Cloudflare 验证页、或水合失败的空壳：executeScript 跑得通，
+ * 但页面里根本没有 React 应用，SDK 永远探不到。旧逻辑只在标签被 Chrome 丢弃时
+ * reload，其余一律原样复用——于是一个坏掉的 keeper 会被每 5 分钟重试一次、
+ * 永远好不了（实测日志 01:39→02:49 连续 sdk-missing，全靠用户自己开的页兜底）。
+ * 这里给它自愈：先重载一次，仍然没有 SDK 就关掉换一个。
+ * 只处理我们自己开的 keeper，绝不动用户自己打开的 FOMO 页。
+ */
+async function fomoKeeperHealth(tabId, status) {
+  // 只有「页面本身是坏的」才回收；signed-out / not-ready 是正常状态，换页也没用
+  const dead = status === 'sdk-missing' || status === 'sdk-timeout' || status === 'page-unavailable';
+  const saved = (await chrome.storage.session.get(FOMO_KEEPER_STATE_KEY))[FOMO_KEEPER_STATE_KEY] || {};
+  const sick = { ...(saved.sick || {}) };
+  const write = (values) => chrome.storage.session.set({ [FOMO_KEEPER_STATE_KEY]: values });
+  if (!dead) {
+    if (sick[tabId] === undefined) return;
+    delete sick[tabId];
+    await write({ ...saved, sick });
+    return;
+  }
+  if (!(saved.owned || []).includes(tabId)) return;
+  if (!sick[tabId]) {
+    sick[tabId] = 1;
+    await write({ ...saved, sick });
+    try { await chrome.tabs.reload(tabId); } catch { /* 已关闭：下一轮重新选 owner */ }
+    await fomoAuthNote('keeper-reloaded', { status });
+    return;
+  }
+  delete sick[tabId];
+  await write({
+    owned: (saved.owned || []).filter((id) => id !== tabId),
+    checked: (saved.checked || []).filter((id) => id !== tabId),
+    sick,
+  });
+  try { await chrome.tabs.remove(tabId); } catch { /* 已关闭 */ }
+  await fomoAuthNote('keeper-recycled', { status });
 }
 
 async function fomoEnsureSdkOwner() {
@@ -1333,6 +1371,9 @@ async function fomoRefreshSession() {
           await chrome.tabs.sendMessage(owner.id, { type: 'fomo-sync-now' });
         } catch { /* 页面关闭时使用已镜像状态。 */ }
       }
+      // 探不到 SDK 说明这张 keeper 页坏了，别再原样复用到天荒地老。
+      // 这是维护动作，出错绝不能拖垮续期本身（和 fomoAuthNote 同理）。
+      await fomoKeeperHealth(owner.id, result.status).catch(() => {});
     }
     let latest = (await chrome.storage.local.get('fomoToken')).fomoToken || null;
     if (result.status === 'renewed' && (!usable(latest) || Number(latest.exp) < result.exp)) {

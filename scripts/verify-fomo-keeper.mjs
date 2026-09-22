@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
 const audit = fs.readFileSync(new URL('./verify-audit-fixes.mjs', import.meta.url), 'utf8');
 const extract = vm.runInNewContext(audit.slice(audit.indexOf('function extractFunction('), audit.indexOf('function evaluate(')) + ';extractFunction', { assert });
-const names = ['fomoTabUrl', 'fomoOpenTabs', 'fomoPageWasKeeper', 'fomoRecoverKeeper', 'fomoSelectSdkOwner', 'fomoEnsureSdkOwner'];
+const names = ['fomoTabUrl', 'fomoOpenTabs', 'fomoPageWasKeeper', 'fomoRecoverKeeper', 'fomoSelectSdkOwner', 'fomoEnsureSdkOwner', 'fomoKeeperHealth'];
 const keeperUrl = 'https://fomo.family/token?gdh_keeper=1';
 const appUrl = 'https://fomo.family/tokens/bnb/fixture';
 let count = 0;
@@ -49,6 +49,7 @@ function fixture(initial = []) {
     vm.runInContext(names.filter(n => source.includes(`function ${n}(`)).map(n => extract(source, n)).join('\n'), state.ctx);
   };
   state.ensure = () => state.ctx.fomoEnsureSdkOwner();
+  state.health = (id, status) => state.ctx.fomoKeeperHealth(id, status);
   state.restart(); return state;
 }
 
@@ -148,3 +149,58 @@ for (const url of [appUrl, 'https://example.org/?gdh_keeper=1', 'https://fomo.fa
 pass('旧 keeper 恢复只认准确的 FOMO 初始地址和标记值');
 
 console.log(`FOMO keeper lifecycle: ${count} checks passed.`);
+
+// ---- keeper 页坏掉（CF 验证页 / 水合失败空壳）必须自愈 ----
+// 实测线上日志：01:39→02:49 连续 sdk-missing，同一张 keeper 被每 5 分钟原样重试、永不恢复。
+{
+  const f = fixture();
+  const owner = await f.ensure();                       // 自建一张 keeper
+  f.ops.length = 0;
+  await f.health(owner.id, 'sdk-missing');              // 第一次坏：重载
+  assert.deepEqual(f.ops.filter(o => o[0] === 'reload'), [['reload', owner.id]]);
+  assert.equal(f.ops.filter(o => o[0] === 'remove').length, 0);
+  pass('keeper 探不到 SDK 时先重载，而不是继续原样复用');
+
+  await f.health(owner.id, 'sdk-missing');              // 重载后仍坏：换一张
+  assert.deepEqual(f.ops.filter(o => o[0] === 'remove'), [['remove', owner.id]]);
+  assert.equal(f.tabs.find(t => t.id === owner.id), undefined);
+  pass('重载后仍无 SDK 就关掉这张 keeper');
+
+  const fresh = await f.ensure();                       // 下一轮应新建，而不是复活旧 id
+  assert.notEqual(fresh.id, owner.id);
+  pass('回收后下一轮会新建一张干净的 keeper');
+}
+
+// 恢复正常要清零计数，否则偶发一次失败会在很久以后凑成第二次、误杀好页面
+{
+  const f = fixture();
+  const owner = await f.ensure();
+  await f.health(owner.id, 'sdk-missing');
+  await f.health(owner.id, 'ready');
+  f.ops.length = 0;
+  await f.health(owner.id, 'sdk-missing');
+  assert.deepEqual(f.ops.filter(o => o[0] === 'reload'), [['reload', owner.id]]);
+  assert.equal(f.ops.filter(o => o[0] === 'remove').length, 0);
+  pass('中间恢复过一次就清零计数，不会把偶发失败累积成误杀');
+}
+
+// signed-out / not-ready 是正常状态，换页也解决不了，绝不能拿来churn标签
+{
+  const f = fixture();
+  const owner = await f.ensure();
+  f.ops.length = 0;
+  for (const status of ['signed-out', 'not-ready', 'signed-out', 'not-ready']) await f.health(owner.id, status);
+  assert.equal(f.ops.filter(o => o[0] === 'reload' || o[0] === 'remove').length, 0);
+  pass('未登录/加载中不回收 keeper（换页也没用，只会反复开标签）');
+}
+
+// 用户自己打开的 FOMO 页不是我们的 keeper，坏了也不许碰
+{
+  const f = fixture([{ id: 7, url: appUrl, pinned: false }]);
+  f.ops.length = 0;
+  await f.health(7, 'sdk-missing');
+  await f.health(7, 'sdk-missing');
+  assert.equal(f.ops.filter(o => o[0] === 'reload' || o[0] === 'remove').length, 0);
+  assert.ok(f.tabs.find(t => t.id === 7));
+  pass('只回收自己开的 keeper，绝不重载或关闭用户自己的 FOMO 页');
+}

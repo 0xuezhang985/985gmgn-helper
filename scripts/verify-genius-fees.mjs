@@ -84,8 +84,8 @@ assert.equal((await context.tokenFeeInfo({ token: '0x' + '1'.repeat(36) + '7777'
 assert.equal(geniusCalls, 3); checks++;
 
 const source = read('content.js');
-const names = ['findNativeTaxChip', 'tokenMetaOwnRow', 'flapOwnRow', 'restoreFlapNative', 'clearFlapCard',
-  'flapTrenchOwnRow', 'clearFlapBadges', 'tokenDetailBadgeRow', 'geniusTrenchLink', 'geniusTrenchOwnRow', 'flapTaxUrl', 'geniusBadgeText', 'geniusTooltipText', 'ensureFlapBadge', 'scanFlapBadges',
+const names = ['chipText', 'findNativeTaxChip', 'isColumnFlow', 'tokenMetaOwnRow', 'flapOwnRow', 'restoreFlapNative', 'clearFlapCard',
+  'flapTrenchOwnRow', 'clearFlapBadges', 'tokenDetailBadgeRow', 'geniusTrenchLink', 'geniusTrenchOwnRow', 'flapTaxUrl', 'geniusBadgeText', 'geniusTooltipText', 'flapBadgeEnabled', 'ensureFlapBadge', 'scanFlapBadges',
   'markedHoldingSummary', 'holdingShareText', 'ensureMarkedBadge', 'renderTokenMarkedBadge'];
 const extract = name => {
   const start = source.indexOf(`  function ${name}(`);
@@ -176,11 +176,44 @@ try {
     center.innerHTML = '<div data-sentry-component="BaseInfoBar" style="height:70px;flex-shrink:0;display:flex"><div>Genius token</div><div class="text-[20px]">$12K</div></div><div id="chart" style="flex:1;min-height:0">Chart</div>';
     document.body.appendChild(center);
     route = { chain: 'bsc', address: token }; scanFlapBadges();
+    // 真实 GMGN 搜索结果行：整行横向 flex，指标列宽度写死，税标是「图标 + 文字」
+    // 且图标字体往 textContent 里塞了一个私用区码点（实测 ）。
     const search = document.createElement('div'); search.id = 'search';
-    search.innerHTML = '<a href="/bsc/token/' + token + '"><span>Search token</span></a>'; document.body.appendChild(search);
+    search.innerHTML = '<a href="/bsc/token/' + token + '" style="display:flex;align-items:center;height:72px;width:766px">'
+      + '<div style="min-width:0;overflow:hidden;padding:6px 2px 6px 8px;flex:3.5">'
+      + '<div style="display:flex;align-items:center"><div style="display:flex;align-items:center">'
+      + '<div style="width:52px;height:52px"></div>'
+      + '<div style="display:flex;align-items:center;margin-left:8px"><div style="display:flex;flex-direction:column">'
+      + '<div style="display:flex;height:16px;align-items:center;gap:4px">SEARCH</div>'
+      + '<div style="display:flex;height:16px;min-width:0;align-items:center;gap:4px;overflow:hidden;white-space:nowrap">'
+      + '<div style="display:inline-flex"><span style="display:flex;height:16px;flex-shrink:0;align-items:center;gap:2px">'
+      + '<svg viewBox="0 0 16 16" style="width:12px"></svg>Tax 2%</span></div>'
+      + '</div></div></div></div></div></div>'
+      + '<div id="search-mc" style="margin-left:8px;display:flex;width:88px;flex-direction:column">MC $12K</div>'
+      + '<div id="search-v" style="margin-left:8px;display:flex;width:88px;flex-direction:column">V $0</div>'
+      + '</a>';
+    document.body.appendChild(search);
+    // 只比横向几何与行高：纵向位置会被上面详情页徽章那一行整体推走，与本断言无关。
+    window.searchBox = s => { const r = document.querySelector(s).getBoundingClientRect(); return Math.round(r.left) + '/' + Math.round(r.width); };
+    window.searchBefore = ['#search-mc', '#search-v'].map(window.searchBox);
+    window.searchHeightBefore = Math.round(document.querySelector('#search a').getBoundingClientRect().height);
     scanFlapBadges();
   });
   assert.equal(await page.locator('.gdh-flap').count(), 3);
+  // 搜索结果：徽章必须另起一行落在名称列里，不能把写死宽度的指标列顶跑。
+  assert.deepEqual(await page.evaluate(() => {
+    const link = document.querySelector('#search a'), name = link.children[0];
+    const row = link.querySelector('.gdh-flap-row'), r = row.getBoundingClientRect(), n = name.getBoundingClientRect();
+    return {
+      columnsMoved: ['#search-mc', '#search-v'].map(window.searchBox).some((now, i) => now !== window.searchBefore[i]),
+      badgeInsideName: r.left >= n.left && r.right <= n.right,
+      rowIsDirectFlexChild: row.parentElement === link,
+      nativeTaxHidden: !!link.querySelector('[data-gdh-flap-native]'),
+      rowGrew: Math.round(link.getBoundingClientRect().height) > window.searchHeightBefore,
+    };
+  }), { columnsMoved: false, badgeInsideName: true, rowIsDirectFlexChild: false, nativeTaxHidden: false, rowGrew: false },
+  'search badge takes its own line inside the name column and keeps the native tax chip');
+  checks++;
   assert.equal(await page.evaluate(() => {
     const bar = document.querySelector('[data-sentry-component="BaseInfoBar"]'), row = document.querySelector('.gdh-flap-row--detail');
     return row.parentElement.previousElementSibling === bar && row.getBoundingClientRect().height < 35

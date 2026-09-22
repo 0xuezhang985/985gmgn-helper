@@ -3225,3 +3225,43 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 .gdh-wallet-settings p { margin: 2px 0; font-size: 11px; opacity: .7; }
 .gdh-wallet-settings .gdh-wallet-settings-save { background: #f5b83d; color: #17191e; font-weight: 600; cursor: pointer; }
 .gdh-wallet-settings-status { color: #ed6565; font-size: 11px; }
+
+/* ---- 追踪流方向着色：买入整行绿、卖出整行红 ---- */
+/* 币名、市值、底池名保持原色：这三样是扫行时的识别锚点，跟着一起变反而更难认。   */
+/* 属性只在开关打开时写上，关掉即刻恢复 GMGN 原本的配色，无残留。               */
+[data-gdh-side="buy"]  { color: #22c55e !important; }
+[data-gdh-side="sell"] { color: #f87171 !important; }
+/* GMGN 的每个文字节点都自带 Tailwind 颜色类，父级 color 盖不住，只能逐个改成继承。 */
+/* data-gdh-keep-color 由扫描按 GMGN 自己的 testid 标出，连同子树一起跳过；        */
+/* 后面那几个类是插件自己的控件（⭐ 的颜色是用户逐个挑的，各类徽章同理）。          */
+[data-gdh-side] :not(
+  [data-gdh-keep-color], [data-gdh-keep-color] *,
+  .gdh-star-button, .gdh-color-button, .gdh-feed-sound-button,
+  .gdh-token-relation, .gdh-tokenblock, .gdh-flap, .gdh-marked, .gdh-robinhood-chip,
+  .gdh-fomofeed__stripe, .gdh-fomofeed__logo, .gdh-fomofeed__av
+) {
+  color: inherit !important;
+}
+
+/* ---- fomo / pump 卡片上的声音入口 ---- */
+/* 跟 ☆ 一样：平时淡出，悬停或这个人单独设过才常亮。 */
+.gdh-feed-sound-button {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b93a1;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.gdh-fomofeed:hover .gdh-feed-sound-button { opacity: 1; }
+.gdh-feed-sound-button:hover { color: #f5b83d; }
+.gdh-feed-sound-button.is-custom { opacity: 1; }
+.gdh-feed-sound-button.is-on { color: #f5b83d; }
+.gdh-feed-sound-settings .gdh-wallet-settings-field select { width: 58%; min-width: 0; }
+.gdh-feed-sound-settings .gdh-wallet-settings-field button { flex: 1 1 auto; cursor: pointer; }

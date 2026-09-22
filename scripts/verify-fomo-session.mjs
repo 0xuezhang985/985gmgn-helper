@@ -51,8 +51,11 @@ pass('已登录真实应用页接管后只关闭扩展自己的 keeper，不刷�
 
 const store = { fomoToken: { token: 'old', exp: Date.now() - 10000 } };
 let starts = 0, renewCalls = 0, mode = 'success';
+const healthCalls = [];
 const makeRecovery = () => context(['fomoRefreshSession'], {
   fomoRefreshInFlight: null, FOMO_REFRESH_RETRY_MS: 300000, fomoAuthNote: async () => {},
+  // keeper 健康检查由 verify-fomo-keeper.mjs 覆盖，这里只需声明这个协作者
+  fomoKeeperHealth: async (id, status) => { healthCalls.push([id, status]); },
   fomoEnsureSdkOwner: async () => { starts++; return { id: 2 }; },
   fomoSdkAccess: async (_id, renew) => {
     if (mode === 'failure') return { status: 'signed-out' };
@@ -65,6 +68,8 @@ const makeRecovery = () => context(['fomoRefreshSession'], {
 let recovery = makeRecovery(); const both = await Promise.all([recovery.fomoRefreshSession(), recovery.fomoRefreshSession()]);
 assert.equal(both[0].token, 'new'); assert.equal(both[1].token, 'new'); assert.equal(starts, 1); assert.equal(renewCalls, 1);
 pass('多个面板并发续期合并为一次 SDK 调用，新令牌在本地恢复');
+assert.deepEqual(healthCalls, [['renewed']].map(([s]) => [2, s]));
+pass('每轮续期都回报一次 keeper 健康状态（坏页才能被回收）');
 store.fomoToken = { token: 'expired', exp: Date.now() - 10000 }; store.fomoSessionRecoveryV1 = null; mode = 'failure';
 assert.equal(await recovery.fomoRefreshSession(), null); const before = starts;
 assert.equal(await recovery.fomoRefreshSession(), null); recovery = makeRecovery(); assert.equal(await recovery.fomoRefreshSession(), null);

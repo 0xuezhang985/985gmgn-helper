@@ -1,3 +1,5 @@
+> 本地试用 v0.46.101（未发布）：官网迁移到 https://bettergmgn.com/，插件说明和安装器入口同步修改。保留 v0.46.100 修复：插件 FOMO / Pump 推送跟随 985monitor 的链屏蔽和来源开关，GMGN / DeBot 共用；已缓存混排与聚合数据同步重新筛选。首次同步需在同一浏览器登录并打开 985monitor，之后沿用最后一次同步的账号规则；网页修改时自动同步，定时检查兜底。账号、事件类型、币种、金额过滤继续沿用原有配置，声音静音不代表屏蔽。公开下载仍为 v0.46.99。
+
 # better gmgn
 
 给 GMGN.ai 加一层交易辅助，把 FOMO/Pump 追踪流与 FOMO 小窗适配到 DeBot，并在 GMGN/DeBot 内提供 Brew 战壕浮窗的 Chrome 扩展（Manifest V3）。原名「985gmgn助手」，v0.28.0 起改名 **better gmgn**——扩展 ID 未变，升级后你的名单与配置都在。
@@ -17,14 +19,15 @@
 
 聚合口径：仅统计本页已接收数据，最多缓存最近 24 小时 / 20,000 条事件；追踪面板未打开时不额外补抓原生成交。按同链合约分组，钱包地址 / FOMO 账号去重；跨来源只有可核对的相同交易才合并，未知身份不以昵称猜测。金额分别统计买入、卖出 USD 和净买入（买入减卖出，不是利润或当前持仓）；不确定的金额标 `+`，缺少完整金额时净额显示 `—`；清仓只计明确标记。头像和市值来自已有缓存。关闭面板后可从底部重新打开，时间窗口和筛选本地保存，不涉及自动交易。
 
-- 下载安装：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
+- 官网与下载安装：<https://bettergmgn.com/>
+- GitHub 发行记录：<https://github.com/0xuezhang985/985gmgn-helper/releases/latest>
 - 仓库：<https://github.com/0xuezhang985/985gmgn-helper>
 
 ---
 
 ## 安装
 
-1. 到 [Releases 最新版](https://github.com/0xuezhang985/985gmgn-helper/releases/latest) 下载 `985gmgn-helper-setup-vX.Y.Z.exe`
+1. 到 [better gmgn 官网](https://bettergmgn.com/) 下载 `985gmgn-helper-setup-vX.Y.Z.exe`
 2. 双击运行，点 **「安装 / 修复」**
 3. 安装器会自动把插件目录复制到剪贴板，并打开浏览器的扩展程序页面，照窗口里的 4 步做：
    - 打开右上角 **「开发者模式」** 开关

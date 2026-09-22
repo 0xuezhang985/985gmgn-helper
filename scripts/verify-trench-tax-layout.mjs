@@ -15,8 +15,8 @@ const read = (name) => (baseline
   ? execFileSync('git', ['show', `v0.46.64:${name}`], { cwd: root, encoding: 'utf8' })
   : fs.readFileSync(path.join(root, name), 'utf8')).replace(/\r\n/g, '\n');
 const source = read('content.js');
-const names = ['findNativeTaxChip', 'tokenMetaOwnRow', 'flapOwnRow', 'restoreFlapNative',
-  'clearFlapCard', 'flapTrenchOwnRow', 'clearFlapBadges', 'tokenDetailBadgeRow', 'geniusTrenchLink', 'geniusTrenchOwnRow', 'ensureFlapBadge', 'scanFlapBadges'];
+const names = ['chipText', 'findNativeTaxChip', 'isColumnFlow', 'tokenMetaOwnRow', 'flapOwnRow', 'restoreFlapNative',
+  'clearFlapCard', 'flapTrenchOwnRow', 'clearFlapBadges', 'tokenDetailBadgeRow', 'geniusTrenchLink', 'geniusTrenchOwnRow', 'flapBadgeEnabled', 'ensureFlapBadge', 'scanFlapBadges'];
 const functions = names.filter((name) => source.includes(`function ${name}(`)).map((name) => {
   const start = source.indexOf(`  function ${name}(`);
   // All selected top-level functions terminate with exactly two spaces + closing brace.

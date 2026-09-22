@@ -25,6 +25,14 @@ const DEFAULTS = {
   mergeFomoHolders: true,
   enableMarkedHolders: true,
   enableFlapTax: true,
+  enableFlapTaxBadge: true,
+  enableGeniusBadge: true,
+  enableRhPoolBadge: true,
+  enableRhDividendBadge: true,
+  enableFomoShareBadge: true,
+  enableNativePoolBadge: true,
+  enableTrackerSideColor: true,
+  feedSound: { on: false, kind: 'beep', volume: 70 },
   enableAllPools: true,
   enableBrewPanel: true,
   flapRpc: '',
@@ -73,6 +81,13 @@ const featureInputs = {
   mergeFomoHolders: document.querySelector('#enable-merge-fomo-holders'),
   enableMarkedHolders: document.querySelector('#enable-marked-holders'),
   enableFlapTax: document.querySelector('#enable-flap-tax'),
+  enableFlapTaxBadge: document.querySelector('#enable-flap-tax-badge'),
+  enableGeniusBadge: document.querySelector('#enable-genius-badge'),
+  enableRhPoolBadge: document.querySelector('#enable-rh-pool-badge'),
+  enableRhDividendBadge: document.querySelector('#enable-rh-dividend-badge'),
+  enableFomoShareBadge: document.querySelector('#enable-fomo-share-badge'),
+  enableNativePoolBadge: document.querySelector('#enable-native-pool-badge'),
+  enableTrackerSideColor: document.querySelector('#enable-tracker-side-color'),
   enableAllPools: document.querySelector('#enable-all-pools'),
   enableBrewPanel: document.querySelector('#enable-brew-panel'),
   enableFomoFeed: document.querySelector('#enable-fomo-feed'),
@@ -96,6 +111,11 @@ const similarTokenCacheInput = document.querySelector('#similar-token-cache-minu
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
 const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
 const flapRpcInput = document.querySelector('#flap-rpc');
+// 声音是一个对象（开关 + 音效 + 音量），没法走 featureInputs 那套布尔批处理。
+const feedSoundOnInput = document.querySelector('#feed-sound-on');
+const feedSoundKindInput = document.querySelector('#feed-sound-kind');
+const feedSoundVolumeInput = document.querySelector('#feed-sound-volume');
+const FEED_SOUND_KINDS = ['beep', 'bell', 'chime', 'rise', 'radar', 'alarm'];
 const specialWalletDefaultHighlightInput = document.querySelector('#special-wallet-default-highlight');
 const specialWalletDefaultPinInput = document.querySelector('#special-wallet-default-pin');
 const specialWalletDefaultColorInput = document.querySelector('#special-wallet-default-color');
@@ -247,6 +267,13 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   similarTokenCacheInput.value = String([1, 5, 10, 30].includes(Number(stored.similarTokenCacheMinutes))
     ? Number(stored.similarTokenCacheMinutes) : DEFAULTS.similarTokenCacheMinutes);
   flapRpcInput.value = String(stored.flapRpc || '');
+  const feedSound = stored.feedSound && typeof stored.feedSound === 'object'
+    ? stored.feedSound : DEFAULTS.feedSound;
+  feedSoundOnInput.checked = feedSound.on === true;
+  feedSoundKindInput.value = FEED_SOUND_KINDS.includes(feedSound.kind)
+    ? feedSound.kind : DEFAULTS.feedSound.kind;
+  feedSoundVolumeInput.value = String([30, 50, 70, 100].includes(Number(feedSound.volume))
+    ? Number(feedSound.volume) : DEFAULTS.feedSound.volume);
   const starPref = stored.addWalletStarPref && typeof stored.addWalletStarPref === 'object'
     ? stored.addWalletStarPref : DEFAULTS.addWalletStarPref;
   specialWalletDefaultHighlightInput.checked = starPref.on === true;
@@ -315,6 +342,13 @@ saveButton.addEventListener('click', async () => {
     similarTokenCacheMinutes: [1, 5, 10, 30].includes(Number(similarTokenCacheInput.value))
       ? Number(similarTokenCacheInput.value) : DEFAULTS.similarTokenCacheMinutes,
     flapRpc: flapRpcInput.value.trim(),
+    feedSound: {
+      on: feedSoundOnInput.checked,
+      kind: FEED_SOUND_KINDS.includes(feedSoundKindInput.value)
+        ? feedSoundKindInput.value : DEFAULTS.feedSound.kind,
+      volume: [30, 50, 70, 100].includes(Number(feedSoundVolumeInput.value))
+        ? Number(feedSoundVolumeInput.value) : DEFAULTS.feedSound.volume,
+    },
     addWalletStarPref: {
       on: specialWalletDefaultHighlightInput.checked,
       pin: specialWalletDefaultPinInput.checked,

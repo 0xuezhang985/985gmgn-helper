@@ -18,6 +18,7 @@ $files = @(
   'manifest.json',
   'background.js',
   'genius-fees.js',
+  'monitor-feed-filters.js',
   'priority-push.js',
   'buy-strategies.js',
   'page-bridge.js',
