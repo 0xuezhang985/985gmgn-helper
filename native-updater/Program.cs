@@ -49,6 +49,12 @@ namespace Gmgn985Updater
         internal const string Repository = "0xuezhang985/985gmgn-helper";
         internal const string LatestReleaseApi = "https://api.github.com/repos/0xuezhang985/985gmgn-helper/releases/latest";
         internal const string ReleasesPage = "https://github.com/0xuezhang985/985gmgn-helper/releases/latest";
+        // 官网镜像。更新器是独立进程，走的是 Windows 系统代理，浏览器那边的代理它看不见，
+        // 所以「浏览器能打开 GitHub、检查更新却说连不上」是常态。GitHub 不通时退到这里，
+        // 安装包仍然逐字节校验 SHA256，只是校验值也来自官网。
+        internal const string MirrorBase = "https://bettergmgn.com/";
+        internal const string MirrorDownloadBase = MirrorBase + "dl/";
+        internal const string MirrorVersionApi = MirrorBase + "version.json";
         internal const string ManifestKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAotBvFq65NLPkl/sfJPAOUsAY3wrS4I0WOVQ4K8D6Vy9tZyNnRoDrntLCxiJnlJQ88+jPsBmpgL3/Km3dqUFzJnmPqlgbCFrzCWXi6YaX6lqYFAip0MUOPnNogNkY6flkwP+NurfV8Hf5ZlXnN/moR9DmdN15M9Qg390yqIhQFapxozPGZUbj1vHyCiJJ6fHo48DLfJHNhixAa/LLUF6msICVgDyfU/Rnj7RWEWbpUhA0CcQzUa5MY14IcS4Ktkegb6FGNgUa2p/g2+OjIBGIvAYvVGNgYuwN9GGdA5mx+PPxRwKegne0tFrX7Irzk4xG9A2LiTIkzaWjcptRrP+01QIDAQAB";
 
         internal static readonly string InstallRoot = Path.Combine(
@@ -202,7 +208,15 @@ namespace Gmgn985Updater
         private static string FriendlyError(Exception error)
         {
             WebException webError = error as WebException;
-            if (webError != null) return "无法连接 GitHub，请检查网络后重试";
+            if (webError != null)
+            {
+                // 以前所有 WebException 都报「无法连接 GitHub」，限流、TLS 失败、404 全被并成同一句，
+                // 照着提示查网络自然查不出问题。能拿到状态码就把它说出来。
+                HttpWebResponse http = webError.Response as HttpWebResponse;
+                if (http != null) return "更新源返回 HTTP " + (int)http.StatusCode + "，请稍后重试";
+                // 更新器是独立进程，用的是 Windows 系统代理；只给浏览器开的代理对它无效。
+                return "GitHub 与官网都连不上。更新器走的是 Windows 系统代理，浏览器上的代理对它无效，请确认系统代理后重试";
+            }
             return string.IsNullOrWhiteSpace(error.Message) ? "更新器发生未知错误" : error.Message;
         }
     }
@@ -264,7 +278,7 @@ namespace Gmgn985Updater
             Directory.CreateDirectory(tempRoot);
             try
             {
-                byte[] zipBytes = DownloadBytes(release.ZipUrl);
+                byte[] zipBytes = DownloadRelease(release);
                 string actualHash = HashTools.Sha256(zipBytes);
                 VerifyReleaseHash(release, actualHash);
 
@@ -338,17 +352,58 @@ namespace Gmgn985Updater
 
         private static ReleaseInfo GetLatestRelease()
         {
-            Dictionary<string, object> release = Json.Serializer.Deserialize<Dictionary<string, object>>(DownloadString(ProductInfo.LatestReleaseApi));
-            return ParseRelease(release);
+            try
+            {
+                Dictionary<string, object> release = Json.Serializer.Deserialize<Dictionary<string, object>>(DownloadString(ProductInfo.LatestReleaseApi));
+                return ParseRelease(release);
+            }
+            catch (WebException)
+            {
+                // 只有「连不上」才退到官网。草稿版、缺安装包这类是有意拒绝，不能靠换个源绕过去。
+                return MirrorRelease(MirrorLatestVersion());
+            }
         }
 
         private static ReleaseInfo GetVersionRelease(string version)
         {
             if (!VersionTools.IsValid(version)) throw new InvalidDataException("目标版本号无效");
-            ReleaseInfo release = ParseRelease(Json.Serializer.Deserialize<Dictionary<string, object>>(
-                DownloadString("https://api.github.com/repos/" + ProductInfo.Repository + "/releases/tags/v" + Uri.EscapeDataString(version))));
+            ReleaseInfo release;
+            try
+            {
+                release = ParseRelease(Json.Serializer.Deserialize<Dictionary<string, object>>(
+                    DownloadString("https://api.github.com/repos/" + ProductInfo.Repository + "/releases/tags/v" + Uri.EscapeDataString(version))));
+            }
+            catch (WebException)
+            {
+                release = MirrorRelease(version);
+            }
             if (release.Version != version) throw new InvalidDataException("目标版本与官方返回不一致");
             return release;
+        }
+
+        private static string MirrorLatestVersion()
+        {
+            Dictionary<string, object> info = Json.Serializer.Deserialize<Dictionary<string, object>>(DownloadString(ProductInfo.MirrorVersionApi));
+            if (info == null) throw new InvalidDataException("官网版本信息格式无效");
+            string version = Json.StringValue(info, "version").TrimStart('v', 'V');
+            if (!VersionTools.IsValid(version)) throw new InvalidDataException("官网版本号无效");
+            return version;
+        }
+
+        /// 下载地址完全由版本号拼出，不采用响应里给的路径，免得被换成别的目标。
+        internal static ReleaseInfo MirrorRelease(string version)
+        {
+            if (!VersionTools.IsValid(version)) throw new InvalidDataException("官网版本号无效");
+            string zipName = "985gmgn-helper-v" + version + ".zip";
+            return new ReleaseInfo
+            {
+                Version = version,
+                ReleaseUrl = ProductInfo.ReleasesPage,
+                ZipName = zipName,
+                ZipUrl = SafeMirrorUrl(ProductInfo.MirrorDownloadBase + zipName),
+                ChecksumUrl = SafeMirrorUrl(ProductInfo.MirrorDownloadBase + zipName + ".sha256"),
+                Summary = ""
+            };
         }
 
         internal static ReleaseInfo ParseRelease(Dictionary<string, object> release)
@@ -462,6 +517,7 @@ namespace Gmgn985Updater
 
         internal static void VerifyReleaseHash(ReleaseInfo release, string actualHash)
         {
+            bool verified = false;
             if (!string.IsNullOrEmpty(release.ZipDigest))
             {
                 string digest = release.ZipDigest;
@@ -470,16 +526,38 @@ namespace Gmgn985Updater
                 {
                     throw new InvalidDataException("GitHub 安装包 SHA256 校验失败");
                 }
+                verified = true;
             }
 
             if (!string.IsNullOrEmpty(release.ChecksumUrl))
             {
-                string checksum = DownloadString(release.ChecksumUrl).Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0];
+                string mirror = ProductInfo.MirrorDownloadBase + release.ZipName + ".sha256";
+                string checksum;
+                try
+                {
+                    checksum = DownloadChecksum(release.ChecksumUrl);
+                }
+                catch (WebException)
+                {
+                    // 校验文件拿不到时：API 给的 digest 已经验过就放行；否则退到官网的同名校验文件。
+                    // 两边都拿不到就让异常抛出去 —— 宁可装不上，也不装没校验过的包。
+                    if (verified) return;
+                    if (string.Equals(release.ChecksumUrl, mirror, StringComparison.Ordinal)) throw;
+                    checksum = DownloadChecksum(SafeMirrorUrl(mirror));
+                }
                 if (!HashTools.IsSha256(checksum) || !string.Equals(checksum, actualHash, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException("校验文件与安装包不匹配");
                 }
+                verified = true;
             }
+
+            if (!verified) throw new InvalidDataException("缺少 SHA256 校验信息，拒绝安装");
+        }
+
+        private static string DownloadChecksum(string url)
+        {
+            return DownloadString(url).Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0];
         }
 
         private static string DownloadString(string url)
@@ -512,6 +590,28 @@ namespace Gmgn985Updater
             const string prefix = "https://github.com/0xuezhang985/985gmgn-helper/releases/download/";
             if (!url.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("拒绝非官方仓库的下载地址");
             return url;
+        }
+
+        internal static string SafeMirrorUrl(string url)
+        {
+            if (!url.StartsWith(ProductInfo.MirrorDownloadBase, StringComparison.Ordinal)) throw new InvalidDataException("拒绝非官网的下载地址");
+            return url;
+        }
+
+        /// GitHub 的 API 通、下载域名不通也很常见，所以下载这一步单独再兜一次官网。
+        /// 校验值是哪来的就用哪个，不因为换了下载源就放宽校验。
+        private static byte[] DownloadRelease(ReleaseInfo release)
+        {
+            try
+            {
+                return DownloadBytes(release.ZipUrl);
+            }
+            catch (WebException)
+            {
+                string mirror = ProductInfo.MirrorDownloadBase + release.ZipName;
+                if (string.Equals(release.ZipUrl, mirror, StringComparison.Ordinal)) throw;
+                return DownloadBytes(SafeMirrorUrl(mirror));
+            }
         }
 
         private static void EnsureInstalled()
@@ -1026,6 +1126,28 @@ namespace Gmgn985Updater
                 try { UpdateService.ParseRelease(releaseFixture); }
                 catch (InvalidDataException) { rejectedPreview = true; }
                 if (!rejectedPreview) return 14;
+
+                // 官网兜底：地址完全由版本号拼出，且必须落在官网的下载目录里。
+                ReleaseInfo mirror = UpdateService.MirrorRelease("0.46.67");
+                if (mirror.ZipUrl != "https://bettergmgn.com/dl/985gmgn-helper-v0.46.67.zip") return 15;
+                if (mirror.ChecksumUrl != "https://bettergmgn.com/dl/985gmgn-helper-v0.46.67.zip.sha256") return 16;
+                bool rejectedMirrorHost = false;
+                try { UpdateService.SafeMirrorUrl("https://evil.example.com/dl/985gmgn-helper-v0.46.67.zip"); }
+                catch (InvalidDataException) { rejectedMirrorHost = true; }
+                if (!rejectedMirrorHost) return 17;
+                bool rejectedMirrorPath = false;
+                try { UpdateService.SafeMirrorUrl("https://bettergmgn.com/evil/985gmgn-helper-v0.46.67.zip"); }
+                catch (InvalidDataException) { rejectedMirrorPath = true; }
+                if (!rejectedMirrorPath) return 18;
+                bool rejectedMirrorVersion = false;
+                try { UpdateService.MirrorRelease("not-a-version"); }
+                catch (InvalidDataException) { rejectedMirrorVersion = true; }
+                if (!rejectedMirrorVersion) return 19;
+                // 没有任何校验信息的发布一律拒绝安装，不能因为换了下载源就放宽。
+                bool rejectedUnverified = false;
+                try { UpdateService.VerifyReleaseHash(new ReleaseInfo { Version = "0.46.67", ZipName = "x.zip" }, new string('a', 64)); }
+                catch (InvalidDataException) { rejectedUnverified = true; }
+                if (!rejectedUnverified) return 20;
                 byte[] publicKey = Convert.FromBase64String(ProductInfo.ManifestKey);
                 using (SHA256 sha = SHA256.Create())
                 {
