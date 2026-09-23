@@ -6,7 +6,7 @@
 <title>better gmgn — Wallet tracking, token context &amp; alerts</title>
 <link rel="canonical" href="https://bettergmgn.com/">
 <meta name="description" content="Bring FOMO and Pump activity into GMGN and DeBot. Explore aggregate monitoring, priority alerts, similar tokens, holder insights and fee badges.">
-<meta name="site-version" content="2026.09.20.2">
+<meta name="site-version" content="2026.09.24.1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -166,9 +166,9 @@ footer .site-revision{width:100%;font-family:var(--mono);font-size:11px}
  <p data-zh="钱包动态、代币信息与重点提醒，直接融入 GMGN 和 DeBot。" class="tagline">Wallet activity, token context, and alerts. Right inside GMGN and DeBot.</p>
  <p data-zh="把 FOMO / Pump 买卖带进追踪流，聚合买入动向、对比相似币，让重要交易持续可见；不自动执行交易。" class="sub">Bring FOMO and Pump into tracking. Compare similar tokens. Keep important buys in view—without automatic trading.</p>
  <div class="dl">
- <a data-zh="下载 Windows 安装器 (.exe)" class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.99.exe" download>Download for Windows (.exe)</a>
- <a data-zh="手动安装 (.zip)" class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.99.zip" download>Manual install (.zip)</a>
- <span class="ver" id="ver"><span data-zh="最新版本">Latest release</span> <b id="release-version">v0.46.99</b></span>
+ <a data-zh="下载 Windows 安装器 (.exe)" class="btn btn-gold" id="dl-exe" href="dl/985gmgn-helper-setup-v0.46.111.exe" download>Download for Windows (.exe)</a>
+ <a data-zh="手动安装 (.zip)" class="btn btn-ghost" id="dl-zip" href="dl/985gmgn-helper-v0.46.111.zip" download>Manual install (.zip)</a>
+ <span class="ver" id="ver"><span data-zh="最新版本">Latest release</span> <b id="release-version">v0.46.111</b></span>
  </div>
  <p data-zh="Windows 安装器 · 支持 Chrome / Edge · 代码开源。插件内观点翻译需浏览器支持并下载本地语言包。" class="env">Windows installer · Chrome and Edge · Open source. In-extension translation requires a supported browser and a local language pack.</p>
 </header>
@@ -220,7 +220,7 @@ footer .site-revision{width:100%;font-family:var(--mono);font-size:11px}
 </section>
 <section class="wrap" id="install"><div class="sec-head rv"><span class="sec-no">02</span><h2 data-zh="一次安装，配置持续保留。">Install once. Keep your settings.</h2></div><p data-zh="Windows 安装器同时安装本地更新器。后续版本可在插件版本区查看简短说明、升级、跳过或回退。" class="sec-lede rv">The Windows installer adds the local updater. Future releases appear in the extension’s version section, with release notes, skip and rollback controls.</p>
 <div class="steps rv"><div class="step"><div><h4 data-zh="运行 Windows 安装器">Run the Windows installer</h4><p data-zh="下载上方 .exe，运行后选择「安装 / 修复」。更新器只在需要时运行，不常驻后台。">Download the .exe above and choose Install / Repair (安装 / 修复). The updater only runs when needed; it does not stay resident.</p></div></div><div class="step"><div><h4 data-zh="开启开发者模式">Enable Developer mode</h4><p data-zh="安装器会打开浏览器扩展页，并把扩展目录复制到剪贴板；开启「开发者模式」。">The installer opens the browser’s extensions page and copies the extension folder path. Turn on Developer mode.</p></div></div><div class="step"><div><h4 data-zh="加载已解压的扩展程序">Load the unpacked extension</h4><p data-zh="点击「加载已解压的扩展程序」，用 Ctrl+V 粘贴路径，选择 Extension 文件夹；可把插件图标固定到工具栏。">Choose Load unpacked, paste the copied path with Ctrl+V, and select the Extension folder. Pin the extension icon for easy access.</p></div></div></div>
-<div class="alt rv"><b data-zh="想手动安装？">Prefer manual installation?</b><p data-zh="解压 ZIP，在 chrome://extensions 或 edge://extensions 开启开发者模式，加载解压目录。仅用 ZIP 安装不包含本地一键更新器。">Extract the ZIP, open chrome://extensions or edge://extensions, enable Developer mode, and load the extracted folder. ZIP-only installation does not include the native one-click updater.</p><p class="env"><span data-zh="当前安装器文件：">Current installer file:</span> <span class="path" id="exe-name">985gmgn-helper-setup-v0.46.99.exe</span></p></div></section>
+<div class="alt rv"><b data-zh="想手动安装？">Prefer manual installation?</b><p data-zh="解压 ZIP，在 chrome://extensions 或 edge://extensions 开启开发者模式，加载解压目录。仅用 ZIP 安装不包含本地一键更新器。">Extract the ZIP, open chrome://extensions or edge://extensions, enable Developer mode, and load the extracted folder. ZIP-only installation does not include the native one-click updater.</p><p class="env"><span data-zh="当前安装器文件：">Current installer file:</span> <span class="path" id="exe-name">985gmgn-helper-setup-v0.46.111.exe</span></p></div></section>
 <section class="wrap" id="setup"><div class="sec-head rv"><span class="sec-no">03</span><h2 data-zh="按需连接，按需开启。">Connect only what you need.</h2></div><p data-zh="各项功能独立开关；相似币浮窗、策略与声音提醒需要按需开启。" class="sec-lede rv">Most tools have separate switches. Similar-token panels, strategies and audio alerts are opt-in.</p>
 <div class="steps rv"><div class="step"><div><h4 data-zh="打开 GMGN 或 DeBot">Open GMGN or DeBot</h4><p data-zh="追踪页查看混排动态，代币页使用 FOMO 小窗；聚合监控与战壕增强为 GMGN 专属。">Use a tracking page for mixed activity, or a token page for the FOMO panel. Aggregate Monitor and trench enhancements are GMGN-specific.</p></div></div><div class="step"><div><h4 data-zh="连接 985monitor 账号">Connect your 985monitor account</h4><p data-zh="在同一浏览器配置文件中登录 985monitor，连接 FOMO/Pump 推送和账号过滤规则。账号会话失效时停止推送，不回退到公共全量源。">Sign in to 985monitor in the same browser profile to connect FOMO/Pump feeds and your account filters. If that session becomes invalid, the feeds pause rather than falling back to a public feed.</p></div></div><div class="step"><div><h4 data-zh="登录 FOMO 以使用小窗">Sign in to FOMO for its panel</h4><p data-zh="查看 FOMO 持有人和观点需登录自己的 fomo.family 账号；无法续期时，小窗会提供重新登录指引。">For FOMO holders and theses, sign in to fomo.family with your own account. The panel provides a sign-in guide when renewal is no longer possible.</p></div></div></div></section>
 <section class="wrap" id="privacy"><div class="sec-head rv"><span class="sec-no">04</span><h2 data-zh="数据边界，清楚可查。">Clear data boundaries.</h2></div><p data-zh="不索取私钥或助记词；提醒和浮窗不代用户执行交易。" class="sec-lede rv">No private keys or seed phrases are requested. Alerts and overlays do not place trades for you.</p>
@@ -234,7 +234,7 @@ footer .site-revision{width:100%;font-family:var(--mono);font-size:11px}
  <a href="https://github.com/0xuezhang985/985gmgn-helper" target="_blank" rel="noopener">GitHub</a>
  <a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><span data-zh="更新日志">Changelog</span></a>
  <a href="https://www.985monitor.xyz/" target="_blank" rel="noopener">985monitor</a>
- <span data-zh="网站版本 2026.09.20.2 · 此开关仅切换官网语言。" class="site-revision">Website revision 2026.09.20.2 · This switch changes the website language.</span>
+ <span data-zh="网站版本 2026.09.24.1 · 此开关仅切换官网语言。" class="site-revision">Website revision 2026.09.24.1 · This switch changes the website language.</span>
 </footer>
 <script>
 (() => {

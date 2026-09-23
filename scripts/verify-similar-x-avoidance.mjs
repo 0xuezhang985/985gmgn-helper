@@ -9,6 +9,7 @@ const browser=await chromium.launch({channel:'chrome',headless:true});
 let checks=0;const pass=s=>console.log(`PASS ${++checks}: ${s}`);
 try {
   const page=await browser.newPage({viewport:{width:1100,height:900}});
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.setContent('<meta charset=utf-8><section id=track style="position:absolute;left:0;top:80px;width:300px;height:700px"><div data-sentry-component="TrackingBody" style="margin-top:70px">追踪</div></section><aside class=gdh-similar-token-panel><div class=gdh-similar-token__header>同名 / 相似币</div><div style="height:180px;flex-shrink:1;overflow:auto">当前币 · 相似币</div></aside>');
   await page.addStyleTag({content:read('styles.css')});
   await page.addScriptTag({content:`
@@ -18,6 +19,8 @@ try {
     const clearSimilarTokenPanel=()=>{};
     ${['scheduleSimilarTokenPosition','similarTokenXPreviewRects','positionSimilarTokenPanel'].map(take).join('\n')}
     const scheduleFomoFeedRowReflow=()=>{},scheduleScan=()=>{},scheduleSimilarTokenScan=()=>{};
+    const scheduleNativeTrackerFeeds=()=>{};
+    ${take('scheduleNativeTrackerFeedMutations')}
     ${source.slice(source.indexOf('  const GDH_SELF_SELECTOR'),source.indexOf('  observer.observe(document.documentElement'))}
     observer.observe(document.documentElement,{childList:true,subtree:true});
     window.addEventListener('resize',scheduleSimilarTokenPosition);
@@ -41,5 +44,6 @@ try {
   assert.deepEqual(await rect(),baseline);pass('普通提示不触发避让');
   await page.evaluate(()=>{const x=document.querySelector('#unrelated');x.innerHTML='<div data-sentry-component="TweetContent">X</div>';x.style.left='750px';positionSimilarTokenPanel(similarTokenTrackerAnchor);});
   assert.deepEqual(await rect(),baseline);pass('横向不重叠的 X 预览不移动同名窗');
+  assert.deepEqual(errors,[],'production observer dependencies must be loaded by the fixture');
   console.log(`1..${checks}`);
 } finally {await browser.close();}

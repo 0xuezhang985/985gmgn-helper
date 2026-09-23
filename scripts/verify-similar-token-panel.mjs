@@ -77,7 +77,7 @@ try {
       };
       if(window.nativeReplyDelay) setTimeout(reply,window.nativeReplyDelay); else reply();
     });
-    ${['requestNativeTokenBlacklist','getBlockedTokens','rebuildBlockedTokenIndex','isTokenBlocked','persistBlockedTokens','toggleBlockedToken','ensureTokenBlockButton','renderBlockedTokenList'].map(take).join('\n')}
+    ${['requestNativeTokenBlacklist','getBlockedTokens','publishTrackerProjection','rebuildBlockedTokenIndex','isTokenBlocked','persistBlockedTokens','toggleBlockedToken','ensureTokenBlockButton','renderBlockedTokenList'].map(take).join('\n')}
     window.blockCard=document.querySelector('#tracker .row');
     ensureTokenBlockButton(blockCard,'${peer}','FLYBOOK');
   `});

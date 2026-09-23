@@ -4,6 +4,19 @@
   if (window.__gdhPageBridgeStarted) return;
   window.__gdhPageBridgeStarted = true;
 
+  const trackerRecycler = globalThis.GdhTrackingRecycler?.create();
+  function syncTrackerRecycler() {
+    if (!trackerRecycler || !document.documentElement) return;
+    try {
+      trackerRecycler.setConfig({
+        blocked: JSON.parse(document.documentElement.getAttribute('data-gdh-tracker-blocks') || '[]'),
+        feeds: JSON.parse(document.documentElement.getAttribute('data-gdh-tracker-feeds') || '[]'),
+      });
+      trackerRecycler.scan();
+    } catch { /* 未知原生布局或无效配置不接管，保留旧版兼容路径。 */ }
+  }
+  document.addEventListener('gdh-tracker-projection', syncTrackerRecycler);
+
   // 插件的持仓价格计算复用 GMGN 页面原生 token_stat 行情流。MAIN world 才能读取
   // GMGN 自己的 localStorage 登录态，所以 App 通知开关也在这里请求；桥接层只透出
   // SOL/BSC/Base 的布尔开关，不复制令牌，也不新开第二条 WebSocket。
@@ -550,6 +563,7 @@
    * 另有 token_address 与 chain。不靠 href 也不靠猜。
    */
   function readTrackerRecord(element) {
+    if (element.closest?.('[data-gdh-native-feed-key], .gdh-native-tracker-empty')) return null;
     const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
     if (!fiberKey) return null;
     const pick = (value, depth) => {
@@ -821,6 +835,19 @@
       });
     });
     holdingRows.forEach(scanHoldingRow);
+    scanTrackerRows();
+    document.querySelectorAll(HOLDER_ROW_SELECTOR).forEach(scanHolderRow);
+    document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
+    document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
+      scanCallerElement(element, 'callout');
+    });
+    document.querySelectorAll(MANIFESTO_SELECTOR).forEach((element) => {
+      scanCallerElement(element, 'manifesto');
+    });
+  }
+
+  function scanTrackerRows() {
+    syncTrackerRecycler();
     // 同上：sentry 标记不一定在，用 GMGN 自己的 testid 反查卡片
     const trackerSeen = new Set();
     const trackerData = new Map();
@@ -843,14 +870,12 @@
     });
     if (!trackerSeen.size) scanUnmarkedTrackerRows(trackerSeen, trackerData);
     trackerSeen.forEach((element) => scanTrackerCard(element, trackerData.get(element)));
-    document.querySelectorAll(HOLDER_ROW_SELECTOR).forEach(scanHolderRow);
-    document.querySelectorAll(CARD_SELECTOR).forEach(scanCard);
-    document.querySelectorAll(CALLOUT_SELECTOR).forEach((element) => {
-      scanCallerElement(element, 'callout');
-    });
-    document.querySelectorAll(MANIFESTO_SELECTOR).forEach((element) => {
-      scanCallerElement(element, 'manifesto');
-    });
+  }
+
+  let trackerScanRaf = 0;
+  function scheduleTrackerScan() {
+    if (trackerScanRaf || document.visibilityState === 'hidden') return;
+    trackerScanRaf = requestAnimationFrame(() => { trackerScanRaf = 0; scanTrackerRows(); });
   }
 
   function runScheduledScan() {
@@ -878,7 +903,10 @@
     scanRafId = window.requestAnimationFrame(runScheduledScan);
   }
 
-  document.addEventListener('scroll', () => { scrollingUntil = Date.now() + 200; }, true);
+  document.addEventListener('scroll', (event) => {
+    scrollingUntil = Date.now() + 200;
+    if (event.target instanceof Element && event.target.matches('.g-table-recycler-scroll')) scheduleTrackerScan();
+  }, true);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'hidden') scheduleScan();
   });
@@ -890,6 +918,7 @@
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
         if (target?.closest('.gdh-monitor-aggregate')) continue;
         if (target?.closest('.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab')) continue;
+        if (target?.closest('[data-gdh-native-recycler="1"]')) scheduleTrackerScan();
         scheduleScan();
         return;
       }

@@ -2532,6 +2532,19 @@ html[data-theme="light"] .gdh-similar-token__current { color: #087a49; }
   vertical-align: middle;
 }
 
+/* 收藏徽章属于币名单元格，不能成为整行 flex 的额外一列。 */
+.gdh-marked.gdh-marked--watchlist {
+  display: block;
+  align-self: flex-start;
+  flex: none;
+  height: 15px;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 代币表头统计：放在地址后、原生社交图标前，避免误塞进 15px 浏览器图标链接。 */
 .gdh-token-header-badges {
   display: inline-flex;
@@ -3024,6 +3037,31 @@ html[data-theme="light"] .gdh-robinhood-rwa-popover__close:focus-visible { backg
 
 /* 链条色竖条（对齐 GMGN Fusion：5px 盖在卡片左缘，不占内容位） */
 .gdh-fomofeed { position: relative; }
+.gdh-fomofeed.is-native, .gdh-fomofeed.is-native.is-table { height: 100%; min-height: 0; }
+.gdh-fomofeed.is-native:is(.is-thesis, .is-refund) { padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: flex-start; }
+.gdh-fomofeed.is-native:is(.is-thesis, .is-refund) > :is(.gdh-fomofeed__r1, .gdh-fomofeed__r2) { height: 18px; flex: none; }
+.gdh-fomofeed.is-native:is(.is-thesis, .is-refund) > .gdh-fomofeed__trow { height: 19px; padding: 0; line-height: 19px; flex: none; }
+.gdh-fomofeed.is-native > :is(.gdh-fomofeed__thesis, .gdh-fomo__zh) { display: none; }
+.gdh-fomofeed__preview {
+  display: block; width: 100%; min-width: 0; height: 17px; flex: none;
+  margin: 0; padding: 0 15px 0 0; border: 0; background: transparent;
+  color: inherit; font: inherit; font-size: 12px; line-height: 17px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; position: relative;
+}
+.gdh-fomofeed__preview::after { content: '↗'; position: absolute; right: 0; top: 0; }
+.gdh-fomofeed__preview:hover { color: #8cc8f4; }
+.gdh-fomofeed__preview:focus-visible { outline: 1px solid currentColor; outline-offset: -1px; }
+.gdh-fomofeed-details {
+  position: fixed; inset: auto; margin: 0; padding: 12px; box-sizing: border-box;
+  width: min(440px, calc(100vw - 16px)); max-height: min(560px, calc(100vh - 16px));
+  overflow: auto; border: 1px solid #38424e; border-radius: 8px;
+  background: #15181d; color: #e5e7eb; box-shadow: 0 8px 30px #0006; z-index: 2147483647;
+}
+.gdh-fomofeed-details__head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.gdh-fomofeed-details__head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.gdh-fomofeed-details__head button { flex: none; background: transparent; border: 0; color: inherit; font-size: 20px; line-height: 20px; cursor: pointer; }
+.gdh-fomofeed-details .gdh-fomo__zh { margin-top: 10px; }
+html[data-theme="light"] .gdh-fomofeed-details { background: #fff; color: #242b35; border-color: #c5cbd3; }
 .gdh-fomofeed__stripe {
   pointer-events: none;
   position: absolute;

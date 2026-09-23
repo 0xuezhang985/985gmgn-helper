@@ -22,6 +22,7 @@ $files = @(
   'priority-push.js',
   'buy-strategies.js',
   'page-bridge.js',
+  'tracking-recycler.js',
   'monitor-aggregate.js',
   'aggregate-monitor.js',
   'aggregate-monitor.css',

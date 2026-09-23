@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const site = read('site/index.html');
+const fallbackVersion = site.match(/id="release-version">v(\d+\.\d+\.\d+)</)?.[1];
+assert.ok(fallbackVersion, 'versioned static download fallback is required');
 const popup = read('popup.html');
 const manifest = JSON.parse(read('manifest.json'));
 const sync = read('scripts/sync-bgm-download.py');
@@ -50,11 +52,12 @@ try {
     });
     await page.goto('https://bettergmgn.com/');
     await page.waitForLoadState('networkidle');
-    assert.equal(await page.locator('#dl-exe').evaluate(el => el.href), 'https://bettergmgn.com/dl/985gmgn-helper-setup-v0.46.99.exe');
-    assert.equal(await page.locator('#dl-zip').evaluate(el => el.href), 'https://bettergmgn.com/dl/985gmgn-helper-v0.46.99.zip');
+    const expected = valid ? '0.46.99' : fallbackVersion;
+    assert.equal(await page.locator('#dl-exe').evaluate(el => el.href), `https://bettergmgn.com/dl/985gmgn-helper-setup-v${expected}.exe`);
+    assert.equal(await page.locator('#dl-zip').evaluate(el => el.href), `https://bettergmgn.com/dl/985gmgn-helper-v${expected}.zip`);
     assert.ok(requests.some(url => url.startsWith('https://bettergmgn.com/version.json?')));
     assert.ok(!requests.some(url => url.includes('untrusted.invalid')));
-    assert.match(await page.locator('#ver').innerText(), /0\.46\.99/);
+    assert.ok((await page.locator('#ver').innerText()).includes(`v${expected}`));
     await page.close();
     console.log(`PASS root-domain downloads, ${valid ? 'valid' : 'rejected external'} version metadata`);
   }

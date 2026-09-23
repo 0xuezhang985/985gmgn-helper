@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const html = fs.readFileSync(path.join(root, 'site/index.html'), 'utf8');
+const fallbackVersion = html.match(/id="release-version">v(\d+\.\d+\.\d+)</)?.[1];
+assert.ok(fallbackVersion);
 const key = 'betterGmgnSiteLanguageV1';
 for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]);
 assert.ok(!html.includes('navigator.language'), 'first visit must not infer browser language');
@@ -96,8 +98,9 @@ try {
     assert.equal(await language(f.page), 'en');
     await f.page.locator('[data-language="zh"]').click();
     assert.equal(await language(f.page), 'zh-CN');
-    assert.match(await value(f.page, '#ver'), /最新版本.*v0\.46\.99/);
-    assert.deepEqual(await downloads(f.page), originalDownloads);
+    const expectedVersion = options.failVersion ? fallbackVersion : '0.46.99';
+    assert.ok((await value(f.page, '#ver')).includes(`最新版本 v${expectedVersion}`));
+    assert.deepEqual(await downloads(f.page), originalDownloads.map(url => url.replace('v0.46.99', `v${expectedVersion}`)));
     assert.deepEqual(f.errors, []);
     await f.context.close();
     pass(`safe fallback: ${Object.keys(options)[0]}`);
@@ -117,8 +120,8 @@ try {
   const invalid = await fixture({ delayed: true });
   await invalid.pending().fulfill({ json: { version: '9.8.7', exe: 'https://untrusted.invalid/bad.exe', zip: '../bad.zip' } });
   await invalid.page.waitForLoadState('networkidle');
-  assert.equal(await value(invalid.page, '#release-version'), 'v0.46.99');
-  assert.deepEqual(await downloads(invalid.page), originalDownloads);
+  assert.equal(await value(invalid.page, '#release-version'), `v${fallbackVersion}`);
+  assert.deepEqual(await downloads(invalid.page), originalDownloads.map(url => url.replace('v0.46.99', `v${fallbackVersion}`)));
   await invalid.context.close();
   pass('untrusted version metadata cannot alter links or displayed release');
 
@@ -126,7 +129,7 @@ try {
   assert.equal(await language(noJs.page), 'en');
   assert.equal(await noJs.page.locator('#features .feat').first().evaluate(el => getComputedStyle(el).opacity), '1');
   assert.equal(await noJs.page.locator('.language-switch').isVisible(), false);
-  assert.deepEqual(await downloads(noJs.page), originalDownloads);
+  assert.deepEqual(await downloads(noJs.page), originalDownloads.map(url => url.replace('v0.46.99', `v${fallbackVersion}`)));
   await noJs.context.close();
   pass('no-JavaScript page remains readable with working fallback download links');
   console.log(`${passed} bilingual site checks passed`);

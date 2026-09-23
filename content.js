@@ -2285,6 +2285,16 @@ ${flapTooltipText(info)}
     if (badge.title !== title) badge.title = title;
   }
 
+  function watchlistMarkedBadgeHost(link) {
+    // A watchlist link wraps the WHOLE native flex row. Adding a sibling to its
+    // columns shrinks every numeric cell (and stretches the badge to row height).
+    if (!link.closest('[data-sentry-component="WatchList"], [data-sentry-component="WatchTokens"]')) return link;
+    link.querySelector(':scope > .gdh-marked')?.remove();
+    const stack = link.querySelector('[data-sentry-component="TokenWatch"]')?.parentElement?.parentElement;
+    // Fail closed on an unknown layout rather than adding a fifth table column.
+    return stack?.classList.contains('flex-col') ? stack : null;
+  }
+
   function scanMarkedBadges() {
     if (settings.enableMarkedHolders === false) {
       document.querySelectorAll('.gdh-marked').forEach((el) => el.remove());
@@ -2321,7 +2331,11 @@ ${flapTooltipText(info)}
       if (tokenHeader?.contains(link)) return;
       const m = link.getAttribute('href')?.match(/\/token\/(0x[a-fA-F0-9]{40})/);
       if (!m) return;
-      ensureMarkedBadge(link, m[1]);
+      const host = watchlistMarkedBadgeHost(link);
+      if (!host) return;
+      ensureMarkedBadge(host, m[1]);
+      const badge = host.querySelector(':scope > .gdh-marked');
+      if (host !== link && badge && !badge.classList.contains('gdh-marked--watchlist')) badge.classList.add('gdh-marked--watchlist');
     });
   }
 
@@ -2413,6 +2427,15 @@ ${flapTooltipText(info)}
 
   function rebuildBlockedTokenIndex() {
     blockedTokenSet = new Set(getBlockedTokens().map((item) => `${item.chain || item.nativeChain || ''}|${trackingFeedNormalizedAddress(item.address)}`));
+    publishTrackerProjection('blocks', settings.enableSpecialWallet === false ? [] : [...blockedTokenSet]);
+  }
+
+  function publishTrackerProjection(kind, data) {
+    const attribute = `data-gdh-tracker-${kind}`;
+    const value = JSON.stringify(data);
+    if (document.documentElement.getAttribute(attribute) === value) return;
+    document.documentElement.setAttribute(attribute, value);
+    document.dispatchEvent(new Event('gdh-tracker-projection'));
   }
 
   function isTokenBlocked(address, chain = '') {
@@ -4032,7 +4055,7 @@ ${flapTooltipText(info)}
       const tokenAddr = card.dataset.gdhTrackAddr || '';
       if (tokenAddr) {
         ensureTokenBlockButton(card, tokenAddr, card.dataset.gdhTrackSymbol || '');
-        markBlockedHosts(card, isTokenBlocked(tokenAddr, (card.getAttribute('href') || '').match(/^\/(\w+)\/token\//)?.[1] || card.dataset.gdhTrackChain || ''));
+        markBlockedHosts(card, !card.closest('[data-gdh-native-recycler="1"]') && isTokenBlocked(tokenAddr, (card.getAttribute('href') || '').match(/^\/(\w+)\/token\//)?.[1] || card.dataset.gdhTrackChain || ''));
       }
       ensureStarButton(
         card,
@@ -9008,11 +9031,11 @@ ${flapTooltipText(info)}
     syncFeedSoundButton(button, ev);
   }
 
-  function fomoFeedCardFor(ev) {
-    let el = fomoFeedCards.get(ev.key);
+  function fomoFeedCardFor(ev, cache = fomoFeedCards) {
+    let el = cache.get(ev.key);
     if (!el || !(el instanceof HTMLElement)) {
       el = buildFomoFeedCard(ev);
-      fomoFeedCards.set(ev.key, el);
+      cache.set(ev.key, el);
     }
     globalThis.GdhBuyStrategies?.tagFeed(el, ev);
     applyFomoFeedTableLayout(el);
@@ -9176,15 +9199,129 @@ ${flapTooltipText(info)}
   function teardownFomoFeed() {
     for (const el of fomoFeedCards.values()) el.remove();
     fomoFeedCards.clear();
+    for (const cache of nativeTrackerFeedCards.values()) for (const el of cache.values()) el.remove();
+    nativeTrackerFeedCards.clear();
     clearFomoFeedShifts();
     resetFomoFeedTableLayout();
   }
 
   let fomoFeedLastMode = null;
 
+  let nativeTrackerFeeds = new Map();
+  const nativeTrackerFeedCards = new Map();
+  let nativeTrackerFeedRaf = 0;
+  let nativeTrackerFeedDetails = null;
+  function showNativeTrackerFeedDetails(anchor, ev) {
+    nativeTrackerFeedDetails?.remove();
+    const panel = document.createElement('div');
+    panel.className = 'gdh-fomofeed-details';
+    panel.setAttribute('popover', 'auto');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Full post / 完整观点');
+    const head = document.createElement('div');
+    head.className = 'gdh-fomofeed-details__head';
+    const title = document.createElement('strong');
+    title.textContent = [ev.name || ev.handle, ev.symbol].filter(Boolean).join(' · ');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Close / 关闭');
+    close.onclick = () => panel.remove();
+    head.append(title, close);
+    const body = document.createElement('div');
+    body.className = 'gdh-fomofeed-details__body';
+    const text = document.createElement('div');
+    text.className = 'gdh-fomofeed__thesis';
+    text.textContent = ev.comment;
+    body.appendChild(text);
+    panel.append(head, body);
+    document.body.appendChild(panel);
+    nativeTrackerFeedDetails = panel;
+    panel.addEventListener('toggle', event => { if (event.newState === 'closed') panel.remove(); });
+    panel.showPopover?.();
+    queueFomoTranslate(text, ev.comment);
+    const rect = anchor.getBoundingClientRect();
+    panel.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - panel.offsetWidth - 8))}px`;
+    const top = Math.max(8, Math.min(rect.bottom + 6, innerHeight - panel.offsetHeight - 8));
+    panel.style.top = `${top}px`;
+    // A late translation may be longer than the original. Grow only into the
+    // remaining viewport, then scroll inside the detail panel, never the list.
+    panel.style.maxHeight = `${Math.min(560, innerHeight - top - 8)}px`;
+    close.focus({ preventScroll: true });
+  }
+
+  function prepareNativeTrackerFeedComment(card, ev) {
+    if (!ev.comment || !['thesis', 'refund'].includes(ev.type)) return;
+    if (card.querySelector('.gdh-fomofeed__preview')) return;
+    // Native slots are fixed-height: never center a tall original/translation
+    // stack inside one slot. Keep the author/token rows and one readable preview;
+    // the full text lives outside the recycler, so translations cannot move rows.
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.className = 'gdh-fomofeed__preview';
+    preview.textContent = ev.comment;
+    preview.title = 'Read full post and translation / 点击查看全文和译文';
+    preview.setAttribute('aria-label', preview.title);
+    preview.onclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      showNativeTrackerFeedDetails(preview, ev);
+    };
+    card.appendChild(preview);
+  }
+
+  function mountNativeTrackerFeeds(refresh = false) {
+    for (const [panel, cache] of nativeTrackerFeedCards) {
+      if (!panel.isConnected) { nativeTrackerFeedCards.delete(panel); continue; }
+      for (const [key, card] of cache) if (!nativeTrackerFeeds.has(key)) { card.remove(); cache.delete(key); }
+    }
+    for (const slot of document.querySelectorAll('[data-gdh-native-recycler="1"] [data-gdh-native-feed-key]')) {
+      const key = slot.getAttribute('data-gdh-native-feed-key');
+      const ev = nativeTrackerFeeds.get(key);
+      if (!ev) { slot.replaceChildren(); continue; }
+      const panel = slot.closest('[data-gdh-native-recycler="1"]');
+      let cache = nativeTrackerFeedCards.get(panel);
+      if (!cache) { cache = new Map(); nativeTrackerFeedCards.set(panel, cache); }
+      // During scrolling, an already-mounted card needs no badge/layout work.
+      // The idle full scan still refreshes time, sound and relation settings.
+      if (!refresh && cache.get(key)?.parentElement === slot) continue;
+      const card = fomoFeedCardFor(ev, cache);
+      card.classList.remove('is-abs');
+      card.classList.add('is-native');
+      prepareNativeTrackerFeedComment(card, ev);
+      if (card.style.top) card.style.top = '';
+      delete card.dataset.gdhFomoAfterTop;
+      if (card.parentElement !== slot) slot.replaceChildren(card);
+    }
+    for (const [key, card] of fomoFeedCards) {
+      card.remove();
+      fomoFeedCards.delete(key);
+    }
+  }
+
+  function scheduleNativeTrackerFeeds() {
+    if (nativeTrackerFeedRaf || !document.querySelector('[data-gdh-native-recycler="1"]')) return;
+    nativeTrackerFeedRaf = requestAnimationFrame(() => { nativeTrackerFeedRaf = 0; mountNativeTrackerFeeds(); });
+  }
+
+  function scheduleNativeTrackerFeedMutations(records) {
+    // Full-scan scheduling below may return on the first unrelated mutation.
+    // Inspect the complete batch first so recycled feed slots cannot be skipped.
+    for (const record of records) {
+      const target = record.target instanceof Element ? record.target : record.target?.parentElement;
+      if (record.attributeName === 'data-gdh-native-feed-key'
+        || (record.type === 'childList' && target?.closest('[data-gdh-native-recycler="1"]'))) {
+        scheduleNativeTrackerFeeds();
+        return;
+      }
+    }
+  }
+
   function scanFomoFeed() {
     // 屏蔽折叠和 fomo 混排是两件事：就算关掉了 fomo 推送，被屏蔽的行照样得折叠掉
     if (settings.enableFomoFeed === false && settings.enablePumpFeed === false) {
+      nativeTrackerFeeds.clear();
+      publishTrackerProjection('feeds', []);
       teardownFomoFeed();
       collapseBlockedTrackerRows();
       return;
@@ -9198,6 +9335,23 @@ ${flapTooltipText(info)}
     if (settings.enablePumpFeed !== false && Date.now() - pumpFeedLastPollAt > FOMO_FEED_POLL_MS) pollPumpFeed();
 
     const cards = trackerCards().filter((c) => c.isConnected);
+    if (document.querySelector('[data-gdh-native-recycler="1"]')) {
+      // 让原生 recycler 同时决定过滤后的总行数、占位高度与可见窗口。
+      // 去重在 MAIN 对完整原生 data 执行，不随当前挂载的行来回增删推送。
+      const events = visibleTrackingFeedEvents();
+      nativeTrackerFeeds = new Map(events.map(ev => [ev.key, ev]));
+      clearFomoFeedShifts();
+      document.querySelectorAll('[data-gdh-native-recycler="1"] [data-gdh-token-blocked]').forEach(el => el.removeAttribute('data-gdh-token-blocked'));
+      if (mode === 'table') syncFomoFeedTableLayout(cards);
+      publishTrackerProjection('feeds', events.map(ev => ({
+        key: ev.key, ts: ev.ts, type: ev.type, source: ev.source, addr: ev.addr,
+        chain: ev.chain, tx: ev.tx, pumpWallet: ev.pumpWallet, usd: ev.usd,
+      })));
+      mountNativeTrackerFeeds(true);
+      return;
+    }
+    nativeTrackerFeeds.clear();
+    publishTrackerProjection('feeds', []);
     const events = visibleTrackingFeedEvents(nativeTrackingFeedRows(cards));
     if (!events.length || !cards.length) {
       teardownFomoFeed();
@@ -9643,6 +9797,7 @@ ${flapTooltipText(info)}
     scrollingUntil = Date.now() + 200;
 
     const target = event.target;
+    if (target instanceof Element && target.matches('[data-gdh-native-recycler="1"]')) scheduleNativeTrackerFeeds();
     let trackingScroll = target instanceof Element && fomoFeedScrollTargets.has(target);
     if (!trackingScroll && target instanceof Element
       && (target.querySelector(TRACKER_ITEM_SELECTOR) || target.querySelector(TRACKER_SYMBOL_CELL))) {
@@ -9775,10 +9930,12 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '.gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-token-detail-badges, .gdh-token-marked-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '.gdh-fomofeed-details, .gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-token-detail-badges, .gdh-token-marked-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
+    scheduleNativeTrackerFeedMutations(records);
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
+      if (record.attributeName === 'data-gdh-native-feed-key') continue;
       if (target && target.closest(GDH_SELF_SELECTOR)) continue;
       const changed = [...record.addedNodes, ...record.removedNodes];
       if (similarTokenPanelEl?.isConnected) {
@@ -9808,6 +9965,7 @@ ${flapTooltipText(info)}
     subtree: true,
     attributes: true,
     attributeFilter: [
+      'data-gdh-native-feed-key', 'data-gdh-native-recycler',
       'data-gdh-follow-address',
       'data-gdh-track-mc',
       'data-gdh-track-addr', 'data-gdh-track-chain', 'data-gdh-track-maker',
