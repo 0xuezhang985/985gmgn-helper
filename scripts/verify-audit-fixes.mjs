@@ -1662,8 +1662,9 @@ await test('已打开的 985monitor 页面无需刷新即可恢复会话同步',
   };
   const fn = extractFunction(background, 'wakeOpenMonitor985Tabs');
   await evaluate([fn], 'wakeOpenMonitor985Tabs()', { chrome, Number, Promise });
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ['query', ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ['query', ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*', 'https://985.nz/*', 'https://www.985.nz/*']]);
   assert.deepEqual(calls.filter((call) => call[0] === 'ping').map((call) => call[1]), [11, 22]);
+  assert.ok(calls.filter((call) => call[0] === 'ping').every(call => call[2] === '985-gmgn-follow-ping'));
   assert.deepEqual(calls.filter((call) => call[0] === 'inject'), [
     ['inject', 22, 'reset'],
     ['inject', 22, 'monitor-feed-filters.js,content.js'],

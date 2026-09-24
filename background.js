@@ -659,11 +659,11 @@ async function fetchBrewTrenches(refreshMode = 'cache') {
 async function wakeOpenMonitor985Tabs() {
   try {
     const tabs = await chrome.tabs.query({
-      url: ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*'],
+      url: ['https://985monitor.xyz/*', 'https://*.985monitor.xyz/*', 'https://985.nz/*', 'https://www.985.nz/*'],
     });
     await Promise.allSettled(tabs.filter((tab) => Number.isInteger(tab.id)).map(async (tab) => {
       const alive = await new Promise((resolve) => {
-        chrome.tabs.sendMessage(tab.id, { type: '985-monitor-sync-now' }, (response) => {
+        chrome.tabs.sendMessage(tab.id, { type: '985-gmgn-follow-ping' }, (response) => {
           resolve(!chrome.runtime.lastError && response?.ok === true);
         });
       });
@@ -3069,7 +3069,106 @@ async function recordFomoPageHeartbeat(message, sender) {
   }
 }
 
+// BEGIN 985 GMGN FOLLOW BACKGROUND
+function normalizeMonitorFollow(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const { chain, address, name } = payload;
+  if (!['sol', 'eth', 'bsc', 'base', 'robinhood', 'arc', 'arbitrum', 'hyperevm', 'stable'].includes(chain) || typeof address !== 'string') return null;
+  if (!(chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[a-fA-F0-9]{40}$/).test(address)) return null;
+  if (name !== undefined && typeof name !== 'string') return null;
+  return { chain, address: chain === 'sol' ? address : address.toLowerCase(), name: (name || '').trim().slice(0, 32) };
+}
+
+// Runs in the GMGN tab's ISOLATED world. Credentials never leave that origin;
+// only the small status enum below is returned to the extension/985 page.
+async function addMonitorWalletInGmgn(payload) {
+  const failure = reason => ({ ok: false, reason });
+  if (location.origin !== 'https://gmgn.ai' || window.top !== window) return failure('invalid');
+  const readToken = () => { try { return JSON.parse(localStorage.getItem('tgInfo') || 'null')?.token?.access_token || ''; } catch { return ''; } };
+  const token = readToken();
+  if (typeof token !== 'string' || !token) return failure('login-required');
+  let params;
+  for (const entry of performance.getEntriesByType('resource')) {
+    try {
+      const u = new URL(entry.name);
+      if (u.origin !== 'https://gmgn.ai' || !u.searchParams.has('device_id')) continue;
+      params = new URLSearchParams();
+      for (const k of ['device_id', 'client_id', 'from_app', 'app_ver', 'tz_name', 'tz_offset', 'app_lang', 'os', 'fp_did']) {
+        if (u.searchParams.has(k)) params.set(k, u.searchParams.get(k));
+      }
+      break;
+    } catch { /* Non-URL resource. */ }
+  }
+  if (!params) return failure('not-ready');
+  const signal = AbortSignal.timeout(15000);
+  const request = async (path, body) => {
+    const r = await fetch('https://gmgn.ai/api/v1/follow/' + path + '?' + params, {
+      method: 'POST', credentials: 'include', signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => null);
+    if (r.status === 429) return { error: 'rate-limited' };
+    if (r.status === 401 || j?.code === 40101611) return { error: 'login-required' };
+    if (!r.ok || !j || j.code !== 0) return { error: 'rejected' };
+    return { data: j.data };
+  };
+  try {
+    // This POST is a read-only list endpoint used by GMGN itself.
+    const list = await request('follow_wallet_list', { chain: payload.chain });
+    if (list.error) return failure(list.error);
+    if (!Array.isArray(list.data?.list) || list.data.list.some(row => typeof row?.following_address !== 'string' || !row.following_address)) return failure('list-incomplete');
+    const same = value => typeof value === 'string' && (payload.chain === 'sol' ? value === payload.address : value.toLowerCase() === payload.address);
+    if (list.data.list.some(row => same(row.following_address))) return { ok: true, status: 'exists' };
+    if (list.data.has_more !== false) return failure('list-incomplete');
+    if (readToken() !== token) return failure('login-required');
+    const result = await request('follow_wallet', {
+      chain: payload.chain, wallet_addresses: [payload.address],
+      remark_addresses: payload.name ? [[payload.address, payload.name, '']] : [],
+    });
+    if (result.error) return failure(result.error);
+    return { ok: true, status: 'added' };
+  } catch { return failure('unknown'); } // Never automatically retry a potentially completed write.
+}
+
+const monitorFollowInflight = new Set();
+const monitorFollowCooldown = new Map();
+async function handleMonitorGmgnFollow(message, sender) {
+  const fail = reason => ({ ok: false, reason });
+  const allowed = ['https://985monitor.xyz', 'https://www.985monitor.xyz', 'https://985.nz', 'https://www.985.nz'];
+  try {
+    if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || !Number.isInteger(sender.tab?.id)
+      || !allowed.includes(new URL(sender.url).origin) || new URL(sender.tab.url).origin !== new URL(sender.url).origin) return fail('invalid');
+  } catch { return fail('invalid'); }
+  const payload = normalizeMonitorFollow(message.payload); if (!payload) return fail('invalid');
+  // Serialize across 985 tabs in the same browser profile, including separate normal/incognito contexts.
+  const scope = sender.tab.incognito ? 'private' : 'normal';
+  if (monitorFollowInflight.has(scope) || Date.now() < (monitorFollowCooldown.get(scope) || 0)) return fail('busy');
+  monitorFollowInflight.add(scope);
+  try {
+    const tabs = (await chrome.tabs.query({ url: 'https://gmgn.ai/*' }))
+      .filter(tab => Number.isInteger(tab.id) && !!tab.incognito === !!sender.tab.incognito)
+      .sort((a, b) => Number(b.windowId === sender.tab.windowId) - Number(a.windowId === sender.tab.windowId) || (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    if (!tabs.length) {
+      await chrome.tabs.create({ windowId: sender.tab.windowId, url: 'https://gmgn.ai/follow?chain=' + payload.chain, active: true });
+      return fail('open-gmgn'); // Do not queue an add for after login.
+    }
+    const results = await chrome.scripting.executeScript({ target: { tabId: tabs[0].id, frameIds: [0] }, world: 'ISOLATED', func: addMonitorWalletInGmgn, args: [payload] });
+    const result = results[0]?.result;
+    if (result?.ok === true && ['added', 'exists'].includes(result.status)) return { ok: true, status: result.status };
+    const reason = ['invalid', 'login-required', 'not-ready', 'rate-limited', 'list-incomplete', 'rejected', 'unknown'].includes(result?.reason) ? result.reason : 'unknown';
+    if (reason === 'rate-limited') monitorFollowCooldown.set(scope, Date.now() + 300000);
+    return fail(reason);
+  } catch { return fail('unavailable'); }
+  finally { monitorFollowInflight.delete(scope); monitorFollowCooldown.set(scope, Math.max(monitorFollowCooldown.get(scope) || 0, Date.now() + 1000)); }
+}
+// END 985 GMGN FOLLOW BACKGROUND
+
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === '985-gmgn-follow-add') {
+    handleMonitorGmgnFollow(message, sender).then(sendResponse).catch(() => sendResponse({ ok: false, reason: 'unavailable' }));
+    return true;
+  }
   if (message?.type === '985-monitor-sync-acquire') {
     sendResponse(acquireMonitor985SyncLease(sender));
     return false;

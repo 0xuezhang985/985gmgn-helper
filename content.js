@@ -4,6 +4,108 @@
   if (window.__gdhContentStarted) return;
   window.__gdhContentStarted = true;
 
+  // BEGIN 985 GMGN FOLLOW UI — injected only by the installed extension.
+  function installMonitorGmgnFollow() {
+    if (window.top !== window || !['https://985monitor.xyz', 'https://www.985monitor.xyz', 'https://985.nz', 'https://www.985.nz'].includes(location.origin)) return;
+    const chains = [['eth', 'Ethereum'], ['bsc', 'BSC'], ['base', 'Base'], ['robinhood', 'Robinhood'], ['arc', 'Arc'], ['arbitrum', 'Arbitrum'], ['hyperevm', 'HyperEVM'], ['stable', 'Stable']];
+    const labels = {
+      add: ['Add to GMGN', '添加到 GMGN'], chain: ['Choose chain', '选择链'],
+      added: ['Added ✓', '已添加 ✓'], exists: ['Following ✓', '已关注 ✓'],
+      hint: ['Add to your GMGN tracking list. Your GMGN login stays in this browser.', '添加到您自己的 GMGN 追踪列表；登录信息仅留在本机。'],
+      choose: ['Select a chain first.', '请先选择要追踪的链。'],
+      'login-required': ['Log in to GMGN, then try again.', '请登录 GMGN 后重试。'],
+      'open-gmgn': ['GMGN opened. Log in, then return here and click again.', '已打开 GMGN，请登录后返回这里再次点击。'],
+      'not-ready': ['GMGN is still loading. Try again when ready.', 'GMGN 页面尚未就绪，加载完成后再试。'],
+      'rate-limited': ['GMGN rate limit reached. Please wait before retrying.', 'GMGN 请求限流，请稍后再试。'],
+      'list-incomplete': ['Could not verify the full list. Please add in GMGN.', '未能核验完整名单，请到 GMGN 添加。'],
+      'rejected': ['GMGN rejected the request. Check GMGN before retrying.', 'GMGN 未接受请求，请到 GMGN 检查后重试。'],
+      'unavailable': ['Extension unavailable. Reopen this profile after enabling it.', '插件未就绪，启用后重新打开人物详情。'],
+      'unknown': ['Result unconfirmed. Check GMGN before trying again.', '结果未确认，请先到 GMGN 检查，避免重复添加。'],
+      'busy': ['A request is in progress. Please wait.', '已有请求正在处理中，请稍候。'],
+      'invalid': ['Invalid wallet or chain.', '钱包地址或链无效。'],
+    };
+    const text = key => (labels[key] || labels.unknown)[/^zh/i.test(document.documentElement.lang) ? 1 : 0];
+    const kind = address => /^0x[a-fA-F0-9]{40}$/.test(address) ? 'evm' : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) ? 'sol' : '';
+    let frame = 0;
+    const controls = new Set();
+    const style = document.createElement('style');
+    style.textContent = '.fomo-profile-wallet-row.gdh-follow-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 7px}.gdh-monitor-follow{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;flex:1 0 100%;gap:6px;flex-wrap:wrap}.gdh-monitor-follow button,.gdh-monitor-follow select{box-sizing:border-box;max-width:100%;min-height:24px;padding:3px 7px;border:1px solid #344157;border-radius:6px;background:#151c27;color:#a9c8f5;font:600 11px/1.3 inherit;cursor:pointer}.gdh-monitor-follow button:disabled{cursor:default;opacity:.65}.gdh-monitor-follow button:focus-visible,.gdh-monitor-follow select:focus-visible{outline:2px solid #8fcfc0;outline-offset:2px}.gdh-monitor-follow [role=status]{flex-basis:100%;font-size:11px;line-height:1.4;color:#b6c0cf;text-align:right;overflow-wrap:anywhere}.gdh-monitor-follow [role=status]:empty{display:none}';
+    document.head.appendChild(style);
+    const render = control => {
+      const { button, select, status } = control;
+      const label = control.pending ? 'busy' : control.done || 'add';
+      button.textContent = control.pending ? (/^zh/i.test(document.documentElement.lang) ? '添加中…' : 'Adding…') : text(label);
+      button.title = text('hint');
+      button.disabled = !!control.pending || !!control.done;
+      if (select) { select.options[0].textContent = text('chain'); select.setAttribute('aria-label', text('chain')); select.disabled = !!control.pending; }
+      status.textContent = control.reason ? text(control.reason) : '';
+    };
+    const scan = () => {
+      frame = 0;
+      if (!chrome.runtime?.id) { observer.disconnect(); profileObserver.disconnect(); languageObserver.disconnect(); for (const c of controls) c.wrap.remove(); return; }
+      const modal = document.querySelector('.fomo-profile-modal');
+      if (observedModal !== modal) { profileObserver.disconnect(); observedModal = modal; if (modal) profileObserver.observe(modal, { childList: true, subtree: true }); }
+      for (const c of controls) { if (!c.row.isConnected) controls.delete(c); else render(c); }
+      document.querySelectorAll('.fomo-profile-modal .fomo-profile-wallet-row').forEach(row => {
+        if (row.querySelector('.gdh-monitor-follow')) return;
+        const address = row.querySelector('[data-fomo-wallet-copy]')?.getAttribute('data-fomo-wallet-copy') || '';
+        const type = kind(address); if (!type) return;
+        const wrap = document.createElement('div'); wrap.className = 'gdh-monitor-follow'; wrap.setAttribute('data-i18n-content', '');
+        let select = null;
+        if (type === 'evm') {
+          select = document.createElement('select');
+          for (const [value, label] of [['', text('chain')], ...chains]) { const o = document.createElement('option'); o.value = value; o.textContent = label; select.appendChild(o); }
+          wrap.appendChild(select);
+        }
+        const button = document.createElement('button'); button.type = 'button';
+        const status = document.createElement('span'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+        wrap.append(button, status); row.classList.add('gdh-follow-row'); row.appendChild(wrap);
+        const control = { row, wrap, button, select, status, pending: false, done: '', reason: '' }; controls.add(control); render(control);
+        select?.addEventListener('change', () => { control.done = ''; control.reason = ''; render(control); });
+        button.addEventListener('click', async event => {
+          // No postMessage write bridge: only a real click on our own control can issue a request.
+          if (!event.isTrusted || !row.isConnected || control.pending || control.done || row.querySelector('[data-fomo-wallet-copy]')?.getAttribute('data-fomo-wallet-copy') !== address) return;
+          event.preventDefault(); event.stopPropagation();
+          const chain = type === 'sol' ? 'sol' : select.value;
+          if (!chain) { control.reason = 'choose'; render(control); select.focus(); return; }
+          if (!chrome.runtime?.id) { control.reason = 'unavailable'; render(control); return; }
+          const name = row.closest('.fomo-profile-modal')?.querySelector('[data-fomo-profile-name]')?.textContent.trim().slice(0, 32) || '';
+          control.pending = true; control.reason = ''; render(control);
+          let timer;
+          try {
+            const response = await Promise.race([
+              chrome.runtime.sendMessage({ type: '985-gmgn-follow-add', payload: { chain, address, name } }),
+              new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false, reason: 'unknown' }), 22000); }),
+            ]);
+            if (response?.ok === true && ['added', 'exists'].includes(response.status)) control.done = response.status;
+            else control.reason = response?.reason || 'unknown';
+          } catch { control.reason = 'unavailable'; }
+          finally { clearTimeout(timer); control.pending = false; if (row.isConnected) render(control); }
+        });
+      });
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(scan); };
+    // Ignore ordinary feed churn and our own status text; only profile mount/body updates matter.
+    let observedModal = null;
+    const profileObserver = new MutationObserver(records => {
+      if (records.some(r => !r.target.closest?.('.gdh-monitor-follow'))) schedule();
+    });
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.body, { childList: true });
+    const languageObserver = new MutationObserver(schedule);
+    languageObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== '985-gmgn-follow-ping') return false;
+      sendResponse({ ok: true }); return false;
+    });
+    scan();
+  }
+  installMonitorGmgnFollow();
+  // 985.nz currently needs only the wallet bridge; do not run GMGN-page features here.
+  if (['985.nz', 'www.985.nz'].includes(location.hostname)) return;
+  // END 985 GMGN FOLLOW UI
+
+
   // 在 fomo.family 上只做一件事：把你已登录的 fomo 访问令牌交给插件，
   // 供 GMGN 代币页的 fomo 浮窗读取该代币的观点/交易（fomo 接口必须带 Bearer）。
   // 令牌只存在浏览器本地，只会发给 fomo 自己的 API，不外传；之后不跑任何 GMGN 逻辑。
