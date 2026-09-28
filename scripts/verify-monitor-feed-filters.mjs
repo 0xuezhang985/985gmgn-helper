@@ -34,6 +34,21 @@ assert.equal(filters.allowed(fomo, 'fomo', null, raw), true);
 assert.equal(filters.allowed(pump, 'pump', snapshot({ 'pump-trade': false }), raw), false);
 assert.equal(filters.allowed(pump, 'pump', snapshot({ 'pump-callout': false }), raw), true);
 pass('按账号隔离，断开时不出推送；Pump 喊单开关不误伤成交');
+const only = snapshot({ typeOnly: { fomo: 'buy', pump: 'thesis' } });
+assert.equal(only.fomo.only, 'buy'); assert.equal(only.pump.only, 'thesis');
+for (const bad of ['refund', 'swap', 'BUY', '', 1, ['buy'], { buy: true }, null]) {
+  const s = snapshot({ typeOnly: { fomo: bad, pump: bad } });
+  assert.ok(!Object.hasOwn(s.fomo, 'only') && !Object.hasOwn(s.pump, 'only'), `ignore ${JSON.stringify(bad)}`);
+}
+assert.ok(!Object.hasOwn(snapshot({ typeOnly: ['buy'] }).fomo, 'only'));
+assert.equal(filters.typeShown(fomo, 'fomo', only, raw), true);
+assert.equal(filters.typeShown({ ...fomo, type: 'sell' }, 'fomo', only, raw), false);
+assert.equal(filters.typeShown({ ...fomo, type: 'refund' }, 'fomo', only, raw), false);
+assert.equal(filters.typeShown(pump, 'pump', only, raw), false);
+assert.equal(filters.typeShown(pump, 'pump', only, { ...raw, wallet: 'another-user' }), true);
+assert.equal(filters.typeShown(pump, 'pump', null, raw), true);
+assert.equal(filters.allowed({ ...fomo, type: 'sell' }, 'fomo', only, raw), true, 'allowed() stays type-agnostic for the aggregate');
+pass('「只看」只认 buy/sell/thesis，按账号隔离，未设置不写字段；allowed() 不看类型');
 
 function fixture(source) {
   const isDebot = source === debot;
@@ -86,6 +101,18 @@ for (const [name, source] of [['GMGN', content], ['DeBot', debot]]) {
   t.c.monitor985ChannelPrefs = snapshot({ chainFilters: { pump: { other: false } } });
   assert.equal(t.p({ ...pump, chain: 'arc' }), false);
   pass(`${name} 缓存随链/来源开关重新过滤，取消屏蔽恢复，BSC 不受 Solana 屏蔽影响`);
+  t.c.monitor985ChannelPrefs = snapshot({ typeOnly: { fomo: 'sell' } });
+  assert.deepEqual(t.visible().map(ev => ev.source), ['pump'], 'FOMO 只看卖出时买入卡隐藏，Pump 不受影响');
+  t.c.monitor985ChannelPrefs = snapshot({ typeOnly: { fomo: 'buy', pump: 'thesis' } });
+  assert.deepEqual(t.visible().map(ev => ev.source), ['fomo'], 'Pump 选观点(喊单)时成交整类隐藏');
+  assert.equal(t.f(fomo), true); assert.equal(t.p(pump), true);
+  t.c.monitor985ChannelPrefs = snapshot({ typeOnly: { fomo: 'buy', pump: 'buy' } });
+  assert.equal(t.visible().length, 2);
+  t.c.monitor985ChannelPrefs = snapshot({ typeOnly: { fomo: 'sell', pump: 'sell' } });
+  t.load({ ...raw, wallet: 'another-user' }, { ...raw, wallet: 'another-user' });
+  assert.equal(t.visible().length, 2, 'another account keeps its own choices');
+  t.load();
+  pass(`${name} 「只看」重新筛选缓存卡片，按账号隔离，不改 allowed 结果`);
   t.c.monitor985ChannelPrefs = null;
   t.load({ ...raw, muted: ['alice'] }, { ...raw, muted: ['fixture-wallet'] });
   assert.equal(t.visible().length, 0);
@@ -117,6 +144,10 @@ ag.c.publishBuyAggregateFeeds(['fomo', 'pump']);
 assert.equal(packet.fomo.length + packet.pump.length, 0); assert.deepEqual(packet.reset, ['fomo', 'pump']);
 assert.ok(content.includes("Object.hasOwn(changes, 'monitor985ChannelPrefsV1')"));
 pass('聚合监控同时移除已屏蔽来源的缓存，不继续用旧事件计数或触发警报');
+ag.c.monitor985ChannelPrefs = snapshot({ typeOnly: { fomo: 'sell', pump: 'thesis' } });
+ag.c.publishBuyAggregateFeeds(['fomo', 'pump']);
+assert.equal(packet.fomo.length + packet.pump.length, 2, 'the aggregate keeps buys while the website shows sells/theses only');
+pass('网页「只看」不影响聚合监控，与集中建仓提醒一致');
 const manifest = JSON.parse(read('manifest.json'));
 for (const entry of manifest.content_scripts.filter(x => x.js?.includes('debot-content.js') || x.js?.includes('content.js') && !x.matches.some(m => m.includes('fomo.family')))) {
   assert.equal(entry.js[0], 'monitor-feed-filters.js');

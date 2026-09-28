@@ -8542,6 +8542,8 @@ ${flapTooltipText(info)}
     if (settings.enableFomoFeed !== false) {
       for (const ev of fomoFeedEvents) {
         if (!ev?.key || !ev.ts || !fomoFeedEventAllowed(ev)) continue;
+        // 网页「只看」只管卡片；聚合监控直接用 fomoFeedEventAllowed，不受影响
+        if (!GdhMonitorFeedFilters.typeShown(ev, 'fomo', monitor985ChannelPrefs, monitorFomoCfg)) continue;
         if (chain && ev.chain && ev.chain !== chain) continue;
         out.push(ev);
       }
@@ -8549,6 +8551,7 @@ ${flapTooltipText(info)}
     if (settings.enablePumpFeed !== false) {
       for (const ev of pumpFeedEvents) {
         if (!ev?.key || !ev.ts || !pumpFeedEventAllowed(ev)) continue;
+        if (!GdhMonitorFeedFilters.typeShown(ev, 'pump', monitor985ChannelPrefs, monitorPumpCfg)) continue;
         // Pump 这一路以前漏了链过滤（DeBot 那份一直有），开着「只看当前链」
         // 仍会冒出别的链的成交。
         if (chain && ev.chain && ev.chain !== chain) continue;

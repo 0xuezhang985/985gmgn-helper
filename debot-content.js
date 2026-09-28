@@ -611,6 +611,7 @@
     if (settings.enableFomoFeed !== false) {
       for (const event of fomoEvents) {
         if (!event?.key || !Number(event.ts) || !fomoAllowed(event, blocked)) continue;
+        if (!GdhMonitorFeedFilters.typeShown(event, 'fomo', monitor985ChannelPrefs, monitorFomo)) continue;
         if (chain && event.chain && event.chain !== chain) continue;
         out.push(event);
       }
@@ -618,6 +619,7 @@
     if (settings.enablePumpFeed !== false) {
       for (const event of pumpEvents) {
         if (!event?.key || !Number(event.ts) || !pumpAllowed(event, blocked)) continue;
+        if (!GdhMonitorFeedFilters.typeShown(event, 'pump', monitor985ChannelPrefs, monitorPump)) continue;
         if (chain && event.chain && event.chain !== chain) continue;
         out.push(event);
       }

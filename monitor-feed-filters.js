@@ -17,9 +17,12 @@
     143: 'monad', 1399811149: 'solana', 792703809: 'solana' };
   const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const accountKey = value => String(value || '').trim().replace(/^0x[\da-f]{40}$/i, x => x.toLowerCase());
+  // 985monitor "show only" (typeOnly). Extension event types use the website's names.
+  // Omitted when unset, so snapshots of users who never pick one keep their shape.
+  const onlyTypes = ['buy', 'sell', 'thesis'];
 
   function captureChannels(raw, accountId) {
-    const prefs = object(raw), groups = object(prefs.chainFilters);
+    const prefs = object(raw), groups = object(prefs.chainFilters), typeOnly = object(prefs.typeOnly);
     const result = { accountId: accountKey(accountId) };
     for (const source of ['fomo', 'pump']) {
       const group = object(groups[source]);
@@ -27,6 +30,7 @@
         enabled: prefs[source === 'pump' ? 'pump-trade' : 'fomo'] !== false,
         blockedChains: chains.filter(chain => Object.hasOwn(group, chain) && group[chain] === false),
       };
+      if (onlyTypes.includes(typeOnly[source])) result[source].only = typeOnly[source];
     }
     return result;
   }
@@ -52,5 +56,15 @@
     return rule.enabled !== false && !(Array.isArray(rule.blockedChains) && rule.blockedChains.includes(chainOf(event)));
   }
 
-  return { captureChannels, chainOf, allowed, accountKey };
+  // Feed cards and their sounds only, never allowed(): the buy aggregate also uses
+  // allowed(), and the website's "show only" leaves crowd-entry alerts alone. Other
+  // FOMO types (swap, transfer-in, refund) hide too; the Pump feed only carries
+  // trades, so "thesis" (website callouts) hides it entirely.
+  function typeShown(event, source, snapshot, config) {
+    if (!snapshot?.accountId || accountKey(snapshot.accountId) !== accountKey(config?.wallet)) return true;
+    const only = object(snapshot[source]).only;
+    return !only || event?.type === only;
+  }
+
+  return { captureChannels, chainOf, allowed, typeShown, accountKey };
 });
