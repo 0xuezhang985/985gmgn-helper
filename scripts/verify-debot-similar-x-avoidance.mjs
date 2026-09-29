@@ -106,6 +106,30 @@ try {
   assert.ok(href.includes(peer));
   assert.equal(await page.locator(panel + ' [aria-current="true"]').count(), 1);
   pass('避让后仍保留当前币高亮与站内导航事件');
+  await page.evaluate(() => { window.pinWrites = []; chrome.storage.local.set = value => window.pinWrites.push(value); });
+  assert.equal(await page.getAttribute(panel + ' .gdh-debot-similar-token__pin', 'aria-pressed'), 'false');
+  await page.click(panel + ' .gdh-debot-similar-token__pin');
+  assert.deepEqual(await page.evaluate(() => [settings.debotSimilarTokenPanelPin, window.pinWrites.at(-1)]),
+    [{ x: 308, y: 150 }, { debotSimilarTokenPanelPin: { x: 308, y: 150 } }]);
+  assert.equal(await page.getAttribute(panel + ' .gdh-debot-similar-token__pin', 'aria-pressed'), 'true');
+  pass('DeBot 点 📌 固定在当前位置并写入本机存储');
+  await page.evaluate(() => { makePreview(); document.querySelector('.MuiTooltip-tooltip').style.height = '700px'; scanSimilarTokenPanel(); });
+  await page.waitForTimeout(200);
+  assert.deepEqual(await rect(), { top: 150, left: 308, hidden: false });
+  pass('DeBot 固定后推文预览出现也不下移、不隐藏');
+  const grip = await page.locator(panel + ' .gdh-debot-similar-token__header strong').boundingBox();
+  await page.mouse.move(grip.x + 5, grip.y + 5); await page.mouse.down();
+  await page.mouse.move(grip.x + 105, grip.y + 65, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(p => { const r = document.querySelector(p).getBoundingClientRect(); return r.left === 408 && r.top === 210; }, panel);
+  assert.deepEqual(await page.evaluate(() => [settings.debotSimilarTokenPanelPin, window.pinWrites.at(-1)]),
+    [{ x: 408, y: 210 }, { debotSimilarTokenPanelPin: { x: 408, y: 210 } }]);
+  pass('DeBot 固定时拖动移动，松手记住新位置');
+  await page.click(panel + ' .gdh-debot-similar-token__pin');
+  assert.deepEqual(await page.evaluate(() => [settings.debotSimilarTokenPanelPin, window.pinWrites.at(-1)]), [null, { debotSimilarTokenPanelPin: null }]);
+  await at(783);
+  await page.evaluate(() => document.querySelector('#preview').remove());
+  await at(150);
+  pass('DeBot 取消固定后恢复贴列表与避让推文');
   await page.evaluate(() => { settings.enableSimilarTokenPanel = false; scanSimilarTokenPanel(); makePreview(); });
   assert.equal(await page.locator(panel).count(), 0);
   assert.equal(await page.evaluate(() => similarTokenXWatches.length), 0);

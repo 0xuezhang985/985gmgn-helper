@@ -378,6 +378,7 @@
     enableMonitorAggregate: true,
     enableSimilarTokenPanel: false,
     similarTokenCacheMinutes: 5,
+    similarTokenPanelPin: null,
     syncGmgnTokenBlacklist: true,
     fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
     specialWallets: [],
@@ -3061,7 +3062,49 @@ ${flapTooltipText(info)}
   let similarTokenDrag = null;
   let similarTokenDismissedRoute = '';
 
-  function bindSimilarTokenPanelControls(header, close) {
+  // 「📌 固定位置」：钉住后停在用户放的位置，不再贴追踪列表、不再避让 X 预览；位置存本机，刷新和切币都保留。
+  function similarTokenPinnedPosition() {
+    const pin = settings.similarTokenPanelPin;
+    return pin && Number.isFinite(pin.x) && Number.isFinite(pin.y) ? pin : null;
+  }
+
+  function saveSimilarTokenPin(pin) {
+    settings.similarTokenPanelPin = pin;
+    try {
+      chrome.storage.local.set({ similarTokenPanelPin: pin });
+    } catch {
+      // 扩展重载后旧上下文失效；本页仍按新状态显示
+    }
+  }
+
+  // 只在状态变化时写 DOM：定位每帧都会调用这里
+  function syncSimilarTokenPinButton() {
+    const button = similarTokenPanelEl?.querySelector('.gdh-similar-token__pin');
+    if (!button) return;
+    const pinned = Boolean(similarTokenPinnedPosition());
+    if (similarTokenPanelEl.classList.contains('is-pinned') !== pinned) similarTokenPanelEl.classList.toggle('is-pinned', pinned);
+    if (button.getAttribute('aria-pressed') === String(pinned)) return;
+    button.setAttribute('aria-pressed', String(pinned));
+    button.setAttribute('aria-label', pinned ? '取消固定浮窗位置' : '固定浮窗位置');
+    button.title = pinned
+      ? '已固定：点一下取消，恢复贴着追踪列表'
+      : '固定位置：停在当前位置，不再跟随追踪列表、不避让 X 预览；拖动标题栏可调整，刷新后保留';
+  }
+
+  function bindSimilarTokenPanelControls(header, close, pin) {
+    pin.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (similarTokenPinnedPosition()) {
+        saveSimilarTokenPin(null);
+        similarTokenUserPosition = null;
+      } else {
+        const rect = similarTokenPanelEl.getBoundingClientRect();
+        saveSimilarTokenPin({ x: Math.round(rect.left), y: Math.round(rect.top) });
+      }
+      syncSimilarTokenPinButton();
+      scheduleSimilarTokenPosition();
+    });
     close.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3089,9 +3132,14 @@ ${flapTooltipText(info)}
     });
     const stop = (event) => {
       if (!similarTokenDrag || similarTokenDrag.id !== event.pointerId) return;
+      const moved = similarTokenDrag.moved;
       similarTokenDrag = null;
       header.classList.remove('is-dragging');
       if (header.hasPointerCapture(event.pointerId)) header.releasePointerCapture(event.pointerId);
+      // 固定状态下拖完就记住新位置；越界的坐标在定位时收回可见范围
+      if (moved && similarTokenUserPosition && similarTokenPinnedPosition()) {
+        saveSimilarTokenPin({ x: Math.round(similarTokenUserPosition.left), y: Math.round(similarTokenUserPosition.top) });
+      }
     };
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => header.addEventListener(type, stop));
   }
@@ -3397,15 +3445,19 @@ ${flapTooltipText(info)}
     let left;
     if (leftSpace >= width || leftSpace >= rightSpace) left = panelRect.left - width - gap;
     else left = panelRect.right + gap;
-    if (similarTokenUserPosition) left = similarTokenUserPosition.left;
+    // 固定时以钉住的位置为准（拖动中跟手），不再避让 X 预览；未固定时和原来一样
+    const pinned = similarTokenPinnedPosition();
+    const base = pinned ? (similarTokenDrag?.moved ? similarTokenUserPosition : { left: pinned.x, top: pinned.y }) : similarTokenUserPosition;
+    if (base) left = base.left;
     left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
-    let top = Math.max(edge, Math.min(similarTokenUserPosition?.top ?? bodyRect.top, window.innerHeight - 168));
+    let top = Math.max(edge, Math.min(base?.top ?? bodyRect.top, window.innerHeight - 168));
     let avoidingX = false;
-    for (const preview of similarTokenXPreviewRects()) {
+    for (const preview of pinned ? [] : similarTokenXPreviewRects()) {
       if (preview.right <= left || preview.left >= left + width || preview.bottom <= 0 || preview.top >= window.innerHeight) continue;
       top = Math.max(top, Math.ceil(preview.bottom) + gap);
       avoidingX = true;
     }
+    syncSimilarTokenPinButton();
     const available = Math.max(0, Math.floor(window.innerHeight - top - edge));
     const placement = { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`,
       maxHeight: `${avoidingX ? available : Math.max(160, available)}px`,
@@ -3438,9 +3490,13 @@ ${flapTooltipText(info)}
       close.textContent = '×';
       close.setAttribute('aria-label', '关闭同名币浮窗');
       close.title = '关闭当前币浮窗；切换代币或重新开启功能后恢复';
+      const pin = document.createElement('button');
+      pin.type = 'button';
+      pin.className = 'gdh-similar-token__pin';
+      pin.textContent = '📌';
       header.title = '拖动标题栏移动浮窗';
-      header.append(heading, close);
-      bindSimilarTokenPanelControls(header, close);
+      header.append(heading, pin, close);
+      bindSimilarTokenPanelControls(header, close, pin);
       similarTokenPanelEl.appendChild(header);
       document.body.appendChild(similarTokenPanelEl);
       similarTokenPanelKey = '';

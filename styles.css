@@ -2278,6 +2278,34 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
+.gdh-similar-token__pin {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: 13px/24px sans-serif;
+  opacity: .45;
+  filter: grayscale(1);
+  cursor: pointer;
+}
+
+.gdh-similar-token__pin:hover,
+.gdh-similar-token__pin:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.gdh-similar-token-panel.is-pinned .gdh-similar-token__pin {
+  opacity: 1;
+  filter: none;
+  background: color-mix(in srgb, #f5b83d 22%, transparent);
+}
+
 .gdh-similar-token__list {
   min-height: 0;
   overflow: auto;

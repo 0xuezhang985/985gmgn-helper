@@ -10,14 +10,16 @@ let checks=0;const pass=s=>console.log(`PASS ${++checks}: ${s}`);
 try {
   const page=await browser.newPage({viewport:{width:1100,height:900}});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.setContent('<meta charset=utf-8><section id=track style="position:absolute;left:0;top:80px;width:300px;height:700px"><div data-sentry-component="TrackingBody" style="margin-top:70px">追踪</div></section><aside class=gdh-similar-token-panel><div class=gdh-similar-token__header>同名 / 相似币</div><div style="height:180px;flex-shrink:1;overflow:auto">当前币 · 相似币</div></aside>');
+  await page.setContent('<meta charset=utf-8><section id=track style="position:absolute;left:0;top:80px;width:300px;height:700px"><div data-sentry-component="TrackingBody" style="margin-top:70px">追踪</div></section><aside class=gdh-similar-token-panel><div class=gdh-similar-token__header><div><strong>同名 / 相似币</strong><span></span></div><button type=button class=gdh-similar-token__pin>📌</button><button type=button class=gdh-similar-token__close>×</button></div><div style="height:180px;flex-shrink:1;overflow:auto">当前币 · 相似币</div></aside>');
   await page.addStyleTag({content:read('styles.css')});
   await page.addScriptTag({content:`
     let similarTokenPanelEl=document.querySelector('aside'),similarTokenTrackerAnchor=document.querySelector('#track');
-    let similarTokenUserPosition=null;
+    let similarTokenUserPosition=null,similarTokenDrag=null,similarTokenDismissedRoute='';
     let similarTokenPositionRaf=0,similarTokenXWatches=[],similarTokenXResize=null,similarTokenXMutation=null;
-    const clearSimilarTokenPanel=()=>{};
-    ${['scheduleSimilarTokenPosition','similarTokenXPreviewRects','positionSimilarTokenPanel'].map(take).join('\n')}
+    const settings={};window.pinWrites=[];window.chrome={storage:{local:{set:value=>window.pinWrites.push(value)}}};
+    const clearSimilarTokenPanel=()=>{},currentTokenRoute=()=>null,similarTokenMetaKey=()=>'';
+    ${['scheduleSimilarTokenPosition','similarTokenXPreviewRects','similarTokenPinnedPosition','saveSimilarTokenPin','syncSimilarTokenPinButton','bindSimilarTokenPanelControls','positionSimilarTokenPanel'].map(take).join('\n')}
+    bindSimilarTokenPanelControls(document.querySelector('.gdh-similar-token__header'),document.querySelector('.gdh-similar-token__close'),document.querySelector('.gdh-similar-token__pin'));
     const scheduleFomoFeedRowReflow=()=>{},scheduleScan=()=>{},scheduleSimilarTokenScan=()=>{};
     const scheduleNativeTrackerFeeds=()=>{};
     ${take('scheduleNativeTrackerFeedMutations')}
@@ -44,6 +46,31 @@ try {
   assert.deepEqual(await rect(),baseline);pass('普通提示不触发避让');
   await page.evaluate(()=>{const x=document.querySelector('#unrelated');x.innerHTML='<div data-sentry-component="TweetContent">X</div>';x.style.left='750px';positionSimilarTokenPanel(similarTokenTrackerAnchor);});
   assert.deepEqual(await rect(),baseline);pass('横向不重叠的 X 预览不移动同名窗');
+  await page.evaluate(()=>{document.querySelector('#unrelated').remove();positionSimilarTokenPanel(similarTokenTrackerAnchor);});
+  assert.equal(await page.getAttribute('.gdh-similar-token__pin','aria-pressed'),'false');
+  await page.click('.gdh-similar-token__pin');
+  assert.deepEqual(await page.evaluate(()=>[settings.similarTokenPanelPin,window.pinWrites.at(-1)]),[{x:308,y:150},{similarTokenPanelPin:{x:308,y:150}}]);
+  assert.equal(await page.getAttribute('.gdh-similar-token__pin','aria-pressed'),'true');
+  assert.ok(await page.evaluate(()=>similarTokenPanelEl.classList.contains('is-pinned')));pass('点 📌 固定在当前位置并写入本机存储');
+  await page.evaluate(()=>{const x=document.createElement('div');x.id='preview';x.className='pi-tooltip-container';x.setAttribute('role','tooltip');x.style.cssText='position:fixed;left:350px;top:75px;width:302px;height:700px';x.innerHTML='<div data-sentry-component="TweetContent">X</div>';document.body.appendChild(x);positionSimilarTokenPanel(similarTokenTrackerAnchor);});
+  await page.waitForTimeout(150);
+  assert.deepEqual(await rect(),baseline);pass('固定后 X 预览出现也不下移、不隐藏');
+  const pinWrites=await page.evaluate(async()=>{let n=0;const o=new MutationObserver(rs=>n+=rs.length);o.observe(similarTokenPanelEl,{attributes:true,subtree:true});for(let i=0;i<10;i++)positionSimilarTokenPanel(similarTokenTrackerAnchor);await Promise.resolve();o.disconnect();return n;});
+  assert.equal(pinWrites,0);pass('固定状态下重复定位不写 DOM');
+  const grip=await page.locator('.gdh-similar-token__header strong').boundingBox();
+  await page.mouse.move(grip.x+5,grip.y+5);await page.mouse.down();await page.mouse.move(grip.x+105,grip.y+65,{steps:6});await page.mouse.up();
+  await page.waitForFunction(()=>{const r=document.querySelector('aside').getBoundingClientRect();return r.left===408&&r.top===210;});
+  assert.deepEqual(await page.evaluate(()=>[settings.similarTokenPanelPin,window.pinWrites.at(-1)]),[{x:408,y:210},{similarTokenPanelPin:{x:408,y:210}}]);pass('固定时拖动标题栏移动，松手记住新位置');
+  await page.evaluate(()=>{similarTokenUserPosition=null;similarTokenDrag=null;positionSimilarTokenPanel(similarTokenTrackerAnchor);});
+  assert.deepEqual(await rect(),{top:210,left:408,bottom:(await rect()).bottom,hidden:false});pass('刷新后（无临时拖动状态）按保存的位置出现');
+  await page.evaluate(()=>{settings.similarTokenPanelPin={x:5000,y:-60};positionSimilarTokenPanel(similarTokenTrackerAnchor);});
+  const clamped=await rect();assert.equal(clamped.left,await page.evaluate(()=>window.innerWidth-similarTokenPanelEl.offsetWidth-8));assert.equal(clamped.top,8);pass('坐标越界时收回可见范围');
+  await page.evaluate(()=>{settings.similarTokenPanelPin={x:408,y:210};positionSimilarTokenPanel(similarTokenTrackerAnchor);});
+  await page.click('.gdh-similar-token__pin');
+  assert.deepEqual(await page.evaluate(()=>[settings.similarTokenPanelPin,window.pinWrites.at(-1),similarTokenPanelEl.classList.contains('is-pinned')]),[null,{similarTokenPanelPin:null},false]);
+  await page.waitForFunction(()=>{const e=document.querySelector('aside');return e.getBoundingClientRect().top===783&&getComputedStyle(e).visibility!=='hidden';});pass('取消固定后恢复避让 X 预览（移到预览下方 8px）');
+  await page.evaluate(()=>document.querySelector('#preview').remove());
+  await page.waitForFunction(()=>{const r=document.querySelector('aside').getBoundingClientRect();return r.left===308&&r.top===150;});pass('取消固定后回到贴着追踪列表的默认位置');
   assert.deepEqual(errors,[],'production observer dependencies must be loaded by the fixture');
   console.log(`1..${checks}`);
 } finally {await browser.close();}
