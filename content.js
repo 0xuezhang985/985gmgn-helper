@@ -6687,6 +6687,11 @@ ${flapTooltipText(info)}
     if (clone && clone.dataset.gdhNativePool !== href) { clone.remove(); clone = null; }
     if (!clone) {
       clone = native.cloneNode(true);
+      // 原件可能已经被我们藏过（徽章行被重绘删掉后重建、React 复用同一个 <a> 换了链接）。
+      // cloneNode 会把 display:none 和隐藏标记一起复制过来，新克隆就成了隐形的——
+      // 「底池有时候显示有时候不显示」就是这么来的。
+      clone.style.removeProperty('display');
+      delete clone.dataset.gdhNativePoolHidden;
       clone.classList.add('gdh-native-pool');
       clone.dataset.gdhNativePool = href;
       clone.removeAttribute('id');
