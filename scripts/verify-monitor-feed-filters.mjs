@@ -149,9 +149,11 @@ ag.c.publishBuyAggregateFeeds(['fomo', 'pump']);
 assert.equal(packet.fomo.length + packet.pump.length, 2, 'the aggregate keeps buys while the website shows sells/theses only');
 pass('网页「只看」不影响聚合监控，与集中建仓提醒一致');
 const manifest = JSON.parse(read('manifest.json'));
-for (const entry of manifest.content_scripts.filter(x => x.js?.includes('debot-content.js') || x.js?.includes('content.js') && !x.matches.some(m => m.includes('fomo.family')))) {
+for (const entry of manifest.content_scripts.filter(x => x.matches.some(m => /(?:gmgn\.ai|debot\.ai|985monitor\.xyz|985\.nz)\//.test(m)) && (x.js?.includes('debot-content.js') || x.js?.includes('content.js')))) {
   assert.equal(entry.js[0], 'monitor-feed-filters.js');
 }
+const xEntry = manifest.content_scripts.find(x => x.matches.includes('https://x.com/*'));
+assert.deepEqual(xEntry.js, ['content.js'], 'X only runs the early-return shortcut, not feed modules');
 assert.ok(read('scripts/build-release.ps1').includes("'monitor-feed-filters.js'"));
 assert.ok(read('background.js').includes("files: ['monitor-feed-filters.js', 'content.js']"));
 pass('GMGN/DeBot/985monitor 与升级后补注入均先加载过滤器，发布包不会漏模块');

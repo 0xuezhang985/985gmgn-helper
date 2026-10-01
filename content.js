@@ -4,6 +4,111 @@
   if (window.__gdhContentStarted) return;
   window.__gdhContentStarted = true;
 
+  // BEGIN 985 X QUICK FOLLOW UI
+  function installMonitorQuickFollowPresence() {
+    if (window.top !== window || !['https://985monitor.xyz', 'https://www.985monitor.xyz', 'https://985.nz', 'https://www.985.nz'].includes(location.origin)) return;
+    let last = '';
+    const sync = () => {
+      if (!chrome.runtime?.id) return;
+      try {
+        const payload = { loggedIn: !!(localStorage.getItem('xMonitorWalletAddress') && localStorage.getItem('xMonitorWalletToken')),
+          language: document.documentElement.lang === 'zh' || document.documentElement.lang.startsWith('zh-') ? 'zh' : 'en' };
+        const stamp = JSON.stringify(payload);
+        if (last === stamp) return;
+        chrome.runtime.sendMessage({ type: '985-x-quick-presence', payload }).then(r => { if (r?.ok) last = stamp; }).catch(() => {});
+      } catch {}
+    };
+    const timer = setInterval(() => { if (!chrome.runtime?.id) clearInterval(timer); else sync(); }, 15000);
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', sync);
+    sync();
+  }
+  installMonitorQuickFollowPresence();
+
+  function installXQuickFollow() {
+    if (window.top !== window || !['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(location.hostname)) return false;
+    const reserved = new Set(['home','explore','search','notifications','messages','i','settings','compose','login','logout','signup','intent','share','tos','privacy','jobs','communities','lists','premium','grok','connect_people']);
+    const profile = () => {
+      const parts = location.pathname.split('/').filter(Boolean), handle = (parts[0] || '').toLowerCase();
+      return /^[a-z0-9_]{1,15}$/.test(handle) && !reserved.has(handle) && parts.length <= 2
+        && (!parts[1] || ['with_replies','media','highlights','articles'].includes(parts[1])) ? handle : '';
+    };
+    let host, button, status, currentHandle = '', availability = null, pending = false, timer = 0, checkedAt = 0, checking = false;
+    const text = (en, zh) => availability?.language === 'zh' ? zh : en;
+    function remove() { host?.remove(); host = button = status = null; }
+    function validHeader(handle) {
+      const main = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main');
+      const name = main?.querySelector('[data-testid="UserName"]');
+      if (!name || !name.innerText.split(/\s+/).some(t => t.toLowerCase() === '@' + handle)) return null;
+      const actions = main.querySelector('[data-testid="userActions"]');
+      return actions && !actions.closest('article,[data-testid="tweet"]') ? actions.parentElement : null;
+    }
+    function render() {
+      if (!host) return;
+      button.textContent = pending ? text('Opening…', '正在打开…') : text('985 Follow', '985 关注');
+      button.title = text('Follow and configure this account in 985', '在 985 关注并设置这个账号');
+      button.disabled = pending;
+    }
+    async function check(force = false) {
+      if (checking || !chrome.runtime?.id || (!force && Date.now() - checkedAt < 30000)) return;
+      checking = true;
+      try { availability = await chrome.runtime.sendMessage({ type: '985-x-quick-state' }); }
+      catch { availability = null; }
+      finally { checking = false; checkedAt = Date.now(); schedule(); }
+    }
+    function scan() {
+      timer = 0;
+      if (!chrome.runtime?.id) { observer.disconnect(); clearInterval(heartbeat); remove(); return; }
+      const handle = profile();
+      if (handle !== currentHandle) { currentHandle = handle; pending = false; remove(); }
+      if (!handle) { remove(); return; }
+      check();
+      const anchor = validHeader(handle);
+      if (!anchor || !availability?.loggedIn) { remove(); return; }
+      if (host?.parentElement !== anchor) {
+        remove(); host = document.createElement('span'); host.id = 'gdh-985-x-follow';
+        host.style.cssText = 'display:inline-flex;flex:0 0 auto;margin:0 8px 6px 0;max-width:100%;';
+        const shadow = host.attachShadow({ mode: 'closed' });
+        const style = document.createElement('style');
+        style.textContent = ':host{font-family:Arial,sans-serif}button{appearance:none;box-sizing:border-box;border:1px solid #8b701e;border-radius:999px;min-height:34px;padding:5px 12px;background:#191710;color:#f7d56b;font:700 13px/1.2 Arial,sans-serif;cursor:pointer;white-space:nowrap;transition:background .15s}button:hover{background:#302818}button:focus-visible{outline:2px solid #f7d56b;outline-offset:3px}button:disabled{opacity:.65;cursor:wait}[role=status]{position:absolute;background:#191710;color:#f7d56b;padding:8px;border-radius:8px;font:12px/1.4 Arial,sans-serif;max-width:220px;margin-top:38px;z-index:10}[role=status]:empty{display:none}@media(prefers-reduced-motion:reduce){button{transition:none}}';
+        button = document.createElement('button'); button.type = 'button';
+        status = document.createElement('span'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+        shadow.append(style, button, status); anchor.prepend(host);
+        button.addEventListener('click', async event => {
+          if (!event.isTrusted || pending || profile() !== handle || !validHeader(handle) || !host?.isConnected) return;
+          event.preventDefault(); event.stopPropagation(); pending = true; status.textContent = ''; render();
+          try {
+            const result = await chrome.runtime.sendMessage({ type: '985-x-quick-open', handle });
+            if (!result?.ok) {
+              if (result?.reason === 'login-required') { availability = null; remove(); }
+              else if (status) status.textContent = text('Could not open 985. Please try again.', '暂时无法打开 985，请重试。');
+            }
+          } catch { if (status) status.textContent = text('Extension updated. Reopen this X page.', '插件已更新，请重新打开此 X 页面。'); }
+          finally { pending = false; render(); }
+        });
+      }
+      render();
+    }
+    const schedule = () => { if (!timer && !document.hidden) timer = setTimeout(scan, 180); };
+    // X is an SPA. One debounced observer; no per-tweet scanning, no X API calls.
+    const observer = new MutationObserver(records => {
+      if (records.some(r => !r.target.closest?.('#gdh-985-x-follow'))) schedule();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    const heartbeat = setInterval(() => { if (!document.hidden) schedule(); }, 30000);
+    window.addEventListener('popstate', schedule);
+    window.addEventListener('focus', () => { check(true); schedule(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { check(true); schedule(); } });
+    chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.monitor985QuickPresenceV1) { check(true); schedule(); } });
+    chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+      if (message?.type !== '985-x-quick-ping') return false;
+      reply({ ok: true }); check(true); schedule(); return false;
+    });
+    scan(); return true;
+  }
+  if (installXQuickFollow()) return;
+  // END 985 X QUICK FOLLOW UI
   // BEGIN 985 GMGN FOLLOW UI — injected only by the installed extension.
   function installMonitorGmgnFollow() {
     if (window.top !== window || !['https://985monitor.xyz', 'https://www.985monitor.xyz', 'https://985.nz', 'https://www.985.nz'].includes(location.origin)) return;

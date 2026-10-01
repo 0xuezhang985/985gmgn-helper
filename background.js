@@ -3164,7 +3164,109 @@ async function handleMonitorGmgnFollow(message, sender) {
 // END 985 GMGN FOLLOW BACKGROUND
 
 
+// BEGIN 985 X QUICK FOLLOW BACKGROUND
+const QUICK_985_ORIGINS = ['https://985monitor.xyz', 'https://www.985monitor.xyz', 'https://985.nz', 'https://www.985.nz'];
+const QUICK_X_ORIGINS = ['https://x.com', 'https://www.x.com', 'https://twitter.com', 'https://www.twitter.com'];
+const quickFollowWindows = new Map(), quickFollowOpening = new Set();
+function quickSender(sender, origins) {
+  try {
+    return sender.id === chrome.runtime.id && sender.frameId === 0 && Number.isInteger(sender.tab?.id)
+      && origins.includes(new URL(sender.url).origin) && new URL(sender.tab.url).origin === new URL(sender.url).origin;
+  } catch { return false; }
+}
+function quickProfileHandle(url) {
+  try {
+    const u = new URL(url), parts = u.pathname.split('/').filter(Boolean), h = (parts[0] || '').toLowerCase();
+    const excluded = ['home','explore','search','notifications','messages','i','settings','compose','login','logout','signup','intent','share','tos','privacy','jobs','communities','lists','premium','grok','connect_people'];
+    return QUICK_X_ORIGINS.includes(u.origin) && /^[a-z0-9_]{1,15}$/.test(h) && !excluded.includes(h)
+      && parts.length <= 2 && (!parts[1] || ['with_replies','media','highlights','articles'].includes(parts[1])) ? h : '';
+  } catch { return ''; }
+}
+async function noteQuickPresence(payload, sender) {
+  if (!quickSender(sender, QUICK_985_ORIGINS) || typeof payload?.loggedIn !== 'boolean') return { ok: false };
+  // Private windows never persist their login hints into the normal profile.
+  if (sender.tab.incognito) return { ok: true };
+  const origin = new URL(sender.url).origin;
+  const state = (await chrome.storage.local.get('monitor985QuickPresenceV1')).monitor985QuickPresenceV1 || {};
+  state[origin] = { loggedIn: payload.loggedIn, language: payload.language === 'zh' ? 'zh' : 'en', at: Date.now() };
+  await chrome.storage.local.set({ monitor985QuickPresenceV1: state });
+  return { ok: true };
+}
+function readQuickPresenceInMonitor() {
+  // ISOLATED same-origin inspection. Return no address, auth token, settings or watch list.
+  try {
+    return { loggedIn: !!(localStorage.getItem('xMonitorWalletAddress') && localStorage.getItem('xMonitorWalletToken')),
+      language: /^zh(?:-|$)/.test(document.documentElement.lang) ? 'zh' : 'en' };
+  } catch { return { loggedIn: false, language: 'en' }; }
+}
+async function selectQuickMonitor(sender) {
+  const tabs = (await chrome.tabs.query({ url: QUICK_985_ORIGINS.map(origin => origin + '/*') }))
+    .filter(tab => Number.isInteger(tab.id) && !!tab.incognito === !!sender.tab.incognito)
+    .sort((a,b) => Number(b.windowId === sender.tab.windowId) - Number(a.windowId === sender.tab.windowId) || (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  const openOrigins = new Set();
+  for (const tab of tabs.slice(0, 8)) {
+    const origin = new URL(tab.url).origin; openOrigins.add(origin);
+    try {
+      const result = (await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, world: 'ISOLATED', func: readQuickPresenceInMonitor }))[0]?.result;
+      if (result?.loggedIn === true) return { origin, language: result.language === 'zh' ? 'zh' : 'en' };
+    } catch {}
+  }
+  if (sender.tab.incognito) return null;
+  const state = (await chrome.storage.local.get('monitor985QuickPresenceV1')).monitor985QuickPresenceV1 || {};
+  // An already closed 985 tab may still have a valid site login. The popup validates
+  // that login with the server before allowing any save; this hint grants no authority.
+  for (const [origin, value] of Object.entries(state).sort((a,b) => (b[1]?.at || 0) - (a[1]?.at || 0))) {
+    if (QUICK_985_ORIGINS.includes(origin) && !openOrigins.has(origin) && value?.loggedIn === true
+      && Date.now() - value.at < 30 * 86400000) return { origin, language: value.language === 'zh' ? 'zh' : 'en' };
+  }
+  return null;
+}
+async function handleXQuickFollow(message, sender) {
+  if (!quickSender(sender, QUICK_X_ORIGINS)) return { ok: false, reason: 'invalid' };
+  const live = await chrome.tabs.get(sender.tab.id);
+  if (!live || !!live.incognito !== !!sender.tab.incognito || !QUICK_X_ORIGINS.includes(new URL(live.url).origin)) return { ok: false, reason: 'invalid' };
+  const handle = quickProfileHandle(live.url);
+  if (!handle || (message.type === '985-x-quick-open' && message.handle !== handle)) return { ok: false, reason: 'invalid' };
+  const monitor = await selectQuickMonitor(sender);
+  if (message.type === '985-x-quick-state') return { ok: true, loggedIn: !!monitor, language: monitor?.language || 'en' };
+  if (!monitor) return { ok: false, reason: 'login-required' };
+  const key = (sender.tab.incognito ? 'private:' : 'normal:') + monitor.origin + ':' + handle;
+  if (quickFollowOpening.has(key)) return { ok: true };
+  quickFollowOpening.add(key);
+  try {
+    const url = monitor.origin + '/?quickFollow=' + encodeURIComponent(handle);
+    const old = quickFollowWindows.get(key);
+    if (old) {
+      const win = await chrome.windows.get(old, { populate: true }).catch(() => null);
+      if (win && !!win.incognito === !!sender.tab.incognito && win.tabs?.some(tab => tab.url === url)) {
+        await chrome.windows.update(win.id, { focused: true }); return { ok: true };
+      }
+      quickFollowWindows.delete(key);
+    }
+    const win = await chrome.windows.create({ url, type: 'popup', width: 470, height: 850, focused: true, incognito: !!sender.tab.incognito });
+    if (Number.isInteger(win?.id)) quickFollowWindows.set(key, win.id);
+    return { ok: true };
+  } finally { quickFollowOpening.delete(key); }
+}
+async function wakeOpenXQuickFollowTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: QUICK_X_ORIGINS.map(origin => origin + '/*') });
+    for (const tab of tabs) {
+      if (!Number.isInteger(tab.id)) continue;
+      try { if ((await chrome.tabs.sendMessage(tab.id, { type: '985-x-quick-ping' }))?.ok) continue; } catch {}
+      try { await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'] }); } catch {}
+    }
+  } catch {}
+}
+// END 985 X QUICK FOLLOW BACKGROUND
+void wakeOpenXQuickFollowTabs();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === '985-x-quick-presence') {
+    noteQuickPresence(message.payload, sender).then(sendResponse).catch(() => sendResponse({ ok: false })); return true;
+  }
+  if (['985-x-quick-state', '985-x-quick-open'].includes(message?.type)) {
+    handleXQuickFollow(message, sender).then(sendResponse).catch(() => sendResponse({ ok: false, reason: 'unavailable' })); return true;
+  }
   if (message?.type === '985-gmgn-follow-add') {
     handleMonitorGmgnFollow(message, sender).then(sendResponse).catch(() => sendResponse({ ok: false, reason: 'unavailable' }));
     return true;

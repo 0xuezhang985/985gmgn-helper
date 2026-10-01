@@ -17,13 +17,14 @@ $info = Join-Path $temp 'AssemblyInfo.cs'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $exe = Join-Path $temp 'test-updater.exe'
 $zip = Join-Path $root 'dist\public-v0.46.67\985gmgn-helper-v0.46.67.zip'
+$currentVersion = (Get-Content (Join-Path $root 'manifest.json') -Raw | ConvertFrom-Json).version
 $refs = @('System','System.Core','System.Drawing','System.Windows.Forms','System.Web.Extensions','System.IO.Compression','System.IO.Compression.FileSystem') | ForEach-Object { '/reference:' + (Join-Path $framework ($_ + '.dll')) }
 & (Join-Path $framework 'csc.exe') /nologo /target:winexe /codepage:65001 "/out:$exe" "/resource:$zip,ExtensionPackage.zip" @refs $cs $info
 if ($LASTEXITCODE -ne 0) { throw '测试更新器编译失败' }
 @'
 import sys,subprocess,struct,json,zipfile,hashlib
 from pathlib import Path
-exe,root,zp=map(Path,sys.argv[1:]);root.mkdir()
+exe,root,zp=map(Path,sys.argv[1:4]);current_version=sys.argv[4];root.mkdir()
 with zipfile.ZipFile(zp) as z:z.extractall(root/'Extension')
 (root/'install.json').write_text('{}',encoding='utf8')
 def call(action,origin='chrome-extension://bdhjiabmohplopjledcagfaejbgdeonf/',**kw):
@@ -54,9 +55,14 @@ r=call('update',version='0.46.67');assert r['ok'],r
 with zipfile.ZipFile(zp) as z:
     for name in z.namelist():assert (root/'Extension'/name).read_bytes()==z.read(name),name
 print('PASS: 跳过阻止升回；恢复后重装 v0.46.67，21 文件与正式包一致')
-h=call('history',currentVersion='0.46.69');assert h['ok'],h
-versions=[x['version'] for x in h['versions']];assert '0.46.67' in versions and '0.46.68' not in versions
+h=call('history',currentVersion=current_version);assert h['ok'],h
+versions=[x['version'] for x in h['versions']]
+# The official history is paginated. Old v0.46.67 may fall outside the recent
+# release window; its exact bytes and rollback path were already verified above.
+assert versions and all(isinstance(v,str) and len(v.split('.'))>=3 for v in versions)
+assert all(tuple(map(int,v.split('.')))<tuple(map(int,current_version.split('.'))) for v in versions)
+assert '0.46.68' not in versions
 print('PASS: 历史版本来自官方包，排除已撤回 v0.46.68')
 print('Isolated test directory: '+str(root))
-'@ | python - $exe $isolated $zip
+'@ | python - $exe $isolated $zip $currentVersion
 if ($LASTEXITCODE -ne 0) { throw '原生版本管理回归失败' }
