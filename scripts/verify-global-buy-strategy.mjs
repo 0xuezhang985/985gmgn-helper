@@ -109,7 +109,7 @@ try {
   for(const site of ['gmgn.ai','debot.ai']) {
     const p=await fixture(site);
     const insert=async page=>page.evaluate(({T})=>{const row=document.createElement('div');row.className='gdh-fomofeed';GdhBuyStrategies.tagFeed(row,{source:'fomo',handle:'fixture-account',key:'fixture-fomo',addr:T,chain:'bsc',type:'buy',usd:5000,ts:Date.now()+1,symbol:'GLOBAL'});document.querySelector('#root').append(row);alerts.scanBuys([row]);},{T});
-    await insert(p);await p.waitForSelector('.gdh-priority-push article');assert.match(await p.locator('.gdh-priority-push article').innerText(),/全局买入/);
+    await insert(p);await p.waitForSelector('.gdh-priority-push article');assert.equal(await p.locator('.gdh-priority-card').getAttribute('data-strategy-kind'),'single');assert.match(await p.locator('.gdh-priority-push article').innerText(),/Global rule/);
     await p.locator('.gdh-priority-push article > button').click();await p.waitForFunction(()=>!document.querySelector('.gdh-priority-push article'));
     const reload=await fixture(site);await insert(reload);await reload.waitForTimeout(100);assert.equal(await reload.locator('.gdh-priority-push article').count(),0);
     await p.close();await reload.close();

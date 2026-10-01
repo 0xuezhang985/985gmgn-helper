@@ -65,7 +65,7 @@ const send=(site,message)=>new Promise(resolve=>listener(message,{id:'test',url:
 const browser=await chromium.launch({headless:true});
 async function fixture(site) {
  const p=await browser.newPage();await p.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<div id="root" style="position:relative;width:430px;height:650px"></div>'}));await p.goto(`https://${site}/test`);
- await p.exposeFunction('send',message=>send(site,message));await p.evaluate(()=>{window.listeners=[];window.chrome={runtime:{sendMessage:window.send},storage:{onChanged:{addListener:f=>listeners.push(f)}}};});
+ await p.exposeFunction('send',message=>send(site,message));await p.evaluate(()=>{window.listeners=[];window.chrome={runtime:{sendMessage:window.send},storage:{local:{get:async defaults=>defaults},onChanged:{addListener:f=>listeners.push(f)}}};});
  pages.push(p);await p.addScriptTag({content:source});await p.addScriptTag({content:priority});
  await p.evaluate(config=>{window.go=[];window.api=GdhPriorityPush.create(href=>go.push(href));window.cfg=config;api.setContext(document.querySelector('#root'),40,new Map(),cfg);},config);
  return p;

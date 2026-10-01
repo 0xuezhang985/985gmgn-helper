@@ -83,7 +83,7 @@
         const ordered = orderedEvents(events);
         for (const [id, runner] of runners) for (const alert of runner.engine.ingest(ordered)) {
           out.push({ ...alert, key: id + '|' + alert.key, groupKey: runner.key,
-            record: { ...alert.record, strategyGroup: id, name: `${runner.group.name} · ${alert.record.name.replace(/^买入策略 · /, '')}` } });
+            record: { ...alert.record, strategyGroup: id, strategyMatch: { ...alert.record.strategyMatch, strategyName: runner.group.name }, name: `${runner.group.name} · ${alert.record.name.replace(/^买入策略 · /, '')}` } });
         }
         return out;
       },
@@ -163,8 +163,14 @@
             const alertKey = `global-buy-v1|${kind}|${tokenKey}`;
             if (fired.has(alertKey)) continue;
             fired.add(alertKey);
+            const matched = kind === 'window' ? window : [e];
+            const participants = [...new Map(matched.map(row => [row.actor, text(row.name || row.visual?.name || (row.handle && '@' + row.handle) || row.actor)])).values()];
             out.push({ key: alertKey, groupKey: key, record: { strategy: true, strategyGlobal: true,
               wallet: e.wallet, href: e.href, visual: e.visual, name: `全局买入 · ${text(e.symbol) || e.token.slice(0, 10)}`,
+              strategyMatch: { kinds: [kind], chain: e.chain, symbol: text(e.symbol), buyers: participants.length,
+                required: kind === 'window' ? config.windowBuyers : 1, windowSeconds: kind === 'window' ? config.windowSeconds : 0,
+                participants: participants.slice(0, 20), totalUsd: kind === 'window' ? sum : e.usd,
+                partialUsd: matched.some(row => row.usd === null), ...(kind === 'single' ? { thresholdUsd: config.singleUsd } : {}) },
               detail: `${e.chain.toUpperCase()} · ${reason}` } });
           }
         }
@@ -222,6 +228,7 @@
           if (!(config.group.enabled && gm.has(event.wallet)) && !(config.amount.enabled && am.has(event.wallet))) continue;
           const previous = seen.get(event.id) || { ts: event.ts, group: false, amount: false };
           const reasons = [];
+          const match = { kinds: [], chain: event.chain, symbol: text(event.symbol) };
           if (config.group.enabled && gm.has(event.wallet) && !previous.group && time-event.ts <= windowMs) {
             previous.group = true;
             const tokenKey = `${event.chain}|${event.token}`;
@@ -234,6 +241,8 @@
               const names = config.group.wallets.filter(p => buyers.has(p.address)).map(p => p.label || `${p.address.slice(0,6)}…${p.address.slice(-4)}`);
               const threshold = config.group.mode === 'atLeast' ? `（指定 ${gm.size} 人中至少 ${required} 人，已买 ${buyers.size} 人）` : '';
               reasons.push(`${config.group.windowSeconds} 秒内共同买入${threshold}：${names.join('、')}`);
+              Object.assign(match, { buyers: buyers.size, required, selected: gm.size, windowSeconds: config.group.windowSeconds, participants: names });
+              match.kinds.push('group');
               groups.delete(tokenKey); // Start a fresh round of distinct buyers after each alert.
             }
           }
@@ -242,11 +251,14 @@
             previous.amount = true;
             const name = am.get(event.wallet).label || text(event.name) || event.wallet;
             reasons.push(`${name} 单笔买入 $${usd.toLocaleString('en-US', { maximumFractionDigits: 2 })} > $${config.amount.minUsd.toLocaleString('en-US')}`);
+            match.kinds.push('amount');
+            match.triggerUsd = usd; match.thresholdUsd = config.amount.minUsd;
+            if (!match.kinds.includes('group')) Object.assign(match, { buyers: 1, participants: [text(name)] });
           }
           seen.set(event.id, previous);
           if (reasons.length) out.push({ key: key + '|' + event.id, record: { wallet: event.wallet, href: event.href,
             strategy: true, name: `买入策略 · ${text(event.symbol) || event.token.slice(0, 10)}`,
-            detail: `${event.chain.toUpperCase()} · ${reasons.join('；')}`, visual: event.visual } });
+            detail: `${event.chain.toUpperCase()} · ${reasons.join('；')}`, visual: event.visual, strategyMatch: match } });
         }
         return out;
       },
@@ -386,8 +398,16 @@
     return el;
   };
   const editorEnglish = {
+    '策略追踪': 'Strategy tracking', '运行概览': 'Run status', '人物策略': 'Person strategies',
+    '组开关': 'Group switch', '运行中': 'Running', '未启用': 'Not enabled', '未保存': 'Unsaved',
+    '本组未启用，不会触发提醒。勾选下方条件后，还需保存并打开组开关。': 'This group is off and cannot alert. After choosing conditions, save and turn on its group switch.',
+    '本组已启用；仅处理页面收到的新买入，不补报开启前的历史。': 'This group is on. It checks new buys received on this page, not history from before activation.',
+    '草稿未保存，当前仍按已保存条件运行。': 'Unsaved draft. The saved conditions are still in effect.',
+    '先保存条件，再打开组开关。': 'Save the conditions first, then turn on the group switch.',
+    '保存的规则': 'Saved rules', '条件未配置': 'No active conditions', '共同买入': 'Group buy', '大额买入': 'Large buy',
+    '仅页面新买入 · 不自动交易': 'New buys on this page only · Never trades',
     '全局提醒': 'Global alerts', '启用全局提醒（保存后生效）': 'Enable global alerts (save to apply)',
-    '无需指定人物；独立于下方人物策略，并非所有策略的公共过滤器。仅处理当前页面已收到的新买入，命中后黄色重点置顶，直到手动关闭。': 'No people selection. Independent of person strategies below, not a shared filter. Pins new buys received on this page in yellow until dismissed.',
+    '无需指定人物；独立于下方人物策略，并非所有策略的公共过滤器。仅处理当前页面已收到的新买入，命中后按类型重点置顶，直到手动关闭。': 'No people selection. Independent of person strategies below, not a shared filter. Pins new buys received on this page as distinct signal cards until dismissed.',
     '单笔大额买入': 'Large single buy', '窗口聚合买入': 'Buys within a time window',
     '累计买入大于（USD，0 忽略）': 'Total buys > (USD; 0 ignores)', '买入人数至少（0 忽略）': 'Minimum buyers (0 ignores)',
     '单笔与窗口条件满足任一即可。窗口内金额与人数同时设置时，必须同时满足。': 'Single-buy OR window condition. If both window thresholds are set, BOTH must be met.',
@@ -458,6 +478,9 @@
     };
     const ui = (tag, className, value) => { const el = node(tag, className); return value ? bind(el, value) : el; };
     editor.classList.add('gdh-strategy-editor');
+    const heading = ui('div', 'gdh-strategy-heading');
+    heading.append(ui('h3', '', '策略追踪'), ui('span', 'gdh-strategy-safety', '仅页面新买入 · 不自动交易'));
+    const overview = node('div', 'gdh-strategy-overview'); overview.setAttribute('role', 'status');
     const intro = ui('p', 'gdh-strategy-hint', '最多 20 组，各组独立保存和开关。组内满足任一条件即重点置顶；只读取当前页面新买入，不自动交易。');
     const toolbar = ui('div', 'gdh-strategy-actions');
     const languageSelect = node('select', 'gdh-strategy-language');
@@ -470,7 +493,6 @@
     const add = ui('button', '', '+ 新增策略'); toolbar.append(add, languageSelect);
     const globalPanel = ui('details', 'gdh-strategy-global');
     const globalSummary = ui('summary', '', '全局提醒');
-    globalSummary.append(node('em', 'gdh-manager-new', 'NEW'));
     const globalState = node('span', 'gdh-global-state'); globalSummary.append(globalState);
     const globalForm = node('div', 'gdh-global-form'), gf = {};
     const globalCheck = (key, title, parent) => {
@@ -482,7 +504,7 @@
       Object.assign(input, { type: 'number', min: String(min), max: String(max), step });
       input.dataset.global = key; bind(input, title, 'aria-label'); gf[key] = input; label.append(input); parent.append(label);
     };
-    globalForm.append(ui('p', 'gdh-strategy-hint', '无需指定人物；独立于下方人物策略，并非所有策略的公共过滤器。仅处理当前页面已收到的新买入，命中后黄色重点置顶，直到手动关闭。'));
+    globalForm.append(ui('p', 'gdh-strategy-hint', '无需指定人物；独立于下方人物策略，并非所有策略的公共过滤器。仅处理当前页面已收到的新买入，命中后按类型重点置顶，直到手动关闭。'));
     globalCheck('enabled', '启用全局提醒（保存后生效）', globalForm);
     const globalSingle = node('fieldset'), globalWindow = node('fieldset'), globalScope = node('fieldset');
     globalCheck('singleEnabled', '单笔大额买入', globalSingle);
@@ -551,13 +573,17 @@
       try {
         const saved = await chrome.storage.local.get('priorityBuyStrategies');
         globalBase = normalizeGlobal(saved.priorityBuyStrategies?.global); globalDirty = false; globalConflict = false; fillGlobal();
-        showGlobal('已读取最新全局设置。');
+        sync(saved.priorityBuyStrategies, people); showGlobal('已读取最新全局设置。');
       } catch { showGlobal('读取失败，当前草稿已保留。', true); }
       finally { globalBusy = false; globalForm.inert = false; }
     });
     fillGlobal();
     const list = ui('div', 'gdh-strategy-groups');
+    const sidebar = ui('div', 'gdh-strategy-sidebar');
+    const listHeading = ui('div', 'gdh-strategy-list-heading'); listHeading.append(ui('strong', '', '人物策略'), ui('span', '', '组开关'));
+    sidebar.append(listHeading, list);
     const form = ui('div', 'gdh-strategy-form');
+    const formState = node('div', 'gdh-strategy-run-state'); formState.setAttribute('role', 'status'); form.append(formState);
     const nameLabel = ui('label', 'gdh-strategy-number', '策略名称');
     const nameInput = ui('input'); nameInput.type = 'text'; nameInput.maxLength = 40; nameInput.dataset.buy = 'name'; bind(nameInput, '策略名称', 'aria-label'); nameLabel.append(nameInput); form.append(nameLabel);
     const fields = {};
@@ -565,7 +591,7 @@
         ['group', '指定人物共同买入', '同链同币、窗口内按不同钱包计数；重复买入不凑人数，触发后重新累计。', 'window', '时间窗口（秒）', '10', '3600', '1'],
         ['amount', '指定人物大额买入', '任一指定人物的单笔买入严格大于金额门槛。', 'usd', '单笔金额门槛（USD）', '0', '', 'any'],
       ]) {
-        const box = ui('fieldset');
+        const box = ui('fieldset', 'gdh-strategy-condition'); box.dataset.condition = type;
         const toggle = ui('label', 'gdh-strategy-toggle');
         const check = ui('input'); check.type = 'checkbox'; fields[`${type}-enabled`] = check;
         toggle.append(check); bind(toggle, title);
@@ -605,14 +631,16 @@
       }
 
     for (const [key, el] of Object.entries(fields)) el.dataset.buy = key;
-    const actions = ui('div', 'gdh-strategy-actions');
+    const actions = ui('div', 'gdh-strategy-actions gdh-strategy-savebar');
     const save = ui('button', 'gdh-strategy-save', '保存本组');
     const reset = ui('button', '', '重新读取');
     const remove = ui('button', '', '删除本组');
     const status = ui('div', 'gdh-strategy-status'); status.setAttribute('role', 'status');
     const show = (message, error = false) => { lastMessage = message; status.textContent = tr(message); status.classList.toggle('is-error', error); };
-    actions.append(save, reset, remove); form.append(actions);
-    editor.append(intro, toolbar, globalPanel, list, form, status);
+    remove.classList.add('gdh-strategy-delete');
+    actions.append(save, reset, remove); form.append(status, actions);
+    const workspace = node('div', 'gdh-strategy-workspace'); workspace.append(sidebar, form);
+    editor.append(heading, overview, toolbar, globalPanel, workspace, intro);
     let latest = normalizeGroups(raw), selected = latest.groups[0]?.id || '', busy = false, people = wallets, pickerKey = '', listKey = '';
     const drafts = new Map();
     const persistedField = key => !/-(picker|search)$/.test(key);
@@ -639,7 +667,31 @@
       save.disabled = d.conflict;
       editor.querySelector('.gdh-strategy-min-buyers').hidden = fields['group-mode'].value !== 'atLeast';
       for (const type of ['group', 'amount']) { fields[`${type}-search`].value = ''; renderPicker(type); }
+      paintRunState();
     };
+    function paintRunState() {
+      const count = latest.groups.filter(g => g.enabled && conditionEnabled(g.conditions)).length;
+      const active = count > 0 || latest.global.enabled;
+      if (overview.dataset.state !== (active ? 'running' : 'off')) overview.dataset.state = active ? 'running' : 'off';
+      const summary = language === 'zh' ? `${count} / ${latest.groups.length} 组运行中 · 全局提醒${latest.global.enabled ? '开启' : '关闭'}`
+        : `${count} / ${latest.groups.length} groups running · Global alerts ${latest.global.enabled ? 'on' : 'off'}`;
+      if (overview.textContent !== summary) overview.textContent = summary;
+      const d = draft(selected); if (!d) return;
+      const running = d.base?.enabled === true && conditionEnabled(d.base.conditions);
+      if (formState.dataset.state !== (running ? 'running' : 'off')) formState.dataset.state = running ? 'running' : 'off';
+      const message = !d.base ? '先保存条件，再打开组开关。' : !running ? '本组未启用，不会触发提醒。勾选下方条件后，还需保存并打开组开关。'
+        : d.dirty ? '草稿未保存，当前仍按已保存条件运行。' : '本组已启用；仅处理页面收到的新买入，不补报开启前的历史。';
+      const label = tr(running ? '运行中' : d.base ? '未启用' : '未保存'), copy = tr(message);
+      if (formState.textContent !== label + copy) formState.replaceChildren(node('strong', '', label), node('span', '', copy));
+      for (const type of ['group', 'amount']) form.querySelector(`[data-condition="${type}"]`).classList.toggle('is-enabled', fields[`${type}-enabled`].checked);
+    }
+    function ruleSummary(conditions) {
+      if (!conditions) return tr('先保存条件，再打开组开关。');
+      const c = normalize(conditions), parts = [];
+      if (c.group.enabled) parts.push(`${tr('共同买入')} ${c.group.mode === 'all' ? c.group.wallets.length : c.group.minBuyers}/${c.group.wallets.length} · ${c.group.windowSeconds}s`);
+      if (c.amount.enabled) parts.push(`${tr('大额买入')} > $${c.amount.minUsd.toLocaleString('en-US')}`);
+      return parts.join(' / ') || tr('条件未配置');
+    }
     function renderPicker(type) {
       const picker = fields[`${type}-picker`], query = fields[`${type}-search`].value;
       let selected = [];
@@ -652,13 +704,16 @@
       }
     }
     function renderList() {
-      const rows = ids(), key = JSON.stringify(rows.map(id => { const d = draft(id); return [id,d.values.name,d.base?.enabled,d.dirty,d.conflict,selected===id]; }));
+      paintRunState();
+      const rows = ids(), key = JSON.stringify(rows.map(id => { const d = draft(id); return [id,d.values.name,d.base?.enabled,d.base?.conditions,d.dirty,d.conflict,selected===id]; }));
       if (key === listKey) return;
       listKey = key; list.replaceChildren(); add.disabled = rows.length >= 20;
       if (!rows.length) list.append(node('p', 'gdh-strategy-hint', tr('还没有策略，点击上方新增。')));
       for (const id of rows) {
         const d = draft(id), row = ui('div', 'gdh-strategy-group'); row.dataset.groupId = id; row.classList.toggle('is-selected', id === selected);
         const select = node('button', '', `${d.values.name || tr('未命名策略')}${d.dirty ? tr(' · 未保存') : ''}`);
+        select.setAttribute('aria-label', select.textContent);
+        select.append(node('small', 'gdh-strategy-rule-summary', ruleSummary(d.base?.conditions)));
         select.title = d.values.name; select.setAttribute('aria-pressed', String(id === selected));
         select.addEventListener('click', () => { selected = id; fill(); renderList(); show(d.conflict ? '本组已在其他页面修改，请重新读取。草稿已保留。' : d.dirty ? '本组尚未保存' : '开关即时生效；修改条件后请保存本组。', d.conflict); });
         const label = ui('label'); const toggle = ui('input'); toggle.type = 'checkbox'; toggle.checked = d.base?.enabled === true; toggle.disabled = !d.base;
@@ -668,7 +723,8 @@
           if (d.dirty || d.conflict) { show('请先保存或重新读取本组，再切换开关。', true); return; }
           write(id, 'toggle', { enabled: on });
         });
-        label.append(toggle, document.createTextNode(tr(d.base?.enabled ? '开启' : '关闭'))); row.append(select, label); list.append(row);
+        row.dataset.state = d.base?.enabled && conditionEnabled(d.base.conditions) ? 'running' : 'off';
+        label.append(toggle, document.createTextNode(tr(row.dataset.state === 'running' ? '运行中' : '未启用'))); row.append(select, label); list.append(row);
       }
     }
     const sync = (config, walletList) => {

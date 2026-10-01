@@ -25,6 +25,23 @@
     v.ts = Number.isFinite(Number(value.ts)) && Number(value.ts) > 0 && Number(value.ts) <= 8.64e15 ? Number(value.ts) : 0;
     return v;
   };
+  // Persist explicit strategy evidence instead of presenting the last buyer as the whole signal.
+  const matchData = value => {
+    if (!value || typeof value !== 'object') return null;
+    const kinds = [...new Set((Array.isArray(value.kinds) ? value.kinds : []).filter(k => ['group', 'amount', 'window', 'single'].includes(k)))];
+    if (!kinds.length) return null;
+    const out = { kinds, strategyName: clean(value.strategyName, 40), symbol: clean(value.symbol, 64),
+      chain: /^[a-z][a-z0-9_-]{0,23}$/.test(value.chain) ? value.chain : '',
+      participants: (Array.isArray(value.participants) ? value.participants : []).slice(0, 20).map(n => clean(n, 64)).filter(Boolean),
+      partialUsd: value.partialUsd === true };
+    for (const [key, max] of [['buyers', 10000], ['required', 10000], ['selected', 20], ['windowSeconds', 3600]]) {
+      if (Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= max) out[key] = value[key];
+    }
+    for (const key of ['totalUsd', 'triggerUsd', 'thresholdUsd']) {
+      if (Number.isFinite(value[key]) && value[key] >= 0) out[key] = value[key];
+    }
+    return out;
+  };
 
   if (typeof document === 'undefined') {
     // A single worker queue makes add/dismiss atomic across tabs. A dismissed event
@@ -76,6 +93,8 @@
         if (visual) record.visual = visual;
         if (record.strategy && /^[a-zA-Z0-9_-]{1,64}$/.test(String(data.strategyGroup || ''))) record.strategyGroup = data.strategyGroup;
         if (record.strategy && data.strategyGlobal === true) record.strategyGlobal = true;
+        const match = record.strategy && matchData(data.strategyMatch);
+        if (match) record.strategyMatch = match;
         await chrome.storage.local.set({ [key]: record });
         return { ok: true, record };
       }).then(respond, (error) => respond({ ok: false, error: String(error?.message || error) }));
@@ -111,7 +130,7 @@
       source: d.gdhFeedSource || (row.matches('[data-gdh-debot-fomo-key]') ? 'fomo' : ''), color: stripe?.style.backgroundColor,
     }, location.hostname);
   }
-  function renderCard(link, record) {
+  function renderCard(link, record, language = 'en') {
     const v = visualData(record.visual, location.hostname) || {};
     const cell = (cls, value = '', tag = 'span') => { const e = document.createElement(tag); e.className = `gdh-priority-${cls}`; e.textContent = value; return e; };
     const image = (src, cls, fallback = '') => {
@@ -123,6 +142,46 @@
       }
       return wrap;
     };
+    if (record.strategy) {
+      const m = matchData(record.strategyMatch), t = (en, zh) => language === 'zh' ? zh : en;
+      const group = m?.kinds.includes('group'), window = m?.kinds.includes('window');
+      const cluster = group || (window && m.buyers >= 2);
+      link.className = `gdh-priority-card is-strategy${cluster ? ' is-cluster' : ''}`;
+      link.dataset.strategyKind = group ? 'group' : window ? 'window' : m?.kinds[0] || 'legacy';
+      const heading = cell('signal-head');
+      heading.append(cell('signal-type', group ? t('GROUP BUY', '共同买入') : window ? t('WINDOW BUY', '窗口聚合买入') : m ? t('LARGE BUY', '大额买入') : t('STRATEGY', '策略提醒')));
+      if (m?.kinds.includes('amount') && group) heading.append(cell('signal-extra', t('+ Large buy', '+ 大额条件')));
+      const at = record.at || v.ts, age = Math.max(0, Math.floor((Date.now() - at) / 1000));
+      const time = cell('time', age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`, 'time');
+      time.dateTime = new Date(at).toISOString(); time.title = new Date(at).toLocaleString(); heading.append(time);
+      const title = cell('signal-title');
+      if (v.tokenImage) title.append(image(v.tokenImage, 'avatar'));
+      const ca = record.href.split('?')[0].split('/').pop() || '';
+      title.append(cell('symbol', m?.symbol || v.symbol || `${ca.slice(0, 6)}…${ca.slice(-4)}`, 'b'));
+      if (m?.chain || v.chain) title.append(cell('signal-chain', (m?.chain || v.chain).toUpperCase()));
+      const strategy = cell('signal-strategy', m?.strategyName || (record.strategyGlobal ? t('Global rule', '全局策略') : record.name));
+      const facts = cell('signal-facts');
+      if (m && (group || window)) {
+        const buyers = cell('signal-buyers', t(`${m.buyers ?? '—'} buyers`, `${m.buyers ?? '—'} 位买家`), 'b');
+        buyers.title = t('Distinct wallets / verified accounts', '按不同钱包 / 已核实账号去重'); facts.append(buyers);
+        if (m.windowSeconds) facts.append(cell('signal-window', t(`within ${m.windowSeconds}s`, `${m.windowSeconds} 秒内`)));
+        if (m.required > 0) facts.append(cell('signal-threshold', group && m.selected ? t(`Required ${m.required} of ${m.selected}`, `门槛 ${m.required} / ${m.selected} 人`) : t(`Required ≥ ${m.required}`, `门槛 ≥ ${m.required} 人`)));
+        if (window && m.totalUsd > 0) facts.append(cell('signal-amount', t(`${m.partialUsd ? 'Known' : 'Total'} ${usd(m.totalUsd)}`, `${m.partialUsd ? '已知金额' : '累计'} ${usd(m.totalUsd)}`)));
+      if (group && m.kinds.includes('amount')) facts.append(cell('signal-amount', t(`Large buy ${usd(m.triggerUsd)} > ${usd(m.thresholdUsd)}`, `大额 ${usd(m.triggerUsd)} > ${usd(m.thresholdUsd)}`)));
+      } else if (m) {
+        facts.append(cell('signal-amount', usd(m.triggerUsd || m.totalUsd) || v.amount || '—'));
+        if (m.thresholdUsd > 0) facts.append(cell('signal-threshold', t(`Threshold > ${usd(m.thresholdUsd)}`, `门槛 > ${usd(m.thresholdUsd)}`)));
+      }
+      link.append(heading, title, strategy, facts);
+      if (m?.participants.length) {
+        const people = cell('signal-people');
+        for (const name of m.participants) people.append(cell('signal-person', name));
+        if (m.buyers > m.participants.length) people.append(cell('signal-person', `+${m.buyers - m.participants.length}`));
+        link.append(people);
+      }
+      if (!m) link.append(cell('detail', record.detail));
+      return;
+    }
     link.className = `gdh-priority-card${v.side ? ` is-${v.side}` : ''}`;
     if (v.color) link.style.setProperty('--gdh-priority-chain', v.color);
     const name = (record.strategy ? v.name || record.name : record.name || v.name) || record.wallet;
@@ -156,7 +215,10 @@
       let strategyActive = false;
       let globalActive = false;
       let strategyGroups = new Set();
-      let clearing = false, view = {}, viewKey = '', minute = 0;
+      let clearing = false, view = {}, viewKey = '', minute = 0, language = 'en';
+      chrome.storage.local.get({ priorityStrategyLanguageV1: 'en' }).then(saved => {
+        language = saved.priorityStrategyLanguageV1 === 'zh' ? 'zh' : 'en'; dirty = true; render();
+      }).catch(() => {});
       const request = async (type, extra = {}) => {
         const result = await chrome.runtime.sendMessage({ type, ...extra });
         if (!result?.ok) throw new Error(result?.error || '扩展连接失效');
@@ -235,7 +297,7 @@
           row.dataset.priorityId = record.id;
           const link = document.createElement('a');
           link.href = record.href;
-          renderCard(link, record);
+          renderCard(link, record, language);
           link.addEventListener('click', (event) => {
             if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
             event.preventDefault(); event.stopPropagation(); navigate(record.href);
@@ -257,13 +319,16 @@
 
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return;
+        if (changes.priorityStrategyLanguageV1) {
+          language = changes.priorityStrategyLanguageV1.newValue === 'zh' ? 'zh' : 'en'; dirty = true;
+        }
         const prefix = `${PREFIX}${location.hostname}:`;
         let changed = false;
         for (const [key, change] of Object.entries(changes)) {
           if (!key.startsWith(prefix)) continue;
           remember(change.newValue || { id: key.slice(prefix.length), dismissed: true }); changed = true;
         }
-        if (changed) render();
+        if (changed || changes.priorityStrategyLanguageV1) render();
       });
 
       const api = {

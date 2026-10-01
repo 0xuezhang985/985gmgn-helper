@@ -144,7 +144,7 @@ try{
   await reloaded.waitForFunction(()=>document.querySelectorAll('.gdh-priority-push article').length===2);
   assert.ok(Object.values(stored).filter(r=>r?.strategy).every(r=>['one','two'].includes(r.strategyGroup)));
   const cfg=clone(stored.priorityBuyStrategies);cfg.groups[0].enabled=false;await set({priorityBuyStrategies:cfg});await reloaded.evaluate(()=>api.setContext(document.querySelector('#alerts'),0,new Map(),config));
-  assert.equal(await reloaded.locator('.gdh-priority-push article').count(),1);assert.match(await reloaded.locator('.gdh-priority-push b').innerText(),/^two/);
+  assert.equal(await reloaded.locator('.gdh-priority-push article').count(),1);assert.match(await reloaded.locator('.gdh-priority-signal-strategy').innerText(),/^two/);
   for(const p of pages)assert.deepEqual(p._errors,[]);
   pass('真实置顶存储保留所属组；同笔多组分别提醒，停用一组只隐藏本组置顶');
   console.log(`1..${checks}`);
