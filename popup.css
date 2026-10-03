@@ -342,3 +342,6 @@ footer { margin-top: 9px; text-align: center; font-size: 11px; }
 .gdh-global-sources .gdh-strategy-toggle { margin: 0; font-weight: 400; }
 .gdh-strategy-global-status { min-height: 20px; margin-top: 7px; color: #58d7ae; overflow-wrap: anywhere; }
 .gdh-strategy-global-status.is-error { color: #ff8787; }
+.transparency-control { display: flex; align-items: center; gap: 6px; width: 160px; flex-shrink: 0; }
+.transparency-control input[type="range"] { width: 116px; min-width: 0; margin: 0; accent-color: #f5b83d; }
+.transparency-control output { min-width: 34px; font-size: 11px; text-align: right; }

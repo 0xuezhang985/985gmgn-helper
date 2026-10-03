@@ -297,6 +297,52 @@ a[data-sentry-component="TrackerListItem"] > .gdh-star-button,
   background: transparent !important;
 }
 
+/* Native footer left lane: appended after its existing controls and prices.
+   The outer native scroller handles narrow widths; status stays untouched. */
+.gdh-fomo-footer-lane > :not(.gdh-fomo-footer) { flex-shrink: 0 !important; }
+.gdh-fomo-footer {
+  display: flex;
+  flex: 1 0 180px;
+  min-width: 180px;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font: 11px/1.4 system-ui, sans-serif;
+  color: inherit;
+}
+.gdh-fomo-footer__label { flex: none; color: #d99e27; font-size: 11px; }
+.gdh-fomo-footer__list {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #555 transparent;
+}
+.gdh-fomo-footer__token {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 7px;
+  border-left: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  color: inherit;
+  text-decoration: none;
+}
+.gdh-fomo-footer__token:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.gdh-fomo-footer__token:focus-visible { outline: 1px solid #d99e27; outline-offset: -1px; }
+.gdh-fomo-footer__token b { max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.gdh-fomo-footer__token img { width: 16px; height: 16px; border-radius: 50%; object-fit: cover; }
+.gdh-fomo-footer__change[data-tone="up"] { color: #36ae72; }
+.gdh-fomo-footer__change[data-tone="down"] { color: #e64f59; }
+.gdh-fomo-footer__state { flex: none; padding: 0 4px; border: 0; background: none; color: inherit; font: inherit; }
+button.gdh-fomo-footer__state { cursor: pointer; text-decoration: underline; }
+
 /* 价格/市值提醒醒目卡片（画面正中，涨绿跌红） */
 .gdh-remind-container {
   position: fixed;

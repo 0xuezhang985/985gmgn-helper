@@ -438,6 +438,8 @@
     enableRemindAlert: true,
     enableFomoPanel: true,
     enableFomoTrending: true,
+    enableFomoTrendingFooter: false,
+    enableChartTrackedHoldings: true,
     fomoPanelFolded: false,
     fomoPanelPos: null,
     fomoTranslate: true,
@@ -505,8 +507,18 @@
       MONITOR_AGGREGATE_ATTR,
       settings.enableMonitorAggregate === false ? '0' : '1',
     );
+    document.documentElement.setAttribute('data-gdh-chart-holdings-enabled',
+      settings.enableChartTrackedHoldings === false ? '0' : '1');
     document.dispatchEvent(new Event('gdh-monitor-config-changed'));
   }
+
+  document.addEventListener('gdh-chart-holdings-close', () => {
+    settings.enableChartTrackedHoldings = false;
+    syncMonitorAggregateSetting();
+    try {
+      chrome.storage.local.set({ enableChartTrackedHoldings: false }, () => void chrome.runtime.lastError);
+    } catch { /* Remains closed in this page if the extension was unloaded. */ }
+  });
 
   let watchedMap = new Map();
   let blockedWallets = new Set();
@@ -3523,6 +3535,7 @@ ${flapTooltipText(info)}
     similarTokenXResize?.disconnect();
     similarTokenXMutation?.disconnect();
     similarTokenXWatches = [];
+    globalThis.GDHPanelTransparency?.detach(similarTokenPanelEl);
     similarTokenPanelEl?.remove();
     similarTokenPanelEl = null;
     similarTokenPanelKey = '';
@@ -3603,6 +3616,7 @@ ${flapTooltipText(info)}
       header.append(heading, pin, close);
       bindSimilarTokenPanelControls(header, close, pin);
       similarTokenPanelEl.appendChild(header);
+      globalThis.GDHPanelTransparency?.attach(similarTokenPanelEl, header, 'similar', pin);
       document.body.appendChild(similarTokenPanelEl);
       similarTokenPanelKey = '';
     }
@@ -5239,6 +5253,133 @@ ${flapTooltipText(info)}
   let fomoTrendingTabEl = null;
   let fomoTrendingPanelEl = null;
   let fomoTrendingNativeBody = null;
+  let fomoTrendingFooterEl = null;
+  let fomoTrendingFooterLane = null;
+
+  function fomoTrendingFooterMount() {
+    // Verified native footer: scrollable left lane (buttons + prices), with
+    // a separate non-shrinking status lane. Never overlay either native lane.
+    const anchor = document.querySelector('[data-testid="holding-float-toggle"]')
+      || document.querySelector('[data-sentry-source-file="FootButton.tsx"]');
+    const footer = anchor?.closest('footer');
+    const lane = footer?.firstElementChild;
+    return lane instanceof HTMLElement && lane.contains(anchor) ? lane : null;
+  }
+
+  function isFomoTrendingFooterActive() {
+    return settings.enableFomoTrendingFooter === true && !!fomoTrendingFooterEl?.isConnected;
+  }
+
+  function removeFomoTrendingFooter() {
+    fomoTrendingFooterLane?.classList.remove('gdh-fomo-footer-lane');
+    fomoTrendingFooterLane = null;
+    fomoTrendingFooterEl?.remove();
+    fomoTrendingFooterEl = null;
+  }
+
+  function fomoTrendingTokenHref(item) {
+    const chain = FOMO_GMGN_CHAIN[Number(item?.networkId)];
+    const address = String(item?.address || '');
+    if (!chain || !(chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[a-fA-F0-9]{40}$/).test(address)) return '';
+    return `/${chain}/token/${chain === 'sol' ? address : address.toLowerCase()}`;
+  }
+
+  function renderFomoTrendingFooter() {
+    if (!isFomoTrendingFooterActive()) return;
+    const bar = fomoTrendingFooterEl;
+    const items = fomoTrendingItems.filter(item => !isFomoTrendingBlocked(item) && fomoTrendingTokenHref(item));
+    const signature = JSON.stringify([items, fomoTrendingError, fomoTrendingLoading, fomoTrendingFetchedAt]);
+    if (bar.dataset.renderKey === signature) return;
+    const scrollLeft = bar.querySelector('.gdh-fomo-footer__list')?.scrollLeft || 0;
+    bar.dataset.renderKey = signature;
+    bar.replaceChildren();
+    const label = document.createElement('strong');
+    label.className = 'gdh-fomo-footer__label';
+    label.textContent = 'FOMO Hot';
+    label.title = 'FOMO 热门币 · 横向滚动查看更多 · 可在插件设置关闭';
+    bar.append(label);
+    const list = document.createElement('div');
+    list.className = 'gdh-fomo-footer__list';
+    list.setAttribute('aria-label', 'FOMO trending tokens');
+    list.addEventListener('wheel', (event) => {
+      if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const before = list.scrollLeft;
+      list.scrollLeft += event.deltaY;
+      if (list.scrollLeft !== before) event.preventDefault();
+    }, { passive: false });
+    if (fomoTrendingError) {
+      const state = document.createElement('button');
+      state.type = 'button';
+      state.className = 'gdh-fomo-footer__state';
+      const login = ['no-token', 'expired'].includes(fomoTrendingError);
+      state.textContent = items.length ? 'Cached' : login ? 'Sign in to FOMO' : 'Retry';
+      state.title = login ? 'FOMO 登录已失效；点击登录，缓存行情不是实时行情' : '暂时无法更新；点击重试';
+      state.addEventListener('click', () => {
+        if (login) window.open('https://fomo.family/', '_blank', 'noopener,noreferrer');
+        else pollFomoTrending(true);
+      });
+      list.append(state);
+    }
+    if (!items.length && !fomoTrendingError) {
+      const state = document.createElement('span');
+      state.className = 'gdh-fomo-footer__state';
+      state.textContent = fomoTrendingLoading ? 'Loading…' : fomoTrendingItems.length ? 'All tokens blocked' : 'No trending tokens';
+      list.append(state);
+    }
+    items.forEach((item, index) => {
+      const link = document.createElement('a');
+      link.className = 'gdh-fomo-footer__token';
+      link.href = fomoTrendingTokenHref(item);
+      const chain = FOMO_GMGN_CHAIN[item.networkId];
+      const cap = item.marketCapUsd == null ? '—' : fomoTrendingMoney(item.marketCapUsd);
+      const pct = item.change24Ratio == null ? NaN : Number(item.change24Ratio) * 100;
+      const changeText = Number.isFinite(pct) ? `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%` : '—';
+      link.title = `#${index + 1} ${item.name || item.symbol} · ${chain.toUpperCase()} · MC ${cap} · Price ${item.priceUsd == null ? '—' : fomoTrendingPrice(item.priceUsd)} · 24h ${changeText}`;
+      if (String(item.image || '').toLowerCase().startsWith('https://')) {
+        const icon = document.createElement('img');
+        icon.src = item.image;
+        icon.alt = '';
+        icon.loading = 'lazy';
+        icon.referrerPolicy = 'no-referrer';
+        link.append(icon);
+      }
+      const symbol = document.createElement('b');
+      symbol.textContent = item.symbol;
+      const mc = document.createElement('span');
+      mc.textContent = cap;
+      const change = document.createElement('span');
+      change.className = 'gdh-fomo-footer__change';
+      change.textContent = changeText;
+      if (Number.isFinite(pct)) change.dataset.tone = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+      link.append(symbol, mc, change);
+      link.addEventListener('click', (event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        gdhSpaNavigate(fomoTrendingTokenHref(item));
+      });
+      list.append(link);
+    });
+    bar.append(list);
+    list.scrollLeft = scrollLeft;
+  }
+
+  function scanFomoTrendingFooter() {
+    if (settings.enableFomoTrendingFooter !== true) return void removeFomoTrendingFooter();
+    const lane = fomoTrendingFooterMount();
+    if (!lane) return void removeFomoTrendingFooter();
+    if (!fomoTrendingFooterEl?.isConnected || fomoTrendingFooterEl.parentElement !== lane) {
+      removeFomoTrendingFooter();
+      fomoTrendingFooterEl = document.createElement('section');
+      fomoTrendingFooterEl.className = 'gdh-fomo-footer';
+      fomoTrendingFooterEl.setAttribute('aria-label', 'FOMO Hot');
+      fomoTrendingFooterLane = lane;
+      lane.classList.add('gdh-fomo-footer-lane');
+      lane.append(fomoTrendingFooterEl);
+    }
+    renderFomoTrendingFooter();
+    pollFomoTrending();
+  }
 
   function fomoTrendingMount() {
     const candidates = [...document.querySelectorAll('[data-testid="filter-tag-trending"]')];
@@ -5333,10 +5474,12 @@ ${flapTooltipText(info)}
     const previous = getFomoTrendingBlockedTokens();
     settings.fomoTrendingBlockedTokens = next;
     renderFomoTrendingPanel();
+    renderFomoTrendingFooter();
     chrome.storage.local.set({ fomoTrendingBlockedTokens: next }, () => {
       if (!chrome.runtime?.lastError) return;
       settings.fomoTrendingBlockedTokens = previous;
       renderFomoTrendingPanel();
+      renderFomoTrendingFooter();
     });
   }
 
@@ -5508,10 +5651,11 @@ ${flapTooltipText(info)}
   }
 
   function pollFomoTrending(force = false) {
-    if (!fomoTrendingActive || fomoTrendingLoading) return;
+    if ((!fomoTrendingActive && (!isFomoTrendingFooterActive() || document.visibilityState === 'hidden')) || fomoTrendingLoading) return;
     if (!force && Date.now() - fomoTrendingFetchedAt < FOMO_TRENDING_REFRESH_MS) return;
     fomoTrendingLoading = true;
     renderFomoTrendingPanel();
+    renderFomoTrendingFooter();
     chrome.runtime.sendMessage({ type: 'fomo-trending' }, (response) => {
       fomoTrendingLoading = false;
       if (chrome.runtime.lastError || !response?.ok) {
@@ -5523,6 +5667,7 @@ ${flapTooltipText(info)}
         fomoTrendingFetchedAt = Number(response.at) || Date.now();
       }
       renderFomoTrendingPanel();
+      renderFomoTrendingFooter();
     });
   }
 
@@ -7179,6 +7324,7 @@ ${flapTooltipText(info)}
       scheduleScan();
     });
     head.append(title, tabs, tr, dbg, open, fold, close);
+    globalThis.GDHPanelTransparency?.attach(panel, head, 'fomo', fold);
 
     const stats = document.createElement('div');
     stats.className = 'gdh-fomo__stats';
@@ -7235,6 +7381,7 @@ ${flapTooltipText(info)}
     const route = currentTokenRoute();
     if (settings.enableFomoPanel === false || !route || settings.fomoPanelOpen !== true) {
       if (fomoPanelEl) {
+        globalThis.GDHPanelTransparency?.detach(fomoPanelEl);
         fomoPanelEl.remove();
         fomoPanelEl = null;
         fomoLoadedKey = '';
@@ -10012,6 +10159,7 @@ ${flapTooltipText(info)}
       timed('surge', scanHoldingSurge);
       timed('fomoPanel', scanFomoPanel);
       timed('fomoTrending', scanFomoTrendingTab);
+      timed('fomoTrendingFooter', scanFomoTrendingFooter);
       timed('fomoFeed', scanFomoFeed);
       timed('pools', scanAllPools);
     } finally {
@@ -10201,13 +10349,13 @@ ${flapTooltipText(info)}
 
   // 插件自己的节点每秒都在小改(fomo 卡时间文本、徽章 title 等)——这些变动
   // 不能再触发全量扫描,否则等于自己驱动自己每秒跑一遍全部扫描器。
-  const GDH_SELF_SELECTOR = '.gdh-fomofeed-details, .gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-token-detail-badges, .gdh-token-marked-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
+  const GDH_SELF_SELECTOR = '.gdh-panel-transparency-menu, .gdh-fomofeed-details, .gdh-buy-native-shell, .gdh-buy-monitor-root, .gdh-buy-monitor-tab, .gdh-sp-manage-modal, .gdh-priority-push, [data-gdh-fomo-key], [data-gdh-fomo-trending], .gdh-fomo-trending-panel, .gdh-similar-token-panel, .gdh-monitor-aggregate, .gdh-flap-row, .gdh-flap, .gdh-robinhood-row, .gdh-robinhood-chip, .gdh-robinhood-rwa-link, .gdh-robinhood-rwa-popover, .gdh-marked, .gdh-token-header-badges, .gdh-token-detail-badges, .gdh-token-marked-badges, .gdh-remind-card, .gdh-notification-launcher, .gdh-notification-panel, .gdh-fomo, .gdh-tooltip, .gdh-tokenblock';
   const observer = new MutationObserver((records) => {
     scheduleNativeTrackerFeedMutations(records);
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target?.parentElement;
       if (record.attributeName === 'data-gdh-native-feed-key') continue;
-      if (target && target.closest(GDH_SELF_SELECTOR)) continue;
+      if (target && (target.closest(GDH_SELF_SELECTOR) || target.closest('.gdh-fomo-footer'))) continue;
       const changed = [...record.addedNodes, ...record.removedNodes];
       if (similarTokenPanelEl?.isConnected) {
         const xPreviewSelector = '[data-sentry-component="TweetContent"], [data-sentry-component="XAccountLink"]';
@@ -10363,7 +10511,8 @@ ${flapTooltipText(info)}
         continue;
       }
       settings[key] = change.newValue;
-      if (key === 'enableMonitorAggregate') monitorAggregateChanged = true;
+      if (key === 'enableFomoTrendingFooter') scanFomoTrendingFooter();
+      if (key === 'enableMonitorAggregate' || key === 'enableChartTrackedHoldings') monitorAggregateChanged = true;
       if (key === 'fomoTrendingBlockedTokens') fomoTrendingBlocksChanged = true;
     }
     if (fomoTokenArrived && fomoPanelEl) {
@@ -10371,11 +10520,12 @@ ${flapTooltipText(info)}
       fomoErrKey = '';
       loadFomoData(true);
     }
-    if (fomoTokenArrived && fomoTrendingActive) pollFomoTrending(true);
+    if (fomoTokenArrived && (fomoTrendingActive || isFomoTrendingFooterActive())) pollFomoTrending(true);
     rebuildWatchedMap();
     rebuildBlockedCallerIndex();
     rebuildBlockedTokenIndex();
     if (fomoTrendingBlocksChanged && fomoTrendingActive) renderFomoTrendingPanel();
+    if (fomoTrendingBlocksChanged) renderFomoTrendingFooter();
     rebuildSpecialWalletSet();
     rebuildHoldingWatch();
     if (monitorAggregateChanged) syncMonitorAggregateSetting();

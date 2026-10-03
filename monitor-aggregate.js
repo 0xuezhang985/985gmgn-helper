@@ -7,6 +7,7 @@
   const CONFIG_ATTR = 'data-gdh-monitor-aggregate-enabled';
   const CONFIG_EVENT = 'gdh-monitor-config-changed';
   const CHART_HOLDINGS_SELECTOR = '.chart-anchor-main';
+  const CHART_HOLDINGS_CONFIG_ATTR = 'data-gdh-chart-holdings-enabled';
   const MAX_ROWS = 100;
   const SNAPSHOT_TTL_MS = 30_000;
   const LIVE_REFRESH_MIN_MS = 8_000;
@@ -63,6 +64,7 @@
   let chartHoldingsInflight = null;
   let chartHoldingsKey = '';
   let chartHoldingsFetchedAt = 0;
+  let chartHoldingsGeneration = 0;
   const cardsByChain = new Map();
   const errorsByChain = new Map();
   const lastChainFetchAt = new Map();
@@ -483,7 +485,22 @@
     document.querySelector('.gdh-chart-tracked-holdings')?.remove();
   }
 
+  function isChartHoldingsEnabled() {
+    // Wait for the isolated script to load the saved setting; no flash/request
+    // on reload when a user has already disabled this overlay.
+    return document.documentElement.getAttribute(CHART_HOLDINGS_CONFIG_ATTR) === '1';
+  }
+
+  function closeChartHoldings(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    document.documentElement.setAttribute(CHART_HOLDINGS_CONFIG_ATTR, '0');
+    scanChartHoldings();
+    document.dispatchEvent(new Event('gdh-chart-holdings-close'));
+  }
+
   function renderChartHoldings(holdings) {
+    if (!isChartHoldingsEnabled()) return void removeChartHoldings();
     const anchor = document.querySelector(CHART_HOLDINGS_SELECTOR);
     const host = anchor?.parentElement;
     const rows = holdings.filter(Boolean).sort((a, b) => b.holdingPercent - a.holdingPercent).slice(0, 5);
@@ -492,9 +509,18 @@
     const element = document.createElement('div');
     element.className = 'gdh-chart-tracked-holdings';
     element.setAttribute('aria-label', '追踪持仓前五名');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'gdh-chart-tracked-close';
+    close.textContent = '×';
+    close.title = '关闭追踪持仓，可在插件设置中重新开启';
+    close.setAttribute('aria-label', 'Close tracked holdings');
+    close.addEventListener('pointerdown', (event) => event.stopPropagation());
+    close.addEventListener('click', closeChartHoldings);
     if (!rows.length) {
       element.classList.add('is-empty');
       element.innerHTML = '<b class="gdh-chart-tracked-title">追踪持仓</b><span>暂无追踪持仓</span>';
+      element.append(close);
       host.appendChild(element);
       return;
     }
@@ -508,10 +534,11 @@
         <i class="${profitClass}">${formatSignedMoney(holding.profit)} (${formatSignedPercent(holding.profitPercent)})</i>
       </span>`;
     }).join('')}`;
+    element.append(close);
     host.appendChild(element);
   }
 
-  async function refreshChartHoldings(route, key) {
+  async function refreshChartHoldings(route, key, generation) {
     try {
       const response = await trackedHolderApi(route.chain, route.address, {
         limit: 5,
@@ -521,7 +548,9 @@
         following: true,
         needToken: true,
       });
-      if (key !== chartHoldingsKey || key !== `${route.chain}:${route.address}`) return;
+      const current = currentTokenRoute();
+      if (!isChartHoldingsEnabled() || generation !== chartHoldingsGeneration
+        || key !== chartHoldingsKey || !current || key !== `${current.chain}:${current.address}`) return;
       const candidates = extractTrackedHoldingRows(response);
       const marks = readTrackedHoldingMarks(route.chain);
       renderChartHoldings(candidates
@@ -529,23 +558,26 @@
         .map(sanitizeTrackedHolding)
         .filter(Boolean));
     } catch {
-      if (key === chartHoldingsKey) removeChartHoldings();
+      if (generation === chartHoldingsGeneration && key === chartHoldingsKey) removeChartHoldings();
     } finally {
-      if (key === chartHoldingsKey) chartHoldingsFetchedAt = Date.now();
+      if (generation === chartHoldingsGeneration && key === chartHoldingsKey) chartHoldingsFetchedAt = Date.now();
     }
   }
 
   function scanChartHoldings() {
     const route = currentTokenRoute();
     const anchor = document.querySelector(CHART_HOLDINGS_SELECTOR);
-    if (!route || !anchor) {
+    if (!isChartHoldingsEnabled() || !route || !anchor) {
+      if (chartHoldingsKey || chartHoldingsInflight) chartHoldingsGeneration++;
       chartHoldingsKey = '';
       chartHoldingsFetchedAt = 0;
+      chartHoldingsInflight = null;
       removeChartHoldings();
       return;
     }
     const key = `${route.chain}:${route.address}`;
     if (key !== chartHoldingsKey) {
+      chartHoldingsGeneration++;
       chartHoldingsKey = key;
       chartHoldingsFetchedAt = 0;
       chartHoldingsInflight = null;
@@ -553,7 +585,7 @@
     }
     if (chartHoldingsInflight || Date.now() - chartHoldingsFetchedAt < CHART_HOLDINGS_TTL_MS) return;
     if (!discoverTrackedHolderApi()) return;
-    const request = refreshChartHoldings(route, key);
+    const request = refreshChartHoldings(route, key, chartHoldingsGeneration);
     chartHoldingsInflight = request;
     request.finally(() => {
       if (chartHoldingsInflight === request) chartHoldingsInflight = null;

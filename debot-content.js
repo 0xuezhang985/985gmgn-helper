@@ -2299,6 +2299,7 @@
       syncPanel();
     });
     bar.append(title, tabs, translate, external, fold, close);
+    globalThis.GDHPanelTransparency?.attach(root, bar, 'fomo', fold);
     const stats = document.createElement('div');
     stats.className = 'gdh-debot-fomo__stats';
     const list = document.createElement('div');
@@ -2314,6 +2315,7 @@
     const route = debotTokenRoute();
     if (settings.enableFomoPanel === false || !route) {
       panelLauncher?.remove(); panelLauncher = null;
+      globalThis.GDHPanelTransparency?.detach(panel);
       panel?.remove(); panel = null;
       if (panelTimer) window.clearInterval(panelTimer);
       panelTimer = 0; panelLoadedKey = '';
@@ -2334,6 +2336,7 @@
     }
     panelLauncher.classList.toggle('is-active', settings.debotFomoPanelOpen === true);
     if (!settings.debotFomoPanelOpen) {
+      globalThis.GDHPanelTransparency?.detach(panel);
       panel?.remove(); panel = null; panelLoadedKey = '';
       if (panelTimer) window.clearInterval(panelTimer);
       panelTimer = 0;
@@ -2684,6 +2687,7 @@
     similarTokenXMutation?.disconnect();
     similarTokenXWatches = [];
     similarTokenTrackerAnchor = null;
+    globalThis.GDHPanelTransparency?.detach(similarTokenPanelEl);
     similarTokenPanelEl?.remove();
     similarTokenPanelEl = null;
     similarTokenPanelKey = '';
@@ -2764,6 +2768,7 @@
       header.append(heading, pin, close);
       bindSimilarTokenPanelControls(header, close, pin);
       similarTokenPanelEl.appendChild(header);
+      globalThis.GDHPanelTransparency?.attach(similarTokenPanelEl, header, 'similar', pin);
       document.body.appendChild(similarTokenPanelEl);
       similarTokenPanelKey = '';
     }
@@ -3014,7 +3019,7 @@
           || node.closest('[data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-fomo, .gdh-debot-special-manage, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel'));
       if (records.some((record) => {
         const target = record.target instanceof Element ? record.target : record.target?.parentElement;
-        if (target?.closest('.gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')) return false;
+        if (target?.closest('.gdh-panel-transparency-menu, .gdh-debot-fomo, [data-gdh-debot-fomo-key], .gdh-debot-feed__fallback, .gdh-debot-sidefeed__row, .gdh-debot-special-manage, .gdh-priority-push, .gdh-debot-special-pin-strip, .gdh-debot-rwa-popover, .gdh-debot-similar-token-panel')) return false;
         const changed = [...record.addedNodes, ...record.removedNodes];
         return changed.some((node) => node.nodeType !== Node.TEXT_NODE && !isOwnedNode(node));
       })) {

@@ -1,3 +1,137 @@
+/* Shared floating-window control, kept in this existing cross-site UI bundle for updater compatibility. */
+(() => {
+  if (!globalThis.document || !globalThis.chrome?.storage?.local
+    || !['gmgn.ai', 'debot.ai'].includes(globalThis.location?.hostname) || globalThis.GDHPanelTransparency) return;
+  const keys = { similar: 'similarTokenPanelTransparency', fomo: 'fomoPanelTransparency' };
+  const values = { similar: 0, fomo: 0 };
+  const touched = new Set();
+  const normalize = value => Number.isFinite(Number(value)) ? Math.max(0, Math.min(80, Math.round(Number(value) / 5) * 5)) : 0;
+  let active = null;
+
+  function apply(panel) {
+    const value = values[panel.dataset.gdhTransparencyKind];
+    const opacity = String((100 - value) / 100);
+    if (panel.style.opacity !== opacity) panel.style.opacity = opacity;
+    // Blurring the native page defeats the purpose of making it visible.
+    const blur = value ? 'none' : '';
+    if (panel.style.backdropFilter !== blur) panel.style.backdropFilter = blur;
+    const button = panel.querySelector('.gdh-panel-transparency-button');
+    if (button) {
+      const label = `Transparency / 透明度 (${value}%)`;
+      if (button.title !== label) {
+        button.title = label;
+        button.setAttribute('aria-label', label);
+      }
+    }
+  }
+  function sync() {
+    document.querySelectorAll('[data-gdh-transparency-kind]').forEach(apply);
+    if (active) {
+      active.input.value = String(values[active.kind]);
+      const text = `${values[active.kind]}%`;
+      if (active.output.textContent !== text) active.output.textContent = text;
+    }
+  }
+  function save() {
+    if (!active?.dirty) return;
+    const editor = active;
+    editor.dirty = false;
+    try {
+      chrome.storage.local.set({ [keys[editor.kind]]: values[editor.kind] }, () => {
+        const error = chrome.runtime.lastError;
+        if (active === editor) editor.status.textContent = error ? 'Save failed / 保存失败' : 'Saved / 已保存';
+      });
+    } catch {
+      if (active === editor) editor.status.textContent = 'Reload extension / 请重新加载扩展';
+    }
+  }
+  function close(focus = false) {
+    if (!active) return;
+    save();
+    const { button, menu } = active;
+    active = null;
+    menu.remove();
+    button.setAttribute('aria-expanded', 'false');
+    if (focus && button.isConnected) button.focus({ preventScroll: true });
+  }
+  function open(panel, button, kind) {
+    if (active?.button === button) return close(true);
+    close();
+    const menu = document.createElement('div');
+    menu.className = 'gdh-panel-transparency-menu';
+    menu.setAttribute('role', 'dialog');
+    menu.setAttribute('aria-label', 'Window transparency / 浮窗透明度');
+    menu.innerHTML = '<header><b>Transparency / 透明度</b><button type="button" aria-label="Close / 关闭">×</button></header><label><span>0% → 80%</span><output>0%</output><input type="range" min="0" max="80" step="5" aria-label="Transparency / 透明度" /></label><footer><button type="button">Reset / 重置</button><small role="status"></small></footer>';
+    const input = menu.querySelector('input');
+    active = { panel, button, kind, menu, input, output: menu.querySelector('output'), status: menu.querySelector('[role="status"]'), dirty: false };
+    input.addEventListener('input', () => {
+      touched.add(kind);
+      values[kind] = normalize(input.value);
+      active.dirty = true;
+      active.status.textContent = '';
+      sync();
+    });
+    input.addEventListener('change', save);
+    menu.querySelector('header button').addEventListener('click', () => close(true));
+    menu.querySelector('footer button').addEventListener('click', () => {
+      touched.add(kind); values[kind] = 0; active.dirty = true; sync(); save();
+    });
+    for (const name of ['pointerdown', 'click']) menu.addEventListener(name, event => event.stopPropagation());
+    // Outside the faded/clipped panel: the slider remains opaque and usable even at 80%.
+    document.body.append(menu);
+    button.setAttribute('aria-expanded', 'true');
+    sync();
+    const rect = button.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, rect.right - menu.offsetWidth))}px`;
+    menu.style.top = `${rect.bottom + menu.offsetHeight + 14 <= innerHeight ? rect.bottom + 6 : Math.max(8, rect.top - menu.offsetHeight - 6)}px`;
+    input.focus({ preventScroll: true });
+  }
+  function attach(panel, header, kind, before = header.lastElementChild) {
+    if (!keys[kind] || panel.dataset.gdhTransparencyKind) return;
+    if (!document.getElementById('gdh-panel-transparency-style')) {
+      const style = document.createElement('style');
+      style.id = 'gdh-panel-transparency-style';
+      style.textContent = `.gdh-panel-transparency-button{flex:0 0 24px;width:24px;height:24px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;font:17px/24px sans-serif;cursor:pointer}.gdh-panel-transparency-button:hover,.gdh-panel-transparency-button[aria-expanded=true]{background:#b9c5db22;color:#f5b83d}.gdh-panel-transparency-menu{position:fixed;z-index:2147483646;box-sizing:border-box;width:236px;max-width:calc(100vw - 16px);padding:10px;background:#171b22;color:#e5e9f1;border:1px solid #526075;border-radius:8px;box-shadow:0 6px 20px #0008;font:12px/1.4 system-ui,sans-serif}.gdh-panel-transparency-menu header,.gdh-panel-transparency-menu footer{display:flex;align-items:center;justify-content:space-between;gap:8px}.gdh-panel-transparency-menu button{background:transparent;color:inherit;border:1px solid #526075;border-radius:4px;padding:2px 6px;font:inherit;cursor:pointer}.gdh-panel-transparency-menu label{display:grid;grid-template-columns:1fr auto;gap:6px;margin:10px 0}.gdh-panel-transparency-menu input{grid-column:1/-1;width:100%;margin:0;accent-color:#f5b83d;cursor:pointer}.gdh-panel-transparency-menu small{color:#9faabd;font-size:10px}.gdh-panel-transparency-menu :focus-visible,.gdh-panel-transparency-button:focus-visible{outline:2px solid #f5b83d;outline-offset:2px}`;
+      document.documentElement.append(style);
+    }
+    panel.dataset.gdhTransparencyKind = kind;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'gdh-panel-transparency-button';
+    button.textContent = '◐';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-expanded', 'false');
+    button.addEventListener('pointerdown', event => event.stopPropagation());
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); open(panel, button, kind); });
+    header.insertBefore(button, before);
+    apply(panel);
+  }
+  globalThis.GDHPanelTransparency = { attach, detach: panel => { if (active?.panel === panel) close(); } };
+  document.addEventListener('pointerdown', event => {
+    if (active && !active.menu.contains(event.target) && !active.button.contains(event.target)) close();
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (active && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
+  }, true);
+  window.addEventListener('resize', () => close());
+  window.addEventListener('scroll', () => close(), true);
+  chrome.storage.local.get({ similarTokenPanelTransparency: 0, fomoPanelTransparency: 0 }, stored => {
+    for (const [kind, key] of Object.entries(keys)) if (!touched.has(kind)) values[kind] = normalize(stored[key]);
+    sync();
+  });
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area !== 'local') return;
+    let changed = false;
+    for (const [kind, key] of Object.entries(keys)) {
+      if (!changes[key] || (active?.kind === kind && active.dirty)) continue;
+      touched.add(kind);
+      values[kind] = normalize(changes[key].newValue);
+      changed = true;
+    }
+    if (changed) sync();
+  });
+})();
+
 /* Persistent, local-only priority alerts. No network requests or native row mutation. */
 (() => {
   'use strict';

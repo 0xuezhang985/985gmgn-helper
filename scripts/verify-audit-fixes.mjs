@@ -2935,7 +2935,7 @@ await test('独立扫描异常不再阻断 FOMO/Pump 等后续模块', () => {
   const calls = [];
   const extras = { lastFullScanAt: 0, scanCostEma: 0, trackerCardsScanCache: null, trackerCardsScanCacheActive: false,
     CARD_SELECTOR: '.card', performance: { now: () => 1 }, document: { querySelectorAll: () => [], documentElement: { getAttribute() {}, setAttribute() {} } } };
-  for (const name of ['applyCardState','scanCalloutBlacklist','scanManifestoToasts','ensureManifestoTab','scanSpecialWallets','scanTrackerTokenRelations','scanTrackerSideColors','scanMarkedBadges','scanTokenHeaderBadges','scanFlapBadges','scanRobinhoodSearchBadges','scanRobinhoodRwaPoolLinks','scanFrontrunLightning','scanRemindToasts','scanHoldingSurge','scanFomoPanel','scanFomoTrendingTab','scanFomoFeed','scanAllPools']) extras[name] = () => calls.push(name);
+  for (const name of ['applyCardState','scanCalloutBlacklist','scanManifestoToasts','ensureManifestoTab','scanSpecialWallets','scanTrackerTokenRelations','scanTrackerSideColors','scanMarkedBadges','scanTokenHeaderBadges','scanFlapBadges','scanRobinhoodSearchBadges','scanRobinhoodRwaPoolLinks','scanFrontrunLightning','scanRemindToasts','scanHoldingSurge','scanFomoPanel','scanFomoTrendingTab','scanFomoTrendingFooter','scanFomoFeed','scanAllPools']) extras[name] = () => calls.push(name);
   extras.scanSimilarTokenPanel = () => { throw new Error('simulated DOM replacement'); };
   evaluate([extractFunction(content, 'scanVisibleCards')], 'scanVisibleCards()', extras);
   assert.ok(calls.includes('scanFomoFeed') && calls.includes('scanAllPools'));

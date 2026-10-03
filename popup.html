@@ -95,6 +95,13 @@
         <div class="feature-list">
           <label class="switch-row"><span><strong>fomo 浮窗与表头占比 <em class="new-badge">NEW</em></strong><small>新增 GMGN Arc 链支持：持仓者、盈亏与表头持仓占比；使用本机 FOMO 登录态</small></span><input id="enable-fomo-panel" type="checkbox" /></label>
           <label class="switch-row"><span><strong>fomo 当前热门标签</strong><small>在 GMGN 原生热门面板新增 fomo 标签，使用自己的 fomo 登录态</small></span><input id="enable-fomo-trending" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>FOMO 热门币底部横栏 <em class="new-badge">NEW</em></strong><small>默认关闭；在 GMGN 底部行情右侧显示热门币、市值和 24h 涨跌幅，横向滚动查看更多，点击无刷新跳转；沿用热门币屏蔽设置</small></span><input id="enable-fomo-trending-footer" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>K 线追踪持仓浮层 <em class="new-badge">NEW</em></strong><small>显示追踪人的前 5 持仓；可在浮层右上角 × 关闭，刷新和换币后保持关闭，可在这里重新开启</small></span><input id="enable-chart-tracked-holdings" type="checkbox" /></label>
+          <div class="sub-settings compact control-grid">
+            <div class="option-row"><span><strong>Window transparency / 浮窗透明度 <em class="new-badge">NEW</em></strong><small>0% 不透明，80% 最通透；两类浮窗分别保存，GMGN / DeBot 共用。也可点浮窗标题栏 ◐ 实时调整并自动保存；不会让鼠标点击穿透浮窗。</small></span></div>
+            <label class="control-row" for="similar-token-panel-transparency"><span>Similar tokens / 同名币</span><span class="transparency-control"><input id="similar-token-panel-transparency" type="range" min="0" max="80" step="5" value="0" /><output>0%</output></span></label>
+            <label class="control-row" for="fomo-panel-transparency"><span>FOMO</span><span class="transparency-control"><input id="fomo-panel-transparency" type="range" min="0" max="80" step="5" value="0" /><output>0%</output></span></label>
+          </div>
           <label class="switch-row"><span><strong>fomo 内容翻译</strong><small>观点、备注及失败原因自动显示中文译文</small></span><input id="fomo-translate" type="checkbox" /></label>
           <label class="switch-row"><span><strong>标注人物持仓徽章</strong><small>显示 👤人数与这些人物的合计持仓占比</small></span><input id="enable-marked-holders" type="checkbox" /></label>
           <div class="sub-settings compact control-grid">

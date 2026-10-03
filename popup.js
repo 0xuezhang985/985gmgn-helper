@@ -18,6 +18,10 @@ const DEFAULTS = {
   enableRemindAlert: true,
   enableFomoPanel: true,
   enableFomoTrending: true,
+  enableFomoTrendingFooter: false,
+  enableChartTrackedHoldings: true,
+  similarTokenPanelTransparency: 0,
+  fomoPanelTransparency: 0,
   fomoTranslate: true,
   enableHoldingSurge: true,
   holdingSurgeThreshold: 20,
@@ -76,6 +80,8 @@ const featureInputs = {
   enableRemindAlert: document.querySelector('#enable-remind-alert'),
   enableFomoPanel: document.querySelector('#enable-fomo-panel'),
   enableFomoTrending: document.querySelector('#enable-fomo-trending'),
+  enableFomoTrendingFooter: document.querySelector('#enable-fomo-trending-footer'),
+  enableChartTrackedHoldings: document.querySelector('#enable-chart-tracked-holdings'),
   fomoTranslate: document.querySelector('#fomo-translate'),
   enableHoldingSurge: document.querySelector('#enable-holding-surge'),
   mergeFomoHolders: document.querySelector('#enable-merge-fomo-holders'),
@@ -108,6 +114,18 @@ const badgeColorInputs = {
 const surgeThresholdInput = document.querySelector('#holding-surge-threshold');
 const surgeCooldownInput = document.querySelector('#holding-surge-cooldown');
 const similarTokenCacheInput = document.querySelector('#similar-token-cache-minutes');
+const transparencyInputs = {
+  similarTokenPanelTransparency: document.querySelector('#similar-token-panel-transparency'),
+  fomoPanelTransparency: document.querySelector('#fomo-panel-transparency'),
+};
+function setTransparencyInput(key, value) {
+  const input = transparencyInputs[key];
+  input.value = String(Number.isFinite(Number(value)) ? Math.max(0, Math.min(80, Math.round(Number(value) / 5) * 5)) : 0);
+  input.nextElementSibling.textContent = `${input.value}%`;
+}
+for (const [key, input] of Object.entries(transparencyInputs)) {
+  input.addEventListener('input', () => setTransparencyInput(key, input.value));
+}
 const gmgnHoldingSyncStatus = document.querySelector('#gmgn-holding-sync-status');
 const monitor985SyncStatus = document.querySelector('#monitor-985-sync-status');
 const flapRpcInput = document.querySelector('#flap-rpc');
@@ -253,6 +271,7 @@ chrome.storage.local.get(DEFAULTS, (stored) => {
   for (const [key, input] of Object.entries(featureInputs)) {
     input.checked = stored[key] !== false;
   }
+  for (const key of Object.keys(transparencyInputs)) setTransparencyInput(key, stored[key]);
   devListInput.value = formatDevList(
     Array.isArray(stored.watchedDevs) ? stored.watchedDevs : [],
   );
@@ -299,6 +318,14 @@ chrome.storage.local.get({ monitor985SyncStateV1: null }, (stored) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local') {
+    for (const key of ['enableChartTrackedHoldings', 'enableFomoTrendingFooter']) {
+      if (changes[key]) featureInputs[key].checked = changes[key].newValue ?? DEFAULTS[key];
+    }
+    for (const key of ['similarTokenPanelTransparency', 'fomoPanelTransparency']) {
+      if (changes[key]) setTransparencyInput(key, changes[key].newValue);
+    }
+  }
   if (areaName === 'local' && changes.gmgnHoldingSignalSyncState) {
     renderGmgnHoldingSyncState(changes.gmgnHoldingSignalSyncState.newValue);
   }
@@ -332,6 +359,7 @@ saveButton.addEventListener('click', async () => {
       Object.entries(featureInputs).map(([key, input]) => [key, input.checked]),
     ),
     watchedDevs: parsed.entries,
+    ...Object.fromEntries(Object.entries(transparencyInputs).map(([key, input]) => [key, Number(input.value)])),
     highlightColor: colorInput.value || DEFAULTS.highlightColor,
     badgeColors: Object.fromEntries(
       Object.entries(badgeColorInputs)

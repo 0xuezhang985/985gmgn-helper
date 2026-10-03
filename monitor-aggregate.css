@@ -23,10 +23,28 @@
 }
 
 .gdh-chart-tracked-title {
+  padding-right: 24px;
   color: var(--color-text-2, #c5c8d0);
   font-size: 11px;
   font-weight: 500;
 }
+
+.gdh-chart-tracked-close {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-bg-100, #15171c);
+  color: var(--color-text-2, #c5c8d0);
+  pointer-events: auto;
+  cursor: pointer;
+  font: 16px/22px system-ui, sans-serif;
+}
+.gdh-chart-tracked-close:hover { color: #f5b83d; }
 
 .gdh-chart-tracked-holdings.is-empty {
   padding: 3px 6px;
