@@ -5496,11 +5496,17 @@ ${flapTooltipText(info)}
 
   function renderFomoTrendingPanel() {
     const panel = fomoTrendingPanelEl;
-    if (!panel) return;
-    panel.replaceChildren();
+    // Leave a hidden tab untouched; apply its latest data on reactivation.
+    if (!panel || !fomoTrendingActive) return;
 
     const visibleItems = fomoTrendingItems.filter((item) => !isFomoTrendingBlocked(item));
     const blockedCount = fomoTrendingItems.length - visibleItems.length;
+    const signature = JSON.stringify([visibleItems, blockedCount, getFomoTrendingBlockedTokens().length,
+      fomoTrendingFetchedAt, !fomoTrendingItems.length && fomoTrendingLoading,
+      !fomoTrendingItems.length && fomoTrendingError]);
+    // Page scans are not data changes; keep the list (and ongoing scrolling) intact.
+    if (panel.dataset.renderKey === signature) return;
+    panel.dataset.renderKey = signature;
 
     const meta = document.createElement('div');
     meta.className = 'gdh-fomo-trending__meta';
@@ -5527,13 +5533,15 @@ ${flapTooltipText(info)}
       metaActions.append(restore);
     }
     meta.append(count, metaActions);
-    panel.append(meta);
+    const previousMeta = panel.querySelector('.gdh-fomo-trending__meta');
+    if (previousMeta) previousMeta.replaceWith(meta);
+    else panel.prepend(meta);
 
     if (fomoTrendingLoading && !fomoTrendingItems.length) {
       const loading = document.createElement('div');
       loading.className = 'gdh-fomo-trending__state';
       loading.textContent = '正在读取 fomo 热门代币…';
-      panel.append(loading);
+      panel.replaceChildren(meta, loading);
       return;
     }
 
@@ -5560,7 +5568,7 @@ ${flapTooltipText(info)}
         }
       });
       state.append(title, hint, action);
-      panel.append(state);
+      panel.replaceChildren(meta, state);
       return;
     }
 
@@ -5572,12 +5580,14 @@ ${flapTooltipText(info)}
       const hint = document.createElement('span');
       hint.textContent = '可在追踪面板的 🚫 列表中恢复显示。';
       state.append(title, hint);
-      panel.append(state);
+      panel.replaceChildren(meta, state);
       return;
     }
 
-    const list = document.createElement('div');
+    const list = panel.querySelector('.gdh-fomo-trending__list') || document.createElement('div');
     list.className = 'gdh-fomo-trending__list';
+    const scrollTop = list.scrollTop;
+    const rows = document.createDocumentFragment();
     visibleItems.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = 'gdh-fomo-trending__row';
@@ -5645,9 +5655,13 @@ ${flapTooltipText(info)}
         event.preventDefault();
         row.click();
       });
-      list.append(row);
+      rows.append(row);
     });
-    panel.append(list);
+    panel.querySelector('.gdh-fomo-trending__state')?.remove();
+    list.replaceChildren(rows);
+    if (list.parentElement !== panel) panel.append(list);
+    // Update prices/order without replacing the scroll container; shorter lists clamp naturally.
+    list.scrollTop = scrollTop;
   }
 
   function pollFomoTrending(force = false) {
