@@ -1048,9 +1048,25 @@ await test('追踪列表相似币按币名或 ticker 九成相似度匹配，并
   assert.ok(!request.includes('985monitor'));
 });
 
-await test('相似币浮窗默认关闭、设置带 NEW 标记并接入主扫描', () => {
-  assert.match(content, /enableSimilarTokenPanel:\s*false/);
-  assert.match(popup, /enableSimilarTokenPanel:\s*false/);
+await test('相似币浮窗默认开启（老用户一次性迁移）、设置带 NEW 标记并接入主扫描', async () => {
+  assert.match(content, /enableSimilarTokenPanel:\s*true/);
+  assert.match(popup, /enableSimilarTokenPanel:\s*true/);
+  // 点过「保存全部设置」的老用户，存储里写死了当时的默认值 false。
+  // 迁移只翻一次：之后用户自己关掉，必须一直保持关闭。
+  const store = { enableSimilarTokenPanel: false };
+  const chromeStub = { storage: { local: {
+    get: async (defaults) => ({ ...defaults, ...store }),
+    set: async (values) => { Object.assign(store, values); },
+  } } };
+  const migrate = () => evaluate([extractFunction(background, 'migrateSimilarPanelDefaultOn')],
+    'migrateSimilarPanelDefaultOn()', { chrome: chromeStub, SIMILAR_PANEL_DEFAULT_ON_KEY: 'similarTokenPanelDefaultOnV1' });
+  assert.equal(await migrate(), true);
+  assert.equal(store.enableSimilarTokenPanel, true, '老用户存的 false 被翻成 true');
+  store.enableSimilarTokenPanel = false;
+  assert.equal(await migrate(), false);
+  assert.equal(store.enableSimilarTokenPanel, false, '迁移只跑一次，不能覆盖用户之后的手动关闭');
+  assert.ok(background.includes('migrateSimilarPanelDefaultOn().catch('), 'Service Worker 启动即执行');
+  assert.ok(content.includes("if (key === 'similarTokenPanelDefaultOnV1') continue;"), '迁移标记不进 settings');
   assert.ok(popup.includes("enableSimilarTokenPanel: document.querySelector('#enable-similar-token-panel')"));
   assert.match(popupHtml, /同名 \/ 相似币浮窗[\s\S]*?class="new-badge"[\s\S]*?id="enable-similar-token-panel"/);
   assert.match(popupStyles, /\.new-badge\s*\{/);
@@ -3027,8 +3043,8 @@ await test('DeBot 相似币元数据严格验证链和合约，读取 meta 名�
   assert.equal(run({pair:{tokenName:'missing identity'}}),null);
 });
 
-await test('DeBot 相似币默认关闭、复用设置、关闭时不请求且仅本地屏蔽', () => {
-  assert.match(debotContent,/enableSimilarTokenPanel: false/);
+await test('DeBot 相似币默认开启、复用设置、关闭时不请求且仅本地屏蔽', () => {
+  assert.match(debotContent,/enableSimilarTokenPanel: true/);
   assert.match(debotContent,/similarTokenCacheMinutes: 5/);
   assert.match(debotContent,/\.gdh-debot-similar-token-panel/);
   let requests=0;

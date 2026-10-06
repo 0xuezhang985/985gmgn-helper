@@ -483,7 +483,7 @@
     enablePumpFeed: true,
     fomoFeedChainOnly: false,
     enableMonitorAggregate: true,
-    enableSimilarTokenPanel: false,
+    enableSimilarTokenPanel: true,
     similarTokenCacheMinutes: 5,
     similarTokenPanelPin: null,
     syncGmgnTokenBlacklist: true,
@@ -10508,6 +10508,7 @@ ${flapTooltipText(info)}
       }
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
+      if (key === 'similarTokenPanelDefaultOnV1') continue; // 迁移标记不是设置项
       if (key === 'gmgnHoldingSignalSyncState') continue; // 只读诊断状态，不是设置项
       if (key === NOTIFICATION_HISTORY_KEY) {
         notificationHistory = normalizedNotificationHistory(change.newValue);

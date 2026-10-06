@@ -13,7 +13,7 @@
     fomoFeedTypes: {
       buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true,
     },
-    enableSimilarTokenPanel: false,
+    enableSimilarTokenPanel: true,
     similarTokenCacheMinutes: 5,
     debotSimilarTokenPanelPin: null,
     enableSpecialWallet: true,

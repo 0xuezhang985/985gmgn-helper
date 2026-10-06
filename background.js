@@ -823,6 +823,19 @@ async function skipUpdateVersion(version) {
   return checkForUpdate();
 }
 
+// 同名 / 相似币浮窗从 0.46.122 起默认开启。点过「保存全部设置」的老用户，存储里写死了
+// 当时的默认值 false，光改默认值他们还是看不到——这里一次性把它翻成 true。
+// 只做一次（标记防重跑），之后用户自己关掉就一直保持关闭。放在 Service Worker
+// 启动时跑：比内容脚本早，用户打开设置弹窗之前就已完成；写失败下次唤醒再试。
+const SIMILAR_PANEL_DEFAULT_ON_KEY = 'similarTokenPanelDefaultOnV1';
+async function migrateSimilarPanelDefaultOn() {
+  const stored = await chrome.storage.local.get({ [SIMILAR_PANEL_DEFAULT_ON_KEY]: false });
+  if (stored[SIMILAR_PANEL_DEFAULT_ON_KEY]) return false;
+  await chrome.storage.local.set({ enableSimilarTokenPanel: true, [SIMILAR_PANEL_DEFAULT_ON_KEY]: true });
+  return true;
+}
+migrateSimilarPanelDefaultOn().catch(() => {});
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: CHECK_INTERVAL_MINUTES });
   chrome.alarms.create(MONITOR985_SYNC_ALARM, { periodInMinutes: 5 });

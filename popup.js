@@ -44,7 +44,7 @@ const DEFAULTS = {
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
-  enableSimilarTokenPanel: false,
+  enableSimilarTokenPanel: true,
   similarTokenCacheMinutes: 5,
   syncGmgnTokenBlacklist: true,
   fomoFeedTypes: { buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true },
