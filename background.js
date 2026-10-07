@@ -1919,6 +1919,180 @@ async function flapTokenInfo({ token, rpc }) {
   return data;
 }
 
+// ---- Brew（brewfamily.dev）池子税 ----
+// Brew 发的币不收代币税：手续费是 PancakeSwap V3 池子本身的费率档（GMGN 把它显示成
+// 「总税率」）。LP 仓位锁在 Brew 的 locker 里，收上来的手续费按 protocolFeeBps 在平台
+// 和创作者之间分；创作者那份的接收方决定去向：
+//   = distributorFactory.predict(币)   → 回购本币并销毁（Holder rewards）
+//   = 分红币的跟踪器 trackerOf(币)      → 按持仓分给持有人
+//   其它                               → 创作者自己
+// 读法照搬 brewfamily.dev 前端（fees / multipair-fee-panel 分包），四类工厂各拿真实
+// 代币在链上走通过。分配器多半还没部署（首次分配时才创建），只能比对 predict 的预测
+// 地址；按 distributorOf 或「接收方是不是合约」去判断都会判错。
+// Brew 币没有固定尾号（基线里 1106 个老币一个 6666 都没有），只能逐个问工厂。
+const BREW_DISTRIBUTOR_FACTORY = '0xd765972dd6a09fa9c743b4708198a820fc5d31ee';
+const BREW_FEE_FACTORIES = [
+  { kind: 'standard', layout: 'standard', address: '0xeea6c3bfb29fd9a35380438956bae7b109c63d85', locker: '0x3366e32702d6116b4fd2cd3353de2d5ff993f0d4' },
+  { kind: 'dividend', layout: 'dividend', address: '0xd31ce1c4da94483abf536d613f66f55ad1abc8f5', locker: '0x3b66e290057bc1654eb6f63ccb2e5103da7c2d8a' },
+  { kind: 'multipair', layout: 'multipair-v1', address: '0x21653fa9c9562d55a162c17d2ef33fc0fab7ea71', locker: '0x2ea9dfb11d8edf2e0e66c0b659e1280fc8783c13' },
+  { kind: 'multipair', layout: 'multipair-v2', address: '0x0f8708a91d8e3b3458be94d32caa6e62e98daedc', locker: '0x7b2656b614aa9e2f334a773a650ffde4c7f58c7b' },
+  { kind: 'multipair', layout: 'multipair-v2', address: '0xcc6ac53056820cdfa7da63f8083292c9f0556f36', locker: '0x34a12782c440d1e3afa28b71aa171bb09038c7e6' },
+];
+const BREW_SEL = {
+  launches: '0x1f2d8550',
+  positionsOf: '0xf867d46b',
+  lockedPositions: '0x01a5e163',
+  predict: '0x901b96e7',
+  quotesOf: '0x627f6b01',
+  symbol: '0x95d89b41',
+};
+const BREW_SUCCESS_TTL = 5 * 60000;
+// 不是 Brew 发的币永远不会变成 Brew 的，否定结论可以长缓存
+const BREW_NEGATIVE_TTL = 24 * 3600000;
+const BREW_CACHE_MAX = 3000;
+const BREW_QUEUE_MAX = 40;
+const BREW_MIN_GAP_MS = 100;
+const BREW_COOLDOWN_MS = 30000;
+const brewFeeCache = new Map();
+const brewFeeInflight = new Map();
+let brewFeeChain = Promise.resolve();
+let brewFeeQueued = 0;
+let brewFeeCooldownUntil = 0;
+
+const brewArg = (address) => '000000000000000000000000' + address.slice(2);
+const brewUint = (value) => BigInt(value).toString(16).padStart(64, '0');
+
+/** 动态数组返回值：偏移 + 长度 + 元素。 */
+function brewArray(hex) {
+  const w = flapWords(hex);
+  if (w.length < 2) return [];
+  const len = Number(BigInt('0x' + w[1]));
+  return len > 0 && len <= 64 ? w.slice(2, 2 + len) : [];
+}
+
+/** 各代工厂 launches(address) 的返回字段，取自 Brew 前端 ABI，逐个链上实测。 */
+function brewLaunch(layout, w) {
+  if (layout === 'standard') {
+    return { token: flapAddr(w[0]), quotes: [flapAddr(w[1])], pool: flapAddr(w[2]), creator: flapAddr(w[3]), fee: flapNum(w[4]) };
+  }
+  if (layout === 'dividend') {
+    return { token: flapAddr(w[0]), tracker: flapAddr(w[1]), quotes: [flapAddr(w[2])], pool: flapAddr(w[3]), creator: flapAddr(w[4]), fee: flapNum(w[5]) };
+  }
+  if (layout === 'multipair-v1') {
+    return { token: flapAddr(w[0]), creator: flapAddr(w[1]), fee: flapNum(w[2]), pairCount: flapNum(w[3]) };
+  }
+  return {
+    token: flapAddr(w[0]), creator: flapAddr(w[1]), recipient: flapAddr(w[2]),
+    fee: flapNum(w[3]), protocolBps: flapNum(w[4]), pairCount: flapNum(w[6]),
+  };
+}
+
+async function brewLookup(address, endpoint) {
+  const launches = await flapRpc(endpoint, BREW_FEE_FACTORIES.map((f) => ({ to: f.address, data: BREW_SEL.launches + brewArg(address) })));
+  let factory = null;
+  let launch = null;
+  BREW_FEE_FACTORIES.forEach((f, i) => {
+    if (factory) return;
+    const parsed = brewLaunch(f.layout, flapWords(launches[i]));
+    if (parsed.token === address) { factory = f; launch = parsed; }
+  });
+  if (!factory) return { ok: false, reason: 'not-brew' };
+
+  const multi = factory.kind === 'multipair';
+  const second = await flapRpc(endpoint, [
+    { to: factory.locker, data: BREW_SEL.positionsOf + brewArg(address) },
+    { to: BREW_DISTRIBUTOR_FACTORY, data: BREW_SEL.predict + brewArg(address) },
+    ...(multi ? [{ to: factory.address, data: BREW_SEL.quotesOf + brewArg(address) }] : []),
+  ]);
+  const positions = brewArray(second[0]);
+  const distributor = flapAddr(flapWords(second[1])[0]);
+  const quotes = (multi ? brewArray(second[2]).map(flapAddr) : launch.quotes).filter((q) => /^0x[a-f0-9]{40}$/.test(q));
+
+  // 和官方前端一样只看第一个锁仓仓位，并校验它确实属于这个币
+  let recipient = launch.recipient || '';
+  let protocolBps = launch.protocolBps;
+  if (positions.length) {
+    const [locked] = await flapRpc(endpoint, [{ to: factory.locker, data: BREW_SEL.lockedPositions + brewUint(BigInt('0x' + positions[0])) }]);
+    const w = flapWords(locked);
+    if (flapAddr(w[0]) !== address) return { ok: false, reason: 'brew-position-mismatch' };
+    recipient = flapAddr(w[1]);
+    protocolBps = flapNum(w[2]);
+  }
+  if (!/^0x[a-f0-9]{40}$/.test(recipient) || !Number.isInteger(protocolBps) || protocolBps < 0 || protocolBps > 10000) {
+    return { ok: false, reason: 'brew-no-position' };
+  }
+
+  // 计价币符号只用于悬停说明；读失败不影响徽章本身
+  const unknown = quotes.slice(0, 6).filter((q) => !flapSymbolCache.has(q));
+  if (unknown.length) {
+    try {
+      const symbols = await flapRpc(endpoint, unknown.map((q) => ({ to: q, data: BREW_SEL.symbol })));
+      unknown.forEach((q, i) => setBoundedMap(flapSymbolCache, q, flapString(symbols[i]), FLAP_SYMBOL_CACHE_MAX));
+    } catch { /* 符号缺了照样出徽章 */ }
+  }
+
+  const tracker = launch.tracker || '';
+  const mode = recipient === distributor ? 'burn'
+    : (factory.kind === 'dividend' && tracker && recipient === tracker) ? 'dividend' : 'creator';
+  return {
+    ok: true,
+    kind: 'brew',
+    brewKind: factory.kind,
+    layout: factory.layout,
+    token: address,
+    fee: launch.fee,
+    protocolBps,
+    creatorBps: 10000 - protocolBps,
+    mode,
+    recipient,
+    distributor,
+    tracker,
+    creator: launch.creator || '',
+    pool: launch.pool || '',
+    pairCount: launch.pairCount || quotes.length,
+    quoteSymbols: quotes.map((q) => flapSymbolCache.get(q) || ''),
+  };
+}
+
+/**
+ * 查询一律串行、带最小间隔；排队太长直接回 busy，节点全挂就熔断 30 秒。
+ * 只有「是 Brew」和「确定不是 Brew」进缓存，节点抖动类的失败不缓存，交给页面退避重试。
+ */
+async function brewTokenInfo({ token, rpc }) {
+  const address = String(token || '').toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(address)) return { ok: false, reason: 'bad-token' };
+  const hit = brewFeeCache.get(address);
+  if (hit && Date.now() - hit.at < (hit.data.ok ? BREW_SUCCESS_TTL : BREW_NEGATIVE_TTL)) return hit.data;
+  const running = brewFeeInflight.get(address);
+  if (running) return running;
+  if (Date.now() < brewFeeCooldownUntil) return { ok: false, reason: 'rpc-cooldown' };
+  if (brewFeeQueued >= BREW_QUEUE_MAX) return { ok: false, reason: 'busy' };
+  brewFeeQueued += 1;
+  const job = brewFeeChain.then(async () => {
+    try {
+      for (const endpoint of [rpc, ...FLAP_RPCS].filter(Boolean)) {
+        try {
+          const data = await brewLookup(address, endpoint);
+          if (data.ok || data.reason === 'not-brew') {
+            setBoundedMap(brewFeeCache, address, { at: Date.now(), data }, BREW_CACHE_MAX);
+          }
+          return data;
+        } catch { /* 换下一个节点 */ }
+      }
+      brewFeeCooldownUntil = Date.now() + BREW_COOLDOWN_MS;
+      return { ok: false, reason: 'rpc-failed' };
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, BREW_MIN_GAP_MS));
+    }
+  }).finally(() => {
+    brewFeeQueued -= 1;
+    brewFeeInflight.delete(address);
+  });
+  brewFeeChain = job.catch(() => {});
+  brewFeeInflight.set(address, job);
+  return job;
+}
+
 let geniusFeeReader;
 async function tokenFeeInfo({ token, rpc }) {
   const address = String(token || '').toLowerCase();
@@ -1933,6 +2107,10 @@ async function tokenFeeInfo({ token, rpc }) {
   geniusFeeReader ||= GDHGeniusFees.createReader({ rpcUrls: FLAP_RPCS });
   const genius = await geniusFeeReader.get(address);
   if (genius.ok || genius.reason !== 'not-genius') return genius;
+  // Brew 的手续费在 V3 池子里而不是代币税；只有确定不是 Brew 才落回 Flap，
+  // 节点抖动类的失败原样返回，免得被 Flap 的 not-flap 定论把 Brew 币永久钉死。
+  const brew = await brewTokenInfo({ token: address, rpc });
+  if (brew.ok || brew.reason !== 'not-brew') return brew;
   return flap || flapTokenInfo({ token: address, rpc });
 }
 

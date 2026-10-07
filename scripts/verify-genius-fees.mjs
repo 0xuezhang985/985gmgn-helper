@@ -71,8 +71,9 @@ assert.equal(peak, 1); assert.equal(queued.filter(x => x.reason === 'busy').leng
 // Flap routing remains available; Genius failures are never reinterpreted as a non-Genius token.
 const background = read('background.js');
 const router = background.slice(background.indexOf('let geniusFeeReader;'), background.indexOf('// 代币总供应量（人类可读口径'));
-let flapCalls = 0, geniusCalls = 0, response = sample;
+let flapCalls = 0, geniusCalls = 0, brewCalls = 0, response = sample, brewResponse = { ok: false, reason: 'not-brew' };
 const context = vm.createContext({ FLAP_RPCS: [], GDHGeniusFees: { createReader: () => ({ get: async () => { geniusCalls++; return response; } }) },
+  brewTokenInfo: async () => { brewCalls++; return brewResponse; },
   flapTokenInfo: async () => { flapCalls++; return { ok: true, kind: 'flap' }; } });
 vm.runInContext(router, context);
 assert.equal((await context.tokenFeeInfo({ token })).kind, 'genius'); assert.equal(flapCalls, 0);
@@ -82,6 +83,19 @@ response = { ok: false, reason: 'rpc-failed' };
 assert.equal((await context.tokenFeeInfo({ token })).reason, 'rpc-failed'); assert.equal(flapCalls, 1);
 assert.equal((await context.tokenFeeInfo({ token: '0x' + '1'.repeat(36) + '7777' })).kind, 'flap');
 assert.equal(geniusCalls, 3); checks++;
+// Brew：命中直接返回；确定不是 Brew 才落回 Flap；节点抖动原样返回，不能被 not-flap 定论吞掉。
+response = { ok: false, reason: 'not-genius' };
+const flapBefore = flapCalls;
+brewResponse = { ok: true, kind: 'brew', mode: 'burn' };
+assert.equal((await context.tokenFeeInfo({ token })).kind, 'brew'); assert.equal(flapCalls, flapBefore);
+brewResponse = { ok: false, reason: 'rpc-failed' };
+assert.equal((await context.tokenFeeInfo({ token })).reason, 'rpc-failed'); assert.equal(flapCalls, flapBefore);
+brewResponse = { ok: false, reason: 'not-brew' };
+assert.equal((await context.tokenFeeInfo({ token })).kind, 'flap'); assert.equal(flapCalls, flapBefore + 1);
+const brewBefore = brewCalls;
+await context.tokenFeeInfo({ token: '0x' + '1'.repeat(36) + '7777' });
+assert.equal(brewCalls, brewBefore, 'Flap 尾号快路径不额外查 Brew');
+checks++;
 
 const source = read('content.js');
 const names = ['chipText', 'findNativeTaxChip', 'isColumnFlow', 'tokenMetaOwnRow', 'flapOwnRow', 'restoreFlapNative', 'clearFlapCard',

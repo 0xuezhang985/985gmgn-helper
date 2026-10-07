@@ -468,6 +468,7 @@
     // 徽章总开关下面的分项。总开关关掉=全关；开着时这几项各管各的那一种徽章。
     enableFlapTaxBadge: true,
     enableGeniusBadge: true,
+    enableBrewFeeBadge: true,
     enableRhPoolBadge: true,
     enableRhDividendBadge: true,
     enableFomoShareBadge: true,
@@ -1562,6 +1563,55 @@
     return lines.join('\n');
   }
 
+  // ---- Brew 池子税徽章 ----
+  // Brew 的手续费是 PancakeSwap V3 池子的费率档（GMGN 显示成「总税率」），不是代币税。
+  // 徽章补上 GMGN 看不到的那一半：平台拿走多少、创作者那份最后去了哪。
+  const BREW_MODES = {
+    burn: { cls: 'burn', emoji: '🔥', en: 'Holder rewards: buyback & burn', zh: '持有人奖励：回购销毁' },
+    dividend: { cls: 'holder', emoji: '💎', en: 'Dividends to holders', zh: '分红给持有人' },
+    creator: { cls: 'creator', emoji: '👨‍🍳', en: 'Creator fees', zh: '创作者收取' },
+  };
+
+  /** V3 费率档单位是百万分之一：10000 = 1%。 */
+  const brewFeePct = (fee) => flapPct(Number(fee || 0) / 100);
+
+  function brewTokenUrl(token) {
+    return /^0x[a-f0-9]{40}$/.test(token || '') ? `https://brewfamily.dev/token/?address=${token}` : '';
+  }
+
+  function brewBadgeText(info) {
+    const mode = BREW_MODES[info.mode] || BREW_MODES.creator;
+    return `🍺${brewFeePct(info.fee)} | ${mode.emoji}${flapSegPct(info.creatorBps)}`;
+  }
+
+  function brewTooltipText(info) {
+    const zh = settings.priorityStrategyLanguageV1 === 'zh';
+    const mode = BREW_MODES[info.mode] || BREW_MODES.creator;
+    const kind = { standard: zh ? '标准' : 'Standard', dividend: zh ? '分红币' : 'Dividend', multipair: zh ? '多池' : 'Multi-pair' }[info.brewKind] || info.brewKind;
+    const quotes = (info.quoteSymbols || []).filter(Boolean).join(' / ');
+    const lines = [`Brew · ${kind} · ${zh ? mode.zh : mode.en}`,
+      zh ? `池费 ${brewFeePct(info.fee)}（PancakeSwap V3 费率档，买卖都收；GMGN 显示为总税率）`
+        : `Pool fee ${brewFeePct(info.fee)} (PancakeSwap V3 fee tier on every trade; GMGN shows it as tax)`,
+      zh ? '—— 手续费分配 ——' : '— Fee split —',
+      `${zh ? '平台' : 'Protocol'} ${flapSegPct(info.protocolBps)}`];
+    if (info.mode === 'burn') {
+      lines.push(zh ? `🔥 创作者 ${flapSegPct(info.creatorBps)} → 回购本币并销毁，不发到钱包`
+        : `🔥 Creator ${flapSegPct(info.creatorBps)} → buys the token back and burns it (no wallet payouts)`,
+      `${zh ? '分配器' : 'Distributor'} ${flapShort(info.distributor)}`);
+    } else if (info.mode === 'dividend') {
+      lines.push(zh ? `💎 创作者 ${flapSegPct(info.creatorBps)} → 按持仓分红给持有人`
+        : `💎 Creator ${flapSegPct(info.creatorBps)} → paid out to holders as dividends`,
+      `${zh ? '分红跟踪器' : 'Dividend tracker'} ${flapShort(info.tracker)}`);
+    } else {
+      lines.push(zh ? `👨‍🍳 创作者 ${flapSegPct(info.creatorBps)} → 收款地址 ${flapShort(info.recipient)}`
+        : `👨‍🍳 Creator ${flapSegPct(info.creatorBps)} → recipient ${flapShort(info.recipient)}`);
+    }
+    if (quotes) lines.push(`${zh ? '计价' : 'Quote'} ${quotes}`);
+    lines.push(zh ? '数据直读链上，未经任何第三方服务' : 'Read directly on-chain, no third-party service',
+      '', zh ? '点击打开 Brew 代币页' : 'Click to open the Brew token page');
+    return lines.join('\n');
+  }
+
   /**
    * 分项开关：Flap 税收徽章与 Genius 创作者分成徽章各管各的。
    * 判断放在这里而不是 ensureFlapBadge 里，是为了让关掉的那一种连自有徽章行
@@ -1570,6 +1620,7 @@
   function flapBadgeEnabled(token) {
     const info = flapInfoCache.get(token);
     if (!info?.ok) return false;
+    if (info.kind === 'brew') return settings.enableBrewFeeBadge !== false;
     return info.kind === 'genius'
       ? settings.enableGeniusBadge !== false
       : settings.enableFlapTaxBadge !== false;
@@ -1606,7 +1657,8 @@
         event.stopPropagation();
         const token = badge.dataset.gdhFlapToken || '';
         const url = badge.dataset.gdhFeeKind === 'genius' && /^0x[a-f0-9]{40}$/.test(token)
-          ? `https://genius.fun/token/${token}` : flapTaxUrl(token);
+          ? `https://genius.fun/token/${token}`
+          : badge.dataset.gdhFeeKind === 'brew' ? brewTokenUrl(token) : flapTaxUrl(token);
         if (url) window.open(url, '_blank', 'noopener,noreferrer');
       };
       badge.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -1621,17 +1673,20 @@
       if (native?.hasAttribute('data-gdh-flap-native')) restoreFlapNative(native);
       return;
     }
-    const kind = genius ? 'genius' : 'flap';
+    const brew = info.kind === 'brew';
+    const kind = genius ? 'genius' : brew ? 'brew' : 'flap';
     if (badge.dataset.gdhFeeKind !== kind) badge.dataset.gdhFeeKind = kind;
-    const mode = genius ? { cls: info.creatorPayoutBps > 25 ? 'genius-warning' : 'genius-check' } : flapMode(info.dist);
+    const mode = genius ? { cls: info.creatorPayoutBps > 25 ? 'genius-warning' : 'genius-check' }
+      : brew ? (BREW_MODES[info.mode] || BREW_MODES.creator) : flapMode(info.dist);
     const className = `gdh-flap is-${mode.cls}`;
     if (badge.className !== className) badge.className = className;
     if (badge.dataset.gdhFlapToken !== token) badge.dataset.gdhFlapToken = token;
-    const text = compact ? (info.creatorPayoutBps > 25 ? '⚠' : '✓') : genius ? geniusBadgeText(info) : flapBadgeText(info);
+    const text = compact ? (info.creatorPayoutBps > 25 ? '⚠' : '✓')
+      : genius ? geniusBadgeText(info) : brew ? brewBadgeText(info) : flapBadgeText(info);
     if (badge.textContent !== text) badge.textContent = text;
     const label = genius ? geniusBadgeText(info) : text;
     if (badge.getAttribute('aria-label') !== label) badge.setAttribute('aria-label', label);
-    const title = genius ? geniusTooltipText(info) : `${mode.name}
+    const title = genius ? geniusTooltipText(info) : brew ? brewTooltipText(info) : `${mode.name}
 ${flapTooltipText(info)}
 
 点击打开 flap 税收详情页`;
