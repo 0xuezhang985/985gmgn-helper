@@ -1105,10 +1105,20 @@ const fomoTokenPending = new Map();
 // Fomo 首次打开持仓者页时还会补每个用户的 7 天 PnL。旧版由 GMGN/DeBot
 // 各自并发发送，请求会瞬间堆到官方 API，命中 Cloudflare 429 后又被 30 秒轮询
 // 持续续打，导致限流一直无法自行解除。所有 Fomo API 请求统一走这条串行闸门。
-const FOMO_REQUEST_GAP_MS = 1500;
+const FOMO_REQUEST_GAP_MS = 3000;
+// 固定间隔太像脚本：每次再随机多等 0–1.5 秒。
+const FOMO_REQUEST_JITTER_MS = 1500;
 const FOMO_429_BASE_MS = 5 * 60 * 1000;
 const FOMO_429_MAX_MS = 30 * 60 * 1000;
 const FOMO_RATE_LIMIT_KEY = 'fomoRateLimitStateV1';
+// 每小时总量上限（滑动窗口），兜住多标签页、异常重试等意外情况。刷新间隔不变时单页停留
+// 最多约 120 次/小时（占比 30 + 浮窗 30 + 热门榜 60），240 给翻币留出余量。
+// 时间戳落盘：Service Worker 休眠或浏览器重启都不会把窗口清零。
+const FOMO_HOURLY_BUDGET = 240;
+const FOMO_BUDGET_WINDOW_MS = 60 * 60 * 1000;
+const FOMO_BUDGET_KEY = 'fomoRequestBudgetV1';
+let fomoBudgetStamps = [];
+let fomoBudgetReady = null;
 let fomoRequestTail = Promise.resolve();
 let fomoNextRequestAt = 0;
 let fomoRateLimitUntil = 0;
@@ -1153,18 +1163,55 @@ function fomoBackoffResponse(now = Date.now()) {
   });
 }
 
+async function fomoLoadBudget() {
+  if (fomoBudgetReady) return fomoBudgetReady;
+  fomoBudgetReady = chrome.storage.local.get(FOMO_BUDGET_KEY).then((stored) => {
+    const now = Date.now();
+    const saved = Array.isArray(stored?.[FOMO_BUDGET_KEY]) ? stored[FOMO_BUDGET_KEY] : [];
+    fomoBudgetStamps = saved.map(Number)
+      .filter((at) => at > now - FOMO_BUDGET_WINDOW_MS && at <= now)
+      .sort((a, b) => a - b)
+      .slice(-FOMO_HOURLY_BUDGET);
+  }).catch(() => {});
+  return fomoBudgetReady;
+}
+
+/** 本小时还有余量返回 0，否则返回窗口里腾出一个名额还要等多久。 */
+function fomoBudgetWaitMs(now = Date.now()) {
+  while (fomoBudgetStamps.length && fomoBudgetStamps[0] <= now - FOMO_BUDGET_WINDOW_MS) fomoBudgetStamps.shift();
+  if (fomoBudgetStamps.length < FOMO_HOURLY_BUDGET) return 0;
+  return Math.max(1000, fomoBudgetStamps[0] + FOMO_BUDGET_WINDOW_MS - now);
+}
+
+function fomoBudgetResponse(now = Date.now()) {
+  return new Response(JSON.stringify({ error: 'budget_exhausted' }), {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': String(Math.ceil(fomoBudgetWaitMs(now) / 1000)),
+      'X-GDH-Fomo-Budget': '1',
+    },
+  });
+}
+
 async function fomoQueuedFetch(run) {
   await fomoLoadRateLimit();
+  await fomoLoadBudget();
   const task = fomoRequestTail.then(async () => {
     let now = Date.now();
     if (now < fomoRateLimitUntil) return fomoBackoffResponse(now);
+    if (fomoBudgetWaitMs(now)) return fomoBudgetResponse(now);
     const wait = Math.max(0, fomoNextRequestAt - now);
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     now = Date.now();
     if (now < fomoRateLimitUntil) return fomoBackoffResponse(now);
+    if (fomoBudgetWaitMs(now)) return fomoBudgetResponse(now);
+    // 先记账再发：请求失败也算一次，宁可少发不多发。
+    fomoBudgetStamps.push(now);
+    chrome.storage.local.set({ [FOMO_BUDGET_KEY]: fomoBudgetStamps }).catch(() => {});
 
     const response = await run();
-    fomoNextRequestAt = Date.now() + FOMO_REQUEST_GAP_MS;
+    fomoNextRequestAt = Date.now() + FOMO_REQUEST_GAP_MS + Math.floor(Math.random() * FOMO_REQUEST_JITTER_MS);
     if (response?.status === 429) {
       const hitAt = Date.now();
       if (hitAt - fomoRateLimitLastAt > FOMO_429_MAX_MS) fomoRateLimitLevel = 0;
@@ -1484,13 +1531,16 @@ async function fomoFetchToken({ tokenAddress, networkId, kind }) {
       const text = await res.text().catch(() => '');
       const blocked = /cloudflare|cf-ray|<!DOCTYPE html/i.test(text);
       const rateLimited = res.status === 429;
+      // 插件自己的每小时上限（不是 fomo 限流），提示要分开说
+      const budgetLimited = rateLimited && res.headers.get('X-GDH-Fomo-Budget') === '1';
       return {
         ok: false,
-        reason: rateLimited ? 'rate-limited'
+        reason: budgetLimited ? 'budget-limited' : rateLimited ? 'rate-limited'
           : unauthed ? (token ? 'expired' : 'no-token')
           : (blocked ? 'blocked' : `http-${res.status}`),
         status: res.status,
-        retryAfterMs: rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
+        retryAfterMs: budgetLimited ? fomoBudgetWaitMs()
+          : rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
         tokenAt: stored?.at || 0,
         renewed,
       };
@@ -1552,7 +1602,8 @@ function fomoFetchTokenShared(payload) {
 // ---- 单个用户的 7 天盈亏（给持仓者打标记用）----
 // fomo 悬浮卡是「实时余额算的累计 PnL − 7 天前快照的 PnL」，要两个请求。
 // 这里用同一条快照序列的首末差，一个请求就够，代价是最多滞后一小时——打标记足够了。
-const FOMO_PNL_TTL = 10 * 60 * 1000;
+// 快照本来就是逐小时一份，1 小时内重查拿到的是同一份数据，所以缓存 1 小时。
+const FOMO_PNL_TTL = 60 * 60 * 1000;
 const FOMO_PNL_CACHE_MAX = 500;
 const fomoPnlCache = new Map();
 
@@ -1565,11 +1616,14 @@ async function fomoUserPnl7d({ userId }) {
   const path = `/v2/userTokens/aggregatedSnapshot?userId=${encodeURIComponent(userId)}&timestamp=${encodeURIComponent(since)}`;
   try {
     const { res, unauthed } = await fomoAuthedFetch(path);
+    const budgetLimited = res.status === 429 && res.headers.get('X-GDH-Fomo-Budget') === '1';
     if (!res.ok) return {
       ok: false,
-      reason: res.status === 429 ? 'rate-limited' : (unauthed ? 'expired' : `http-${res.status}`),
+      reason: budgetLimited ? 'budget-limited'
+        : res.status === 429 ? 'rate-limited' : (unauthed ? 'expired' : `http-${res.status}`),
       status: res.status,
-      retryAfterMs: res.status === 429 ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
+      retryAfterMs: budgetLimited ? fomoBudgetWaitMs()
+        : res.status === 429 ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
     };
     const body = await res.json().catch(() => null);
     const inner = Number(body?.statusCode);
@@ -2418,12 +2472,14 @@ async function fomoFetchTrending() {
       }
       if (!res.ok) {
         const rateLimited = res.status === 429;
+        const budgetLimited = rateLimited && res.headers.get('X-GDH-Fomo-Budget') === '1';
         return {
           ok: false,
-          reason: rateLimited ? 'rate-limited'
+          reason: budgetLimited ? 'budget-limited' : rateLimited ? 'rate-limited'
             : (unauthed ? (token ? 'expired' : 'no-token') : `http-${res.status}`),
           status: res.status,
-          retryAfterMs: rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
+          retryAfterMs: budgetLimited ? fomoBudgetWaitMs()
+            : rateLimited ? Math.max(1000, fomoRateLimitUntil - Date.now()) : 0,
           tokenAt: stored?.at || 0,
           renewed,
         };

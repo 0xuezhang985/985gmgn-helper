@@ -1799,7 +1799,8 @@ await test('FOMO 非 2xx 的 430/431 unauthorized 也进入登录引导', async 
   assert.equal(await evaluate([bodyFn, responseFn], 'fomoResponseUnauthed(response)', { response: unrelated }), false);
   assert.match(background, /if \(!res\.ok && unauthed && !token\)[\s\S]{0,160}reason: 'no-token'/);
   assert.match(background, /unauthed \? \(token \? 'expired' : 'no-token'\)/);
-  assert.ok(background.includes("reason: rateLimited ? 'rate-limited'"));
+  // 插件自己的每小时额度在前面单独分支（budget-limited），fomo 的 429 仍映射为 rate-limited
+  assert.match(background, /reason: budgetLimited \? 'budget-limited' : rateLimited \? 'rate-limited'/);
 });
 
 await test('后台不再裸调 Privy sessions 或携带公开标注口令', () => {
@@ -2470,6 +2471,9 @@ await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {
     extractFunction(background, 'fomoLoadRateLimit'),
     extractFunction(background, 'fomoRetryAfterMs'),
     extractFunction(background, 'fomoBackoffResponse'),
+    extractFunction(background, 'fomoLoadBudget'),
+    extractFunction(background, 'fomoBudgetWaitMs'),
+    extractFunction(background, 'fomoBudgetResponse'),
     extractFunction(background, 'fomoQueuedFetch'),
   ];
   const persisted = [];
@@ -2507,12 +2511,19 @@ await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {
       blockedCalls,
       synthetic: blocked.headers.get('X-GDH-Fomo-Backoff'),
       retryAfter: Number(blocked.headers.get('Retry-After')),
-      persisted: persisted.length,
+      persisted: persisted.filter((value) => 'fomoRateLimitStateV1' in value).length,
+      budgetWrites: persisted.filter((value) => 'fomoRequestBudgetV1' in value).length,
     };
   })()`, {
     Response,
     setTimeout,
     FOMO_REQUEST_GAP_MS: 5,
+    FOMO_REQUEST_JITTER_MS: 0,
+    FOMO_HOURLY_BUDGET: 100,
+    FOMO_BUDGET_WINDOW_MS: 60 * 60 * 1000,
+    FOMO_BUDGET_KEY: 'fomoRequestBudgetV1',
+    fomoBudgetStamps: [],
+    fomoBudgetReady: null,
     FOMO_429_BASE_MS: 60 * 1000,
     FOMO_429_MAX_MS: 30 * 60 * 1000,
     FOMO_RATE_LIMIT_KEY: 'fomoRateLimitStateV1',
@@ -2539,6 +2550,7 @@ await test('FOMO 官方接口全局串行且 429 后断路退避', async () => {
   assert.equal(result.synthetic, '1');
   assert.ok(result.retryAfter >= 60);
   assert.equal(result.persisted, 1);
+  assert.equal(result.budgetWrites, 3, '每次真实请求都要记入每小时额度');
   assert.ok(background.includes("rateLimited ? 'rate-limited'"));
   assert.ok(content.includes("reason === 'rate-limited'"));
   assert.ok(debotContent.includes("reason === 'rate-limited'"));

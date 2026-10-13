@@ -23,6 +23,8 @@
     debotFomoPanelOpen: false,
     debotFomoPanelFolded: false,
     debotFomoPanelPos: null,
+    // 持仓者 7 天盈亏：每人要单独打一次 fomo，默认关闭以免账号被风控
+    enableFomoHolderPnl: false,
   };
   const FOMO_NETWORK_ID = {
     bsc: 56, eth: 1, base: 8453, sol: 1399811149, robinhood: 4663, monad: 143,
@@ -1738,7 +1740,8 @@
       const job = pnlQueue.shift();
       if (!job.element.isConnected) continue;
       const cached = pnlCache.get(job.userId);
-      if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
+      // 快照逐小时一份：成功缓存 1 小时，失败只压 2 分钟
+      if (cached && Date.now() - cached.at < (cached.data?.ok ? 60 * 60 * 1000 : 2 * 60 * 1000)) {
         paintPnlTag(job.element, cached.data);
         continue;
       }
@@ -1750,6 +1753,19 @@
           if (job.element.isConnected) paintPnlTag(job.element, response);
         }).finally(() => { pnlActive -= 1; pumpPnlQueue(); });
     }
+  }
+
+  /** 持仓金额最大的前 10 人（自己排序，不依赖接口返回顺序）。 */
+  function fomoPnlTopUids(items) {
+    return new Set(items
+      .map((item) => ({
+        uid: fomoUser(item)?.id,
+        value: Number(item?.value ?? deepPick(item, /(position|value|balance)(usd)?$/i, 'number')) || 0,
+      }))
+      .filter((row) => row.uid)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10)
+      .map((row) => String(row.uid)));
   }
 
   function watchPnl(element, userId, root) {
@@ -1930,12 +1946,15 @@
       empty.textContent = '暂无持仓者';
       return void list.appendChild(empty);
     }
-    for (const item of items.slice(0, 60)) {
+    const shown = items.slice(0, 60);
+    // 7 天盈亏每人要单独打一次 fomo：默认关闭，打开后也只查持仓最大的 10 人
+    const pnlUids = settings.enableFomoHolderPnl === true ? fomoPnlTopUids(shown) : new Set();
+    for (const item of shown) {
       const row = document.createElement('article');
       row.className = 'gdh-debot-fomo__holder';
       const head = panelHeader(item);
       const userId = fomoUser(item)?.id;
-      if (userId) {
+      if (userId && pnlUids.has(String(userId))) {
         const tag = document.createElement('span');
         tag.className = 'gdh-debot-fomo__pnl-tag is-loading';
         tag.textContent = '…';
@@ -2074,13 +2093,14 @@
     }
   }
 
-  async function loadPanelStats(route) {
+  async function loadPanelStats(route, folded = false) {
     const key = `${route.chain}|${route.address}`;
     if (panelStats.key === key && panelStats.holders) return;
     panelStats = { key, holders: null, thesisCount: null, supply: 0 };
     const [holders, thesis, debotSupply, fallbackSupply] = await Promise.all([
       runtimeMessage({ type: 'fomo-token-feed', payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'holders' } }),
-      runtimeMessage({ type: 'fomo-token-feed', payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'thesis' } }),
+      // 折叠态只看持有人数 / 占比，不为观点条数单独打一次 fomo
+      folded ? null : runtimeMessage({ type: 'fomo-token-feed', payload: { tokenAddress: route.address, networkId: route.networkId, kind: 'thesis' } }),
       loadDebotTokenSupply(route),
       runtimeMessage({ type: 'token-supply', payload: { chain: route.chain, address: route.address } }),
     ]);
@@ -2106,7 +2126,9 @@
         ? 'fomo 登录已失效'
         : reason === 'rate-limited'
           ? 'fomo 暂时限流，插件已停止请求'
-          : `加载失败（${safeText(reason, 40)}）`;
+          : reason === 'budget-limited'
+            ? '本小时访问 fomo 的次数已到上限'
+            : `加载失败（${safeText(reason, 40)}）`;
     const note = document.createElement('p');
     note.textContent = reason === 'no-token'
       ? '持仓者、观点和交易数据需要登录后读取；插件尚未拿到浏览器里的 fomo 登录态。'
@@ -2114,7 +2136,9 @@
         ? '尚未取得页面 SDK 的新令牌；请打开 FOMO 应用页确认登录，插件会自动重新同步。'
         : reason === 'rate-limited'
           ? `约 ${Math.max(1, Math.ceil(Number(response?.retryAfterMs || 0) / 60000))} 分钟后自动恢复；冷却期间不会继续访问 fomo。`
-          : safeText(response?.message || '请稍后重试', 120);
+          : reason === 'budget-limited'
+            ? `插件给每小时的 fomo 请求设了上限，免得账号被风控；约 ${Math.max(1, Math.ceil(Number(response?.retryAfterMs || 0) / 60000))} 分钟后自动恢复，期间不会访问 fomo。`
+            : safeText(response?.message || '请稍后重试', 120);
     box.append(title, note);
     if (needsLogin) {
       const steps = document.createElement('ol');
@@ -2162,7 +2186,11 @@
   async function loadPanel(force = false) {
     const route = debotTokenRoute();
     if (!route || !panel || panelLoading) return;
-    const key = `${panelTab}|${route.chain}|${route.address}`;
+    // 折叠态只显示持有人数 / 持仓占比：只拉持仓者，不再定时拉观点或交易列表。
+    // 看面板自己的 class 而不是设置值——别的标签页切换折叠时，本页面板不会跟着变。
+    const folded = panel.classList.contains('is-folded');
+    const kind = folded ? 'holders' : panelTab;
+    const key = `${kind}|${route.chain}|${route.address}`;
     if (!force && panelLoadedKey === key) return;
     panelLoading = true;
     const list = panel.querySelector('.gdh-debot-fomo__list');
@@ -2173,18 +2201,24 @@
     list.appendChild(loading);
     const response = await runtimeMessage({
       type: 'fomo-token-feed',
-      payload: { tokenAddress: route.address, networkId: route.networkId, kind: panelTab },
+      payload: { tokenAddress: route.address, networkId: route.networkId, kind },
     });
     panelLoading = false;
     if (!panel || debotTokenRoute()?.address !== route.address) return;
     if (!response?.ok) return void loginGuide(list, response);
     panelLoadedKey = key;
-    panelItems = Array.isArray(response.items) ? response.items : [];
-    if (panelTab === 'holders') panelStats.holders = { items: panelItems, total: Number(response.total) };
-    if (panelTab === 'thesis') panelStats.thesisCount = panelItems.length;
+    const items = Array.isArray(response.items) ? response.items : [];
+    if (kind === 'holders') panelStats.holders = { items, total: Number(response.total) };
+    if (kind === 'thesis') panelStats.thesisCount = items.length;
     renderPanelStats();
-    renderItems(list, panelItems, panelTab);
-    loadPanelStats(route);
+    if (folded) {
+      // 列表收起时不渲染行，也不覆盖当前页签的数据；展开时按页签重拉
+      list.replaceChildren();
+    } else {
+      panelItems = items;
+      renderItems(list, panelItems, panelTab);
+    }
+    loadPanelStats(route, folded);
   }
 
   function positionPanel() {
@@ -2288,6 +2322,8 @@
       root.classList.toggle('is-folded', settings.debotFomoPanelFolded);
       fold.textContent = settings.debotFomoPanelFolded ? '▣' : '▤';
       chrome.storage.local.set({ debotFomoPanelFolded: settings.debotFomoPanelFolded });
+      // 折叠期间只拉了持仓者；展开时按当前页签把列表补回来
+      if (!settings.debotFomoPanelFolded) { panelLoadedKey = ''; loadPanel(true); }
     });
     const close = document.createElement('button');
     close.type = 'button';
@@ -2987,6 +3023,11 @@
         else settings[key] = change.newValue;
       }
       if (changes.specialWallets) rebuildSpecialWalletMap();
+      // 7 天盈亏开关：用已加载的持仓者重绘，不额外请求
+      if (changes.enableFomoHolderPnl && panel && panelLoadedKey.startsWith('holders|')
+        && panelTab === 'holders' && !panel.classList.contains('is-folded')) {
+        renderItems(panel.querySelector('.gdh-debot-fomo__list'), panelItems, 'holders');
+      }
       syncRoute();
     });
     chrome.runtime.onMessage.addListener((message) => {

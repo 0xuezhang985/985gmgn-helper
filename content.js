@@ -455,6 +455,8 @@
     blockedTokens: [],
     fomoTrendingBlockedTokens: [],
     mergeFomoHolders: true,
+    // 持仓者 7 天盈亏：每人要单独打一次 fomo，默认关闭以免账号被风控
+    enableFomoHolderPnl: false,
     markedHolders: [
       { address: '0x38e47fece3ea323e864c65410f6458c820eaa897', name: '奶牛' },
       { address: '0xbf004bff64725914ee36d03b87d6965b0ced4903', name: '阿峰大号1' },
@@ -5609,7 +5611,9 @@ ${flapTooltipText(info)}
       const hint = document.createElement('span');
       hint.textContent = loginRequired
         ? '插件会复用你自己的 fomo 登录态，不使用公共账号。'
-        : '请稍后重试，GMGN 原生热门列表不受影响。';
+        : fomoTrendingError === 'budget-limited'
+          ? '本小时访问 fomo 的次数已到上限，稍后自动恢复；GMGN 原生热门列表不受影响。'
+          : '请稍后重试，GMGN 原生热门列表不受影响。';
       const action = document.createElement('button');
       action.type = 'button';
       action.textContent = loginRequired ? '打开 fomo 并登录 →' : '重试';
@@ -6497,7 +6501,10 @@ ${flapTooltipText(info)}
     return Math.min(abs, pct);
   }
 
-  const FOMO_PNL_TTL = 10 * 60 * 1000;
+  // fomo 的盈亏快照逐小时一份，成功结果缓存 1 小时；失败只压 2 分钟，免得一次抖动挂一小时「—」
+  const FOMO_PNL_TTL = 60 * 60 * 1000;
+  const FOMO_PNL_FAIL_TTL = 2 * 60 * 1000;
+  const FOMO_PNL_TOP = 10;
   const FOMO_PNL_CACHE_MAX = 300;
   const fomoPnlCache = new Map();
   let fomoPnlQueue = [];
@@ -6509,7 +6516,9 @@ ${flapTooltipText(info)}
     if (!data?.ok || !Number.isFinite(pnl)) {
       el.className = 'gdh-fomo__tag is-none';
       el.textContent = '—';
-      el.title = data?.reason === 'expired' ? 'fomo 登录态已过期' : '暂无 7 天盈亏数据';
+      el.title = data?.reason === 'expired' ? 'fomo 登录态已过期'
+        : data?.reason === 'budget-limited' ? '本小时访问 fomo 的次数已到上限，稍后再查'
+        : '暂无 7 天盈亏数据';
       return;
     }
     const equity = Number(data.equity) || 0;
@@ -6538,10 +6547,23 @@ ${flapTooltipText(info)}
     }
   }
 
-  /** 只给滚到可见的行取数，同一用户 10 分钟内不重复请求。 */
+  /** 持仓金额最大的前 N 人（自己排序，不依赖接口返回顺序）。 */
+  function fomoPnlTopUids(items) {
+    return new Set(items
+      .map((item) => ({
+        uid: fomoUser(item)?.id,
+        value: Number(item?.value ?? deepPick(item, /(position|value|balance)(usd)?$/i, 'number')) || 0,
+      }))
+      .filter((row) => row.uid)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, FOMO_PNL_TOP)
+      .map((row) => String(row.uid)));
+  }
+
+  /** 只给滚到可见的行取数，同一用户 1 小时内不重复请求。 */
   function watchFomoTag(el, userId) {
     const hit = fomoPnlCache.get(userId);
-    if (hit && Date.now() - hit.at < FOMO_PNL_TTL) return void paintFomoTag(el, hit.data);
+    if (hit && Date.now() - hit.at < (hit.data?.ok ? FOMO_PNL_TTL : FOMO_PNL_FAIL_TTL)) return void paintFomoTag(el, hit.data);
     if (!fomoPnlObserver) return;
     el.dataset.gdhUid = userId;
     fomoPnlObserver.observe(el);
@@ -6571,7 +6593,10 @@ ${flapTooltipText(info)}
       return void list.appendChild(empty);
     }
     resetFomoTagObserver(list);
-    for (const item of items.slice(0, 60)) {
+    const shown = items.slice(0, 60);
+    // 7 天盈亏每人要单独打一次 fomo：默认关闭，打开后也只查持仓最大的 10 人
+    const pnlUids = settings.enableFomoHolderPnl === true ? fomoPnlTopUids(shown) : new Set();
+    for (const item of shown) {
       const row = document.createElement('div');
       row.className = 'gdh-fomo__hrow';
 
@@ -6598,7 +6623,7 @@ ${flapTooltipText(info)}
       }
 
       const uid = fomoUser(item)?.id;
-      if (uid) {
+      if (uid && pnlUids.has(String(uid))) {
         const tag = document.createElement('span');
         tag.className = 'gdh-fomo__tag is-loading';
         tag.textContent = '…';
@@ -6789,6 +6814,10 @@ ${flapTooltipText(info)}
       const minutes = Math.max(1, Math.ceil(Number(res?.retryAfterMs || 0) / 60000));
       title.textContent = 'fomo 暂时限流，插件已停止请求';
       why.textContent = `约 ${minutes} 分钟后会自动恢复；冷却期间点重试也不会继续访问 fomo，避免把限流时间越拖越长。`;
+    } else if (reason === 'budget-limited') {
+      const minutes = Math.max(1, Math.ceil(Number(res?.retryAfterMs || 0) / 60000));
+      title.textContent = '本小时访问 fomo 的次数已到上限';
+      why.textContent = `插件给每小时的 fomo 请求设了上限，免得账号被风控；约 ${minutes} 分钟后自动恢复，期间点重试也不会访问 fomo。`;
     } else if (reason === 'blocked') {
       title.textContent = '被 fomo 的风控挡了';
       why.textContent = `请求返回 ${res?.status || 403}（Cloudflare）。多半是短时间请求太密，等一会儿再点重试；一直这样就截图发我。`;
@@ -7163,7 +7192,11 @@ ${flapTooltipText(info)}
   async function loadFomoData(force) {
     const route = currentTokenRoute();
     if (!route || !fomoPanelEl) return;
-    const key = `${fomoTab}|${route.chain}|${route.address}`;
+    // 折叠态只显示持有人数 / 持仓占比：只拉持仓者，不再定时拉观点或交易列表。
+    // 看面板自己的 class 而不是设置值——别的标签页切换折叠时，本页面板不会跟着变。
+    const folded = fomoPanelEl.classList.contains('is-folded');
+    const kind = folded ? 'holders' : fomoTab;
+    const key = `${kind}|${route.chain}|${route.address}`;
     if (!force && key === fomoLoadedKey) return;
     // 出错时不设 fomoLoadedKey，于是每个扫描周期都会重来一遍「清空→加载中→错误框」，
     // 看起来就是整块一直在闪。失败后压一段冷却，期间只有手动重试/换页/令牌到位才再打。
@@ -7182,27 +7215,29 @@ ${flapTooltipText(info)}
     try {
       const res = await chrome.runtime.sendMessage({
         type: 'fomo-token-feed',
-        payload: { tokenAddress: route.address, networkId: route.networkId, kind: fomoTab },
+        payload: { tokenAddress: route.address, networkId: route.networkId, kind },
       });
       if (!fomoPanelEl) return;
       if (res?.ok) {
         fomoLoadedKey = key;
         fomoErrKey = '';
-        fomoLastItems = res.items || [];
+        if (!folded) fomoLastItems = res.items || [];
         const statKey = `${route.chain}|${route.address}`;
         if (fomoStats.key !== statKey) {
           fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0, updatedAt: 0 };
           fomoSelfHealTried = false;
         }
-        if (fomoTab === 'holders') {
+        if (kind === 'holders') {
           fomoStats.holders = { items: res.items || [], total: Number(res.total) };
           fomoStats.updatedAt = Date.now();
         }
-        if (fomoTab === 'thesis') fomoStats.thesisCount = (res.items || []).length;
+        if (kind === 'thesis') fomoStats.thesisCount = (res.items || []).length;
         loadFomoSupply(route);
         renderFomoStats();
         renderTokenHeaderBadges();
-        renderFomoItems(list, fomoLastItems, fomoTab);
+        // 折叠时列表收起，不渲染行；展开时按当前页签重拉
+        if (folded) list.replaceChildren();
+        else renderFomoItems(list, fomoLastItems, fomoTab);
         fomoPanelEl.classList.remove('has-error');
       } else {
         fomoErrKey = key;
@@ -7379,6 +7414,11 @@ ${flapTooltipText(info)}
       settings.fomoPanelFolded = !settings.fomoPanelFolded;
       chrome.storage.local.set({ fomoPanelFolded: settings.fomoPanelFolded });
       applyFomoFold();
+      // 折叠期间只拉了持仓者；展开时按当前页签把列表补回来
+      if (!settings.fomoPanelFolded) {
+        fomoLoadedKey = '';
+        loadFomoData(true);
+      }
     });
 
     const close = document.createElement('button');
@@ -10581,6 +10621,12 @@ ${flapTooltipText(info)}
         continue;
       }
       settings[key] = change.newValue;
+      // 7 天盈亏开关：用已加载的持仓者重绘，不额外请求
+      if (key === 'enableFomoHolderPnl' && fomoPanelEl && fomoLoadedKey.startsWith('holders|')
+        && !fomoPanelEl.classList.contains('is-folded')) {
+        const list = fomoPanelEl.querySelector('.gdh-fomo__list');
+        if (list) renderFomoHolders(list, fomoLastItems);
+      }
       if (key === 'enableFomoTrendingFooter') scanFomoTrendingFooter();
       if (key === 'enableMonitorAggregate' || key === 'enableChartTrackedHoldings') monitorAggregateChanged = true;
       if (key === 'fomoTrendingBlockedTokens') fomoTrendingBlocksChanged = true;
