@@ -2462,7 +2462,7 @@ await test('GMGN 热门面板新增 fomo 标签且登录失败时提供推荐登
   assert.ok(styles.includes('.gdh-fomo-trending__block'));
   assert.ok(styles.includes('.gdh-fomo-trending__meta-actions'));
   assert.ok(popup.includes("enableFomoTrending: document.querySelector('#enable-fomo-trending')"));
-  assert.ok(content.includes('enableFomoTrending: true'));
+  assert.ok(content.includes('enableFomoTrending: false'));
   assert.ok(content.includes('fomoTrendingBlockedTokens: []'));
 });
 

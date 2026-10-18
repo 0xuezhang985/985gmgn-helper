@@ -436,13 +436,13 @@
     enableSpecialWallet: true,
     disableTrackerPersonNavigation: false,
     enableRemindAlert: true,
-    enableFomoPanel: true,
-    enableFomoTrending: true,
+    enableFomoPanel: false,
+    enableFomoTrending: false,
     enableFomoTrendingFooter: false,
     enableChartTrackedHoldings: true,
     fomoPanelFolded: false,
     fomoPanelPos: null,
-    fomoTranslate: true,
+    fomoTranslate: false,
     fomoPanelOpen: false,
     enableHoldingSurge: true,
     holdingSurgeThreshold: 20,
@@ -454,7 +454,7 @@
     blockedCallers: [],
     blockedTokens: [],
     fomoTrendingBlockedTokens: [],
-    mergeFomoHolders: true,
+    mergeFomoHolders: false,
     // 持仓者 7 天盈亏：每人要单独打一次 fomo，默认关闭以免账号被风控
     enableFomoHolderPnl: false,
     markedHolders: [
@@ -482,7 +482,7 @@
     priorityStrategyLanguageV1: 'en',
     enableAllPools: true,
     flapRpc: '',
-    enableFomoFeed: true,
+    enableFomoFeed: false,
     enablePumpFeed: true,
     fomoFeedChainOnly: false,
     enableMonitorAggregate: true,
@@ -7072,7 +7072,7 @@ ${flapTooltipText(info)}
 
     const statKey = `${route.chain}|${route.address}`;
     const summary = fomoStats.key === statKey ? fomoHoldingSummary() : null;
-    const fomoShare = settings.enableFomoPanel !== false && settings.enableFomoShareBadge !== false && summary
+    const fomoShare = settings.enableFomoShareBadge !== false && summary
       ? holdingShareText(summary.pct, summary.lowerBound) : '';
     if (!fomoShare) return void detail?.querySelector(':scope > .gdh-token-header-badges')?.remove();
     detail ||= tokenDetailBadgeRow();
@@ -7101,7 +7101,7 @@ ${flapTooltipText(info)}
   }
 
   async function loadFomoHeaderStats(route) {
-    if (!route || settings.enableFomoPanel === false) return;
+    if (!route || settings.enableFomoShareBadge === false) return;
     const statKey = `${route.chain}|${route.address}`;
     if (fomoStats.key !== statKey) {
       fomoStats = { key: statKey, holders: null, thesisCount: null, supply: 0, updatedAt: 0 };
@@ -10604,6 +10604,7 @@ ${flapTooltipText(info)}
       if (key === 'markedListMigratedV2') continue; // 迁移标记不是设置项
       if (key === 'holdingWatchPurgedV1') continue; // 清洗标记不是设置项
       if (key === 'similarTokenPanelDefaultOnV1') continue; // 迁移标记不是设置项
+      if (key === 'fomoDefaultsPausedV1') continue; // 迁移标记不是设置项
       if (key === 'gmgnHoldingSignalSyncState') continue; // 只读诊断状态，不是设置项
       if (key === NOTIFICATION_HISTORY_KEY) {
         notificationHistory = normalizedNotificationHistory(change.newValue);

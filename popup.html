@@ -74,7 +74,7 @@
             <div class="check-grid two"><label><input id="special-wallet-default-highlight" type="checkbox" />高亮</label><label><input id="special-wallet-default-pin" type="checkbox" />置顶</label></div>
             <label class="control-row" for="special-wallet-default-color"><span>默认高亮颜色</span><input id="special-wallet-default-color" type="color" value="#f5b83d" /></label>
           </div>
-          <label class="switch-row"><span><strong>fomo 推送混排</strong><small>NEW：跟随 985monitor 的链屏蔽、来源开关和「只看」买入/卖出/观点，并沿用账号、事件、币种及金额过滤</small></span><input id="enable-fomo-feed" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>fomo 推送混排</strong><small>默认暂停；手动开启后跟随 985monitor 的链屏蔽、来源开关和「只看」买入/卖出/观点</small></span><input id="enable-fomo-feed" type="checkbox" /></label>
           <label class="switch-row"><span><strong>Pump 推送混排</strong><small>NEW：GMGN / DeBot 共用 985monitor 屏蔽规则和「只看」；网页改动后自动同步，声音静音不等于屏蔽</small><small id="monitor-985-sync-status" class="sync-status">尚未连接 985monitor 账号配置</small></span><input id="enable-pump-feed" type="checkbox" /></label>
           <label class="switch-row"><span><strong>推送只看当前链</strong><small>关闭时与原生追踪流一致，显示全链事件</small></span><input id="fomo-feed-chain-only" type="checkbox" /></label>
           <div class="sub-settings compact">
@@ -93,7 +93,7 @@
       <section class="settings-section">
         <div class="section-heading"><div><h2>代币数据</h2><small>FOMO、标注人物与底池增强</small></div></div>
         <div class="feature-list">
-          <label class="switch-row"><span><strong>fomo 浮窗与表头占比 <em class="new-badge">NEW</em></strong><small>新增 GMGN Arc 链支持：持仓者、盈亏与表头持仓占比；使用本机 FOMO 登录态</small></span><input id="enable-fomo-panel" type="checkbox" /></label>
+          <label class="switch-row"><span><strong>fomo 持仓浮窗</strong><small>默认暂停；手动开启后显示持仓者、观点与交易。表头持仓占比由下方独立徽章开关控制</small></span><input id="enable-fomo-panel" type="checkbox" /></label>
           <label class="switch-row"><span><strong>fomo 当前热门标签</strong><small>在 GMGN 原生热门面板新增 fomo 标签，使用自己的 fomo 登录态</small></span><input id="enable-fomo-trending" type="checkbox" /></label>
           <label class="switch-row"><span><strong>FOMO 热门币底部横栏 <em class="new-badge">NEW</em></strong><small>默认关闭；在 GMGN 底部行情右侧显示热门币、市值和 24h 涨跌幅，横向滚动查看更多，点击无刷新跳转；沿用热门币屏蔽设置</small></span><input id="enable-fomo-trending-footer" type="checkbox" /></label>
           <label class="switch-row"><span><strong>K 线追踪持仓浮层 <em class="new-badge">NEW</em></strong><small>显示追踪人的前 5 持仓；可在浮层右上角 × 关闭，刷新和换币后保持关闭，可在这里重新开启</small></span><input id="enable-chart-tracked-holdings" type="checkbox" /></label>
@@ -118,7 +118,7 @@
           <label class="switch-row"><span><strong>fomo 持仓者 7 天盈亏 <em class="new-badge">NEW</em></strong><small>每人要单独查一次 fomo，默认关闭以免账号被风控；打开后只查持仓最大的 10 人</small></span><input id="enable-fomo-holder-pnl" type="checkbox" /></label>
           <label class="switch-row"><span><strong>底池 / 分红徽章 <em class="new-badge">NEW</em></strong><small>BSC：Flap 税收分配 / Genius Creator payout / Brew 池子税；Robinhood：底池资产与分红</small></span><input id="enable-flap-tax" type="checkbox" /></label>
           <div class="sub-settings compact">
-            <div class="option-row"><span><strong>每种徽章单独开关 <em class="new-badge">NEW</em></strong><small>上面那个是总开关；关掉总开关这里全部失效</small></span></div>
+            <div class="option-row"><span><strong>每种徽章单独开关 <em class="new-badge">NEW</em></strong><small>fomo 占比独立保留；其余底池徽章受上方总开关控制</small></span></div>
             <div class="check-grid"><label><input id="enable-flap-tax-badge" type="checkbox" />Flap 税收</label><label><input id="enable-genius-badge" type="checkbox" />Genius 分成</label><label><input id="enable-brew-fee-badge" type="checkbox" />Brew 池税 <em class="new-badge">NEW</em></label><label><input id="enable-rh-pool-badge" type="checkbox" />RH 底池资产</label><label><input id="enable-rh-dividend-badge" type="checkbox" />RH 持币分红</label><label><input id="enable-fomo-share-badge" type="checkbox" />fomo 占比</label><label><input id="enable-native-pool-badge" type="checkbox" />原生底池</label></div>
           </div>
           <details class="sub-settings compact"><summary><strong>Genius fee badge <em class="new-badge">NEW</em></strong></summary><small>Creator payout &gt; 0.25%: red warning; ≤ 0.25%: checkmark. Trenches show only ✓ / ⚠ beside the native tax chip; hover for on-chain details. Token pages place marked-holder share beside the fee badge. A checkmark is not a token safety rating. Uses the badge switch above.</small><details><summary>中文说明</summary><small>Creator payout 大于 0.25% 红色警示，不超过则打勾；战壕在原生税标旁只显示 ✓ / ⚠，悬停看明细，原税标未加载时显示在 Genius 平台图标旁。代币页的标注人物占比与费率徽章并排，开关独立；勾选不代表代币安全。</small></details></details>
@@ -143,10 +143,8 @@
 
       <section class="update-card">
         <div class="update-heading"><strong>版本管理 <span class="update-new">NEW</span></strong><small id="update-status" role="status">正在读取更新状态…</small></div>
-        <small id="fomo-rank-collector-status" class="sync-status"></small>
           <p id="update-summary" class="update-summary">检查更新后显示本版简介。</p>
-        <div class="update-actions"><button id="check-update" type="button" aria-describedby="fomo-update-notice">检查更新</button><button id="skip-update" type="button" hidden>跳过本次更新</button><a id="release-link" href="#" hidden>完整说明</a></div>
-        <p id="fomo-update-notice" class="update-consent-note">更新 / 确认即同意：本地读取 FOMO 公开榜单并上传 985monitor（不上传凭据）。<a href="https://github.com/0xuezhang985/985gmgn-helper/blob/main/PRIVACY.md" target="_blank" rel="noopener">说明</a></p>
+        <div class="update-actions"><button id="check-update" type="button">检查更新</button><button id="skip-update" type="button" hidden>跳过本次更新</button><a id="release-link" href="#" hidden>完整说明</a></div>
         <details id="update-history"><summary>一键回退历史版本 <span class="update-new">NEW</span></summary>
           <p class="update-hint">仅提供官方正式版；安装前校验并备份。保留设置，回退后跳过刚撤回的版本。</p>
           <p id="history-status" class="update-hint" role="status"></p>

@@ -5,10 +5,10 @@
 
   const DEFAULTS = {
     enabled: true,
-    enableFomoPanel: true,
-    enableFomoFeed: true,
+    enableFomoPanel: false,
+    enableFomoFeed: false,
     enablePumpFeed: true,
-    fomoTranslate: true,
+    fomoTranslate: false,
     fomoFeedChainOnly: false,
     fomoFeedTypes: {
       buy: true, sell: true, swap: true, thesis: true, transferIn: true, refund: true,
@@ -3013,7 +3013,8 @@
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
       changes = Object.fromEntries(Object.entries(changes).filter(([key]) => !key.startsWith('gdhPriorityPushV1:')
-        && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution' && key !== 'fomoSessionRecoveryV1'));
+        && !key.startsWith('fomoRankCollector') && key !== 'enableFomoRankContribution'
+        && key !== 'fomoSessionRecoveryV1' && key !== 'fomoDefaultsPausedV1'));
       if (!Object.keys(changes).length) return;
       for (const [key, change] of Object.entries(changes)) {
         if (key === 'monitor985ChannelPrefsV1') monitor985ChannelPrefs = change.newValue || null;

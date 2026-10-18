@@ -16,17 +16,17 @@ const DEFAULTS = {
   priorityBuyStrategies: { group: { enabled: false, wallets: [], windowSeconds: 300 }, amount: { enabled: false, wallets: [], minUsd: 1000 } },
   disableTrackerPersonNavigation: false,
   enableRemindAlert: true,
-  enableFomoPanel: true,
-  enableFomoTrending: true,
+  enableFomoPanel: false,
+  enableFomoTrending: false,
   enableFomoTrendingFooter: false,
   enableChartTrackedHoldings: true,
   similarTokenPanelTransparency: 0,
   fomoPanelTransparency: 0,
-  fomoTranslate: true,
+  fomoTranslate: false,
   enableHoldingSurge: true,
   holdingSurgeThreshold: 20,
   holdingSurgeCooldown: 60,
-  mergeFomoHolders: true,
+  mergeFomoHolders: false,
   enableFomoHolderPnl: false,
   enableMarkedHolders: true,
   enableFlapTax: true,
@@ -42,7 +42,7 @@ const DEFAULTS = {
   enableAllPools: true,
   enableBrewPanel: true,
   flapRpc: '',
-  enableFomoFeed: true,
+  enableFomoFeed: false,
   enablePumpFeed: true,
   fomoFeedChainOnly: false,
   enableMonitorAggregate: true,
@@ -196,8 +196,6 @@ const updaterSetup = document.querySelector('#updater-setup');
 let historyVersions = [];
 let historyLoading = false;
 let updateBusy = false;
-let fomoUpdateConsentLoaded = false;
-let fomoUpdateConsentAccepted = false;
 const DEFAULT_RELEASE_URL = 'https://github.com/0xuezhang985/985gmgn-helper/releases/latest';
 
 let currentUpdateState = null;
@@ -417,8 +415,7 @@ function sendRuntimeMessage(message) {
 function renderUpdateState(state) {
   currentUpdateState = state;
   const label = (value) => {
-    checkUpdateButton.textContent = fomoUpdateConsentLoaded && !fomoUpdateConsentAccepted && !state?.updateAvailable
-      ? '同意并使用当前版' : value;
+    checkUpdateButton.textContent = value;
   };
   updateCard.classList.toggle('has-update', Boolean(state?.updateAvailable));
   releaseLink.hidden = !state?.latestVersion;
@@ -545,21 +542,13 @@ releaseLink.addEventListener('click', (event) => {
 });
 
 checkUpdateButton.addEventListener('click', async () => {
-  if (updateBusy || !fomoUpdateConsentLoaded) return;
+  if (updateBusy) return;
   setUpdateBusy(true);
   try {
-    // 沿用同一个版本按钮，不另设开关或弹窗；说明始终紧邻按钮且可读。
-    if (!fomoUpdateConsentAccepted && !currentUpdateState?.updateAvailable) {
-      const result = await sendRuntimeMessage({ type: 'accept-fomo-update-notice' });
-      if (!result?.ok) throw new Error('说明确认未保存，请重试');
-      fomoUpdateConsentAccepted = true;
-      renderUpdateState(currentUpdateState);
-      return;
-    }
     if (currentUpdateState?.status === 'updater_missing') { openReleasePage(); return; }
     if (currentUpdateState?.updateAvailable) {
       updateStatus.textContent = '正在下载并安装新版…';
-      const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion, acceptFomoNotice: 1 });
+      const result = await sendRuntimeMessage({ type: 'install-update', version: currentUpdateState.latestVersion });
       if (!result?.ok) throw new Error(result?.error || '升级失败');
       updateStatus.textContent = `已升级到 v${result.updatedVersion}，正在重载扩展并刷新 GMGN 页面…`;
       setTimeout(() => chrome.runtime.reload(), 350);
@@ -630,21 +619,4 @@ function renderPriorityWallets(list) {
 chrome.storage.local.get({ specialWallets: [] }, (stored) => renderPriorityWallets(stored.specialWallets));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.specialWallets) renderPriorityWallets(changes.specialWallets.newValue);
-});
-
-chrome.storage.local.get(['fomoRankCollectorConsentV1', 'enableFomoRankContribution'], (s) => {
-  fomoUpdateConsentAccepted = s.enableFomoRankContribution === true
-    || (s.fomoRankCollectorConsentV1?.version === 1 && s.fomoRankCollectorConsentV1.acceptedAt > 0);
-  fomoUpdateConsentLoaded = true;
-  renderUpdateState(currentUpdateState);
-});
-
-function renderFomoRankCollectorStatus(value) {
-  const el = document.querySelector('#fomo-rank-collector-status');
-  const labels = { collecting: '本轮被选中，正在采集', uploaded: '榜单已上传', failed: '本轮未完成，服务器会保留旧榜单并退避' };
-  el.textContent = value?.status ? (labels[value.status] || '等待任务') + (value.at ? ` · ${new Date(value.at).toLocaleString('zh-CN')}` : '') : '需连接 985monitor，并在本地登录 FOMO；未被选中不采集';
-}
-chrome.storage.local.get('fomoRankCollectorStatusV1', (s) => renderFomoRankCollectorStatus(s.fomoRankCollectorStatusV1));
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.fomoRankCollectorStatusV1) renderFomoRankCollectorStatus(changes.fomoRankCollectorStatusV1.newValue);
 });

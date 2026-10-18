@@ -5,12 +5,22 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const read = p => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const content = read('content.js'), background = read('background.js'), audit = read('scripts/verify-audit-fixes.mjs');
+const content = read('content.js'), background = read('background.js'), popup = read('popup.js'), debot = read('debot-content.js'), audit = read('scripts/verify-audit-fixes.mjs');
 const extract = vm.runInNewContext(audit.slice(audit.indexOf('function extractFunction('), audit.indexOf('function evaluate(')) + ';extractFunction', { assert });
 const functions = (...names) => names.map(n => extract(content, n)).join('\n');
 const maps = ['FOMO_NETWORK_ID', 'FOMO_CHAIN_SLUG', 'FOMO_GMGN_CHAIN'].map(n => content.match(new RegExp(`const ${n} = [^;]+;`))[0]).join('\n');
 const address = '0x' + '1'.repeat(40);
 let checks = 0; const pass = text => console.log(`PASS ${++checks}: ${text}`);
+for (const source of [content, popup]) {
+  for (const key of ['enableFomoPanel', 'enableFomoTrending', 'fomoTranslate', 'mergeFomoHolders', 'enableFomoFeed']) {
+    assert.match(source, new RegExp(`${key}: false`));
+  }
+  assert.match(source, /enableFomoShareBadge: true/);
+}
+assert.match(debot, /enableFomoPanel: false/); assert.match(debot, /enableFomoFeed: false/); assert.match(debot, /enablePumpFeed: true/);
+assert.match(background, /const FOMO_DEFAULTS_PAUSED_KEY = 'fomoDefaultsPausedV1'/);
+assert.match(background, /enableFomoRankContribution: false/); assert.match(background, /fomoRankCollectorConsentV1: null/);
+pass('新装与一次性迁移默认暂停 FOMO 功能，Pump 保持开启，持仓占比徽章保持开启');
 const route = vm.createContext({ location: { pathname: '' } });
 vm.runInContext(maps + functions('currentTokenRoute'), route);
 for (const [chain, id] of Object.entries({ arc: 5042, eth: 1, bsc: 56, sol: 1399811149, base: 8453, monad: 143, robinhood: 4663 })) {
@@ -58,7 +68,7 @@ pass('Arc 持仓使用正确 API 参数及链头，复用本地认证、队列�
 
 let resolve;
 const calls = [];
-const stats = vm.createContext({ Date, Number, settings: {}, FOMO_REFRESH_MS: 120000,
+const stats = vm.createContext({ Date, Number, settings: { enableFomoPanel: false, enableFomoShareBadge: true }, FOMO_REFRESH_MS: 120000,
   fomoStats: { key: '', holders: null, updatedAt: 0 }, fomoHeaderRequest: {}, fomoLoading: false, fomoTab: 'thesis', fomoSelfHealTried: false,
   chrome: { runtime: { sendMessage: async msg => { calls.push(msg); return new Promise(r => { resolve = r; }); } } },
   loadFomoSupply() {}, renderFomoStats() {}, renderTokenHeaderBadges() {},
@@ -70,14 +80,14 @@ assert.equal(calls[0].payload.networkId, 5042);
 resolve({ ok: true, items: a.items, total: a.total }); await pending;
 assert.equal(stats.fomoStats.holders.total, 103);
 await stats.loadFomoHeaderStats(arc); assert.equal(calls.length, 1);
-stats.settings.enableFomoPanel = false;
+stats.settings.enableFomoShareBadge = false;
 await stats.loadFomoHeaderStats({ ...arc, address: '0x' + '2'.repeat(40) }); assert.equal(calls.length, 1);
-stats.settings.enableFomoPanel = true; stats.fomoStats.updatedAt = 0; stats.fomoHeaderRequest.at = 0;
+stats.settings.enableFomoShareBadge = true; stats.fomoStats.updatedAt = 0; stats.fomoHeaderRequest.at = 0;
 pending = stats.loadFomoHeaderStats(arc);
 stats.fomoStats = { key: `eth|${address}`, holders: null, supply: 0 };
 resolve({ ok: true, items: a.items, total: a.total }); await pending;
 assert.equal(stats.fomoStats.holders, null);
-pass('表头自动取 Arc 持仓，遵守总开关和两分钟缓存，旧链响应不会覆盖新代币');
+pass('表头占比独立于浮窗自动取 Arc 持仓，徽章开关和两分钟缓存生效，旧链响应不会覆盖新代币');
 
 let supplyRequest;
 const supply = vm.createContext({ Number, JSON, settings: {}, fomoSupplyLoadingKey: '',
@@ -102,7 +112,7 @@ try {
   await page.route('**/*', r => r.fulfill({ contentType: 'text/html', body: '<main id="header"><div><div><div><span id="token-base-symbol" data-symbol="ARC">ARC</span></div></div></div><div><span><span id="token-base-address" data-addr="fixture">address</span></span></div><h1>ARC</h1></main>' }));
   await page.goto(`https://gmgn.ai/arc/token/${address}`);
   await page.addScriptTag({ content: maps + `
-    let settings = { enableMarkedHolders: false, fomoPanelOpen: false };
+    let settings = { enableMarkedHolders: false, enableFomoPanel: false, enableFomoShareBadge: true, fomoPanelOpen: false };
     let fomoStats = { key: 'arc|${address}', holders: { items: [{ humanAmount: 250, value: 50 }], total: 103 }, supply: 1000 };
     const fomoUsd = n => '$' + n;
     function setFomoOpen(open) { settings.fomoPanelOpen = open; }
@@ -112,12 +122,14 @@ try {
     ${functions('currentTokenRoute', 'holderTokenAmount', 'fomoHoldingSummary', 'holdingShareText', 'tokenHeaderBlock', 'tokenDetailBadgeRow', 'renderTokenMarkedBadge', 'renderTokenHeaderBadges', 'ensureFomoLauncher')}
     ensureFomoLauncher(); renderTokenHeaderBadges();
   ` });
-  assert.equal(await page.locator('.gdh-fomo-launcher').count(), 1);
+  assert.equal(await page.locator('.gdh-fomo-launcher').count(), 0);
   assert.equal(await page.locator('.gdh-token-header-fomo').textContent(), 'fomo ≥25%');
   assert.match(await page.locator('.gdh-token-header-fomo').getAttribute('title'), /1\/103/);
-  await page.evaluate(() => { settings.enableFomoPanel = false; ensureFomoLauncher(); renderTokenHeaderBadges(); });
-  assert.equal(await page.locator('.gdh-fomo-launcher').count(), 0);
+  await page.evaluate(() => { settings.enableFomoShareBadge = false; ensureFomoLauncher(); renderTokenHeaderBadges(); });
   assert.equal(await page.locator('.gdh-token-header-fomo').count(), 0);
-  pass('Arc 页面实际 DOM 出现 FOMO 入口与占比徽章，仅前排持仓标 ≥，关闭功能会移除');
+  await page.evaluate(() => { settings.enableFomoPanel = true; ensureFomoLauncher(); renderTokenHeaderBadges(); });
+  assert.equal(await page.locator('.gdh-fomo-launcher').count(), 1);
+  assert.equal(await page.locator('.gdh-token-header-fomo').count(), 0);
+  pass('Arc 页面只保留占比徽章且不出现浮窗入口；两项开关互不绑定，仅前排持仓标 ≥');
 } finally { await browser.close(); }
 console.log(`FOMO Arc holdings: ${checks} checks passed`);

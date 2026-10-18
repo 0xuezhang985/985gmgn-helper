@@ -836,6 +836,32 @@ async function migrateSimilarPanelDefaultOn() {
 }
 migrateSimilarPanelDefaultOn().catch(() => {});
 
+// v0.46.125 起 FOMO 功能默认暂停，只保留代币页持仓占比徽章。旧用户的设置里
+// 已经写入过旧默认值，单改 DEFAULTS 不生效，所以升级时统一暂停一次；标记写入后
+// 用户若手动重新开启，不会在后续 Service Worker 唤醒时被再次关闭。
+const FOMO_DEFAULTS_PAUSED_KEY = 'fomoDefaultsPausedV1';
+async function migrateFomoDefaultsPaused() {
+  const stored = await chrome.storage.local.get({ [FOMO_DEFAULTS_PAUSED_KEY]: false });
+  if (stored[FOMO_DEFAULTS_PAUSED_KEY]) return false;
+  await chrome.storage.local.set({
+    enableFomoPanel: false,
+    enableFomoTrending: false,
+    enableFomoTrendingFooter: false,
+    fomoTranslate: false,
+    mergeFomoHolders: false,
+    enableFomoHolderPnl: false,
+    enableFomoFeed: false,
+    fomoPanelOpen: false,
+    debotFomoPanelOpen: false,
+    enableFomoShareBadge: true,
+    enableFomoRankContribution: false,
+    fomoRankCollectorConsentV1: null,
+    [FOMO_DEFAULTS_PAUSED_KEY]: true,
+  });
+  return true;
+}
+migrateFomoDefaultsPaused().catch(() => {});
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: CHECK_INTERVAL_MINUTES });
   chrome.alarms.create(MONITOR985_SYNC_ALARM, { periodInMinutes: 5 });
@@ -3690,10 +3716,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'install-update') {
     if (sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) return false;
     installUpdate(message.version)
-      .then(async (response) => {
-        if (response.ok && message.acceptFomoNotice === 1) await acceptFomoRankUpdateNotice();
-        sendResponse({ ...response, shouldReload: response.ok === true });
-      })
+      .then((response) => sendResponse({ ...response, shouldReload: response.ok === true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || '升级失败' }));
     return true;
   }

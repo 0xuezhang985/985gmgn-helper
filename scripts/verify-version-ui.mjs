@@ -12,11 +12,10 @@ try {
   await page.setContent(read('popup.html').replace(/<script[^>]*src="(?:popup|buy-strategies).js"[^>]*><\/script>/g,''));
   await page.addStyleTag({content:read('popup.css')});
   await page.addScriptTag({content:`
-    window.confirm=()=>{throw Error("unexpected confirmation dialog")};window.failConsent=false;window.msgs=[];window.reloads=0;window.failInstall=true;window.storageListeners=[];
+    window.confirm=()=>{throw Error("unexpected confirmation dialog")};window.msgs=[];window.reloads=0;window.failInstall=true;window.storageListeners=[];
     window.state={status:'available',currentVersion:'0.46.69',latestVersion:'0.46.70',updateAvailable:true,updaterInstalled:true,protocolVersion:2,summary:'修复布局和隐藏按钮，保留个人配置。'};
     window.chrome={runtime:{getManifest:()=>({version:'0.46.69'}),reload:()=>reloads++,sendMessage:(m,cb)=>{
       msgs.push(m);if(m.type==='skip-update'){state={...state,skipped:!!m.version,updateAvailable:!m.version,status:m.version?'skipped':'available'};cb(state);}
-      else if(m.type==='accept-fomo-update-notice')cb({ok:!failConsent});
       else if(m.type==='update-history')cb({ok:true,versions:[{version:'0.46.67',summary:'稳定旧版，保留配置。'},{version:'0.46.66',summary:'旧版简介 <img src=x onerror=alert(1)>'}]});
       else if(m.type==='rollback-update'||m.type==='install-update')cb(failInstall?{ok:false,error:'浏览器加载的是另一目录'}:{ok:true,updatedVersion:m.version});
       else cb(state);
@@ -27,17 +26,17 @@ try {
   assert.equal(await page.locator('#enable-fomo-rank-contribution').count(),0);
   assert.equal(await page.locator('#accept-fomo-update-notice').count(),0);
   assert.equal(await page.locator('section#fomo-update-notice').count(),0);
-  assert.match(await page.locator('.update-card #fomo-update-notice').innerText(),/本地读取 FOMO 公开榜单并上传 985monitor/);
-  assert.equal(await page.locator('#fomo-update-notice').evaluate(el=>getComputedStyle(el).fontSize),'11px');
-  assert.equal(await page.locator('#check-update').getAttribute('aria-describedby'),'fomo-update-notice');
+  assert.equal(await page.locator('#fomo-update-notice').count(),0);
+  assert.equal(await page.locator('#fomo-rank-collector-status').count(),0);
+  assert.equal(await page.locator('#check-update').getAttribute('aria-describedby'),null);
   assert.ok(!read('background.js').includes('showFomoRankUpdateNotice'));
   assert.equal(await page.evaluate(()=>msgs.some(m=>m.type==='accept-fomo-update-notice')),false);
   await page.locator('.update-card').screenshot({path:new URL('../dist/v73-update-note.png',import.meta.url).pathname.replace(/^\/(?:([A-Z]):)/,'$1:')});
-  console.log(`PASS ${++checks}: 无弹窗/自动开页/醒目框/独立确认按钮，说明紧邻版本按钮且可读`);
+  console.log(`PASS ${++checks}: 版本区不再展示或写入 FOMO 榜单授权，更新按钮只负责版本操作`);
   await page.waitForFunction(()=>document.querySelector('#update-status').textContent.includes('0.46.70'));
   assert.match(await page.locator('#update-summary').innerText(),/修复布局/);
   await page.locator('#check-update').click();
-  assert.equal(await page.evaluate(()=>msgs.filter(m=>m.type==='install-update').at(-1)?.acceptFomoNotice),1);
+  assert.equal(await page.evaluate(()=>Object.hasOwn(msgs.filter(m=>m.type==='install-update').at(-1)||{},'acceptFomoNotice')),false);
   assert.equal(await page.evaluate(()=>reloads),0);
   await page.locator('#skip-update').click();assert.match(await page.locator('#update-status').innerText(),/已跳过/);
   await page.locator('#skip-update').click();assert.match(await page.locator('#update-status').innerText(),/发现/);
@@ -56,13 +55,12 @@ try {
   await page.locator('#update-history summary').click();
   await page.waitForFunction(()=>!document.querySelector('#updater-setup').hidden);
   assert.match(await page.locator('#history-status').innerText(),/首次运行新版安装器/);console.log(`PASS ${++checks}: 旧更新器明确引导升级，不提供无效回退按钮`);
-  await page.evaluate(()=>{state={status:'latest',currentVersion:'0.46.73',latestVersion:'0.46.73',updateAvailable:false};renderUpdateState(state);failConsent=true;});
-  assert.equal(await page.locator('#check-update').innerText(),'同意并使用当前版');
-  await page.locator('#check-update').click(); assert.match(await page.locator('#update-status').innerText(),/未保存/);
-  assert.equal(await page.locator('#check-update').innerText(),'同意并使用当前版');
-  await page.evaluate(()=>{failConsent=false;}); await page.locator('#check-update').click();
+  await page.evaluate(()=>{state={status:'latest',currentVersion:'0.46.73',latestVersion:'0.46.73',updateAvailable:false};renderUpdateState(state);});
   assert.equal(await page.locator('#check-update').innerText(),'重新检查');
-  console.log(`PASS ${++checks}: 手动安装沿用版本按钮确认，保存失败不视为同意，确认后恢复正常版本操作`);
+  await page.locator('#check-update').click();
+  assert.equal(await page.evaluate(()=>msgs.filter(m=>m.type==='check-update').length>0),true);
+  assert.equal(await page.evaluate(()=>msgs.some(m=>m.type==='accept-fomo-update-notice')),false);
+  console.log(`PASS ${++checks}: 已是最新版时直接重新检查，不再夹带 FOMO 授权步骤`);
   await page.evaluate(()=>{
     window.savedStrategy={group:{enabled:false,wallets:[],windowSeconds:123},amount:{enabled:false,wallets:[],minUsd:4321}};
     storageListeners.forEach(f=>f({priorityBuyStrategies:{newValue:savedStrategy}},'local'));
