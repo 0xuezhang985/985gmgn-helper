@@ -17,8 +17,6 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=512
       PYTHONUTF8: '1'
-      PLAYWRIGHT_MODULE: ${{ runner.temp }}/gmgn-test-deps/node_modules/playwright
-      NODE_PATH: ${{ runner.temp }}/gmgn-test-deps/node_modules
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,6 +27,10 @@ jobs:
       - name: Install isolated test dependencies
         shell: pwsh
         run: |
+          $env:PLAYWRIGHT_MODULE = "$env:RUNNER_TEMP/gmgn-test-deps/node_modules/playwright"
+          $env:NODE_PATH = "$env:RUNNER_TEMP/gmgn-test-deps/node_modules"
+          "PLAYWRIGHT_MODULE=$env:PLAYWRIGHT_MODULE" >> $env:GITHUB_ENV
+          "NODE_PATH=$env:NODE_PATH" >> $env:GITHUB_ENV
           npm install --prefix "$env:RUNNER_TEMP/gmgn-test-deps" --no-audit --no-fund playwright@1.58.2 react@19.2.6 react-dom@19.2.6
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node "$env:PLAYWRIGHT_MODULE/cli.js" install chromium
