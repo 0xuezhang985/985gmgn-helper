@@ -1,0 +1,67 @@
+name: Extension regression
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ['fix/**']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --max-old-space-size=512
+      PYTHONUTF8: '1'
+      PLAYWRIGHT_MODULE: ${{ runner.temp }}/gmgn-test-deps/node_modules/playwright
+      NODE_PATH: ${{ runner.temp }}/gmgn-test-deps/node_modules
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install isolated test dependencies
+        shell: pwsh
+        run: |
+          npm install --prefix "$env:RUNNER_TEMP/gmgn-test-deps" --no-audit --no-fund playwright@1.58.2 react@19.2.6 react-dom@19.2.6
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node "$env:PLAYWRIGHT_MODULE/cli.js" install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+      - name: Run all regression scripts serially
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess, sys, time
+          results = []
+          for source in sorted(pathlib.Path('.').glob('*.js')):
+              subprocess.run(['node', '--check', str(source)], check=True)
+          for source in sorted(pathlib.Path('scripts').glob('verify-*.mjs')):
+              print('RUN ' + source.name, flush=True)
+              start = time.monotonic()
+              proc = subprocess.Popen(['node', str(source)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              try:
+                  output, _ = proc.communicate(timeout=180)
+              except subprocess.TimeoutExpired:
+                  subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], check=False)
+                  output, _ = proc.communicate()
+                  output += b'\nTIMEOUT after 180 seconds'
+              text = output.decode('utf-8', 'replace')
+              pathlib.Path('dist', source.stem + '.log').write_text(text, encoding='utf-8')
+              print(text, flush=True)
+              results.append({'test': source.name, 'exit': proc.returncode, 'seconds': round(time.monotonic() - start, 2)})
+              print(json.dumps(results[-1]), flush=True)
+          pathlib.Path('dist/regression-results.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
+          print(json.dumps({'passed': sum(r['exit'] == 0 for r in results), 'total': len(results)}), flush=True)
+          sys.exit(int(any(r['exit'] != 0 for r in results)))
+      - name: Validate release notes and build package
+        shell: pwsh
+        run: |
+          $version = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
+          ./scripts/build-release-notes.ps1 -Tag "v$version" -OutputPath dist/release-notes.md
+          ./scripts/build-release.ps1

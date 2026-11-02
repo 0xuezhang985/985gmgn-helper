@@ -402,13 +402,23 @@ saveButton.addEventListener('click', async () => {
 
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(response);
-    });
+    const timeoutMs = { 'get-update-state': 5000, 'check-update': 35000, 'update-history': 35000 }[message?.type] || 0;
+    let settled = false;
+    const finish = (error, response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(response);
+    };
+    // Do not cancel writes (especially install/rollback) on a UI read deadline.
+    const timer = timeoutMs ? setTimeout(() => finish(new Error('版本请求超时，请重新检查')), timeoutMs) : null;
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const error = chrome.runtime.lastError?.message;
+        finish(error ? new Error(error) : null, response);
+      });
+    } catch (error) { finish(error); }
   });
 }
 
@@ -531,9 +541,25 @@ skipUpdateButton.addEventListener('click', async () => {
 });
 
 async function refreshUpdateState() {
-  updateStatus.textContent = '正在检查 GitHub 最新版本…';
-  const state = await sendRuntimeMessage({ type: 'check-update' });
-  renderUpdateState(state);
+  updateStatus.textContent = '正在检查最新版本…';
+  try {
+    const state = await sendRuntimeMessage({ type: 'check-update' });
+    if (!state || !['latest', 'available', 'skipped', 'error', 'updater_missing'].includes(state.status)) {
+      throw new Error('后台未返回有效检查结果，请重新检查');
+    }
+    renderUpdateState(state);
+  } catch (error) {
+    const detail = String(error?.message || '请重新检查');
+    renderUpdateState({
+      status: 'error',
+      currentVersion: chrome.runtime.getManifest().version,
+      updaterInstalled: currentUpdateState?.updaterInstalled ?? null,
+      updateAvailable: false,
+      releaseUrl: DEFAULT_RELEASE_URL,
+      error: /message (?:channel|port) closed|receiving end does not exist|context invalidated/i.test(detail)
+        ? '后台连接已中断，请重新检查；若反复失败，请重新加载扩展。' : detail,
+    });
+  }
 }
 
 releaseLink.addEventListener('click', (event) => {
@@ -560,21 +586,15 @@ checkUpdateButton.addEventListener('click', async () => {
   } finally { setUpdateBusy(false); }
 });
 
-sendRuntimeMessage({ type: 'get-update-state' })
-  .then((state) => {
-    renderUpdateState(state);
-    return refreshUpdateState();
-  })
-  .catch((error) => {
-    renderUpdateState({
-      status: 'updater_missing',
-      currentVersion: chrome.runtime.getManifest().version,
-      updaterInstalled: false,
-      updateAvailable: false,
-      releaseUrl: DEFAULT_RELEASE_URL,
-      error: error.message,
-    });
-  });
+async function initializeUpdateState() {
+  setUpdateBusy(true);
+  try {
+    try { renderUpdateState(await sendRuntimeMessage({ type: 'get-update-state' })); }
+    catch { /* A lost cached-state response must not prevent a fresh check. */ }
+    await refreshUpdateState();
+  } finally { setUpdateBusy(false); }
+}
+initializeUpdateState();
 
 function renderBuyStrategies(raw) {
   buyStrategyConfig = raw;

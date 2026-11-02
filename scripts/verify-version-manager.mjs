@@ -9,6 +9,12 @@ let latest='0.46.70', nativeSkip='', badge='', activeVersion='0.46.69', protocol
 const calls=[];
 const chrome={
   runtime:{getManifest:()=>({version:'0.46.69'}),getURL:name=>'chrome-extension://fixture/'+name,
+    connectNative:()=>{
+      const listeners=new Set();
+      return {onMessage:{addListener:f=>listeners.add(f),removeListener:f=>listeners.delete(f)},
+        onDisconnect:{addListener:()=>{},removeListener:()=>{}},disconnect:()=>{},
+        postMessage:message=>chrome.runtime.sendNativeMessage('fixture',message,response=>{for(const f of listeners)f(response);})};
+    },
     sendNativeMessage:(_host,message,cb)=>{
       calls.push({...message});
       if(message.action==='check') {checks++;queueMicrotask(()=>cb({ok:true,updateAvailable:latest!==nativeSkip,skipped:latest===nativeSkip,latestVersion:latest,protocolVersion:protocol,summary:'修复布局，保留配置。'}));}

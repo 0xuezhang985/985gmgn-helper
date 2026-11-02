@@ -682,6 +682,8 @@ async function wakeOpenMonitor985Tabs() {
 wakeOpenMonitor985Tabs();
 
 function sendNativeMessage(message) {
+  // Only read-only requests are cancellable. Never time out an installation halfway.
+  if (['check', 'history', 'capabilities'].includes(message?.action)) return readNativeMessage(message);
   return new Promise((resolve, reject) => {
     chrome.runtime.sendNativeMessage(NATIVE_HOST, message, (response) => {
       if (chrome.runtime.lastError) {
@@ -691,6 +693,54 @@ function sendNativeMessage(message) {
       resolve(response);
     });
   });
+}
+
+function readNativeMessage(message) {
+  return new Promise((resolve, reject) => {
+    let port, timer, settled = false;
+    const finish = (error, response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (port) {
+        port.onMessage.removeListener(onMessage);
+        port.onDisconnect.removeListener(onDisconnect);
+        try { port.disconnect(); } catch { /* Already disconnected. */ }
+      }
+      if (error) reject(error);
+      else resolve(response);
+    };
+    const onMessage = (response) => finish(null, response);
+    const onDisconnect = () => {
+      // Read lastError inside the callback, including on a late disconnect.
+      const error = chrome.runtime.lastError?.message;
+      finish(new Error(error || '本地更新器连接中断，请重新检查'));
+    };
+    try {
+      // A native port keeps the MV3 worker alive only while this bounded read runs.
+      port = chrome.runtime.connectNative(NATIVE_HOST);
+      port.onMessage.addListener(onMessage);
+      port.onDisconnect.addListener(onDisconnect);
+      const timeoutMs = message.action === 'capabilities' ? 5000 : message.action === 'history' ? 30000 : 20000;
+      timer = setTimeout(() => finish(new Error('本地更新器响应超时，请重新检查')), timeoutMs);
+      port.postMessage(message);
+    } catch (error) { finish(error); }
+  });
+}
+
+function updateCheckFailure(error, connected = false) {
+  const detail = String(error?.message || '更新检查失败，请重试');
+  // Network failures, disconnected ports and worker restarts do not prove absence.
+  const missing = /^(?:Specified )?native messaging host not found\.?$/i.test(detail);
+  return {
+    status: missing ? 'updater_missing' : 'error',
+    currentVersion: chrome.runtime.getManifest().version,
+    updateAvailable: false,
+    updaterInstalled: missing ? false : connected ? true : null,
+    releaseUrl: RELEASES_URL,
+    error: detail,
+    checkedAt: Date.now(),
+  };
 }
 
 async function saveUpdateState(state) {
@@ -766,16 +816,9 @@ async function checkForUpdateOnce() {
     await saveUpdateState(state);
     return state;
   } catch (error) {
-    const state = {
-      status: connected ? 'error' : 'updater_missing',
-      currentVersion,
-      updateAvailable: false,
-      updaterInstalled: connected,
-      releaseUrl: RELEASES_URL,
-      error: error.message || '本地更新器不可用',
-      checkedAt: Date.now(),
-    };
-    await saveUpdateState(state);
+    const state = updateCheckFailure(error, connected);
+    // Even storage/badge failures must answer the popup and release the check lock.
+    try { await saveUpdateState(state); } catch { /* Return the error without caching it. */ }
     return state;
   }
 }
@@ -3703,7 +3746,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'check-update') {
-    checkForUpdate().then(sendResponse);
+    checkForUpdate().then(sendResponse).catch((error) => sendResponse(updateCheckFailure(error)));
     return true;
   }
 
@@ -3733,7 +3776,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'get-update-state') {
     chrome.storage.local.get('updateState').then(({ updateState }) => {
       sendResponse(updateState || null);
-    });
+    }).catch((error) => sendResponse(updateCheckFailure(error)));
     return true;
   }
 
