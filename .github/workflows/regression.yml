@@ -31,6 +31,8 @@ jobs:
           $env:NODE_PATH = "$env:RUNNER_TEMP/gmgn-test-deps/node_modules"
           "PLAYWRIGHT_MODULE=$env:PLAYWRIGHT_MODULE" >> $env:GITHUB_ENV
           "NODE_PATH=$env:NODE_PATH" >> $env:GITHUB_ENV
+          python -m pip install paramiko==4.0.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm install --prefix "$env:RUNNER_TEMP/gmgn-test-deps" --no-audit --no-fund playwright@1.58.2 react@19.2.6 react-dom@19.2.6
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node "$env:PLAYWRIGHT_MODULE/cli.js" install chromium
